@@ -1,0 +1,671 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* O sistema da vitrine mora em `vitrine.css`, importado pelo `main.tsx`.
+   Aqui não dá: `@import` só vale antes de qualquer regra, e depois dos
+   `@tailwind` o parser simplesmente o descarta — em silêncio. */
+
+/* Fontes da marca Quinta das Mangueiras (servidas localmente de /public/fonts) */
+@font-face {
+  font-family: "Ivy Mode";
+  src: url("/fonts/IvyMode-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Brandon";
+  src: url("/fonts/Brandon_reg.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* LIGHT MODE */
+:root {
+  --button-outline: rgba(0,0,0, .10);
+  --badge-outline: rgba(0,0,0, .05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0,0,0, .03);
+  --elevate-2: rgba(0,0,0, .08);
+  --background: 38 15% 97%;
+  --foreground: 225 18% 10%;
+  --border: 38 10% 90%;
+  --card: 38 12% 95%;
+  --card-foreground: 225 18% 10%;
+  --card-border: 38 10% 92%;
+  --sidebar: 38 12% 93%;
+  --sidebar-foreground: 225 18% 10%;
+  --sidebar-border: 38 10% 88%;
+  --sidebar-primary: 177 80% 34%;
+  --sidebar-primary-foreground: 38 10% 98%;
+  --sidebar-accent: 38 10% 86%;
+  --sidebar-accent-foreground: 225 15% 12%;
+  --sidebar-ring: 177 80% 34%;
+  --popover: 38 10% 90%;
+  --popover-foreground: 225 18% 10%;
+  --popover-border: 38 10% 86%;
+  --primary: 177 80% 34%;
+  --primary-foreground: 38 10% 98%;
+  --secondary: 38 10% 86%;
+  --secondary-foreground: 225 15% 12%;
+  --muted: 38 10% 88%;
+  --muted-foreground: 225 8% 38%;
+  --accent: 38 14% 88%;
+  --accent-foreground: 225 15% 12%;
+  --destructive: 0 72% 38%;
+  --destructive-foreground: 0 10% 98%;
+  --input: 38 12% 72%;
+  --ring: 177 80% 34%;
+  --chart-1: 177 80% 34%;
+  --chart-2: 32 75% 38%;
+  --chart-3: 44 80% 45%;
+  --chart-4: 28 70% 38%;
+  --chart-5: 50 65% 35%;
+  --font-sans: "Brandon", Montserrat, system-ui, sans-serif;
+  --font-serif: "Ivy Mode", "Playfair Display", Georgia, serif;
+  --font-mono: ui-monospace, "JetBrains Mono", monospace;
+  --radius: .5rem;
+  --shadow-2xs: 0px 2px 0px 0px hsl(177 80% 34% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(177 80% 34% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(177 80% 34% / 0.00), 0px 1px 2px -1px hsl(177 80% 34% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(177 80% 34% / 0.00), 0px 1px 2px -1px hsl(177 80% 34% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(177 80% 34% / 0.00), 0px 2px 4px -1px hsl(177 80% 34% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(177 80% 34% / 0.00), 0px 4px 6px -1px hsl(177 80% 34% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(177 80% 34% / 0.00), 0px 8px 10px -1px hsl(177 80% 34% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(177 80% 34% / 0.00);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+
+/* Fallback for older browsers */
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+.dark {
+  --button-outline: rgba(255,255,255, .10);
+  --badge-outline: rgba(255,255,255, .05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255,255,255, .04);
+  --elevate-2: rgba(255,255,255, .09);
+  --background: 225 18% 5%;
+  --foreground: 38 6% 94%;
+  --border: 225 12% 14%;
+  --card: 225 14% 8%;
+  --card-foreground: 38 6% 94%;
+  --card-border: 225 12% 11%;
+  --sidebar: 225 14% 6%;
+  --sidebar-foreground: 38 6% 94%;
+  --sidebar-border: 225 12% 12%;
+  --sidebar-primary: 177 75% 45%;
+  --sidebar-primary-foreground: 225 20% 5%;
+  --sidebar-accent: 225 12% 12%;
+  --sidebar-accent-foreground: 38 6% 85%;
+  --sidebar-ring: 177 75% 45%;
+  --popover: 225 14% 11%;
+  --popover-foreground: 38 6% 94%;
+  --popover-border: 225 12% 14%;
+  --primary: 177 75% 45%;
+  --primary-foreground: 225 20% 5%;
+  --secondary: 225 12% 14%;
+  --secondary-foreground: 38 6% 85%;
+  --muted: 225 12% 12%;
+  --muted-foreground: 38 5% 55%;
+  --accent: 225 14% 13%;
+  --accent-foreground: 38 6% 85%;
+  --destructive: 0 72% 32%;
+  --destructive-foreground: 0 10% 98%;
+  --input: 225 12% 22%;
+  --ring: 177 75% 45%;
+  --chart-1: 177 75% 45%;
+  --chart-2: 32 80% 48%;
+  --chart-3: 44 85% 55%;
+  --chart-4: 28 75% 45%;
+  --chart-5: 50 70% 50%;
+  --shadow-2xs: 0px 2px 0px 0px hsl(177 75% 45% / 0.00);
+  --shadow-xs: 0px 2px 0px 0px hsl(177 75% 45% / 0.00);
+  --shadow-sm: 0px 2px 0px 0px hsl(177 75% 45% / 0.00), 0px 1px 2px -1px hsl(177 75% 45% / 0.00);
+  --shadow: 0px 2px 0px 0px hsl(177 75% 45% / 0.00), 0px 1px 2px -1px hsl(177 75% 45% / 0.00);
+  --shadow-md: 0px 2px 0px 0px hsl(177 75% 45% / 0.00), 0px 2px 4px -1px hsl(177 75% 45% / 0.00);
+  --shadow-lg: 0px 2px 0px 0px hsl(177 75% 45% / 0.00), 0px 4px 6px -1px hsl(177 75% 45% / 0.00);
+  --shadow-xl: 0px 2px 0px 0px hsl(177 75% 45% / 0.00), 0px 8px 10px -1px hsl(177 75% 45% / 0.00);
+  --shadow-2xl: 0px 2px 0px 0px hsl(177 75% 45% / 0.00);
+
+/* Fallback for older browsers */
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-primary-border: hsl(from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --sidebar-accent-border: hsl(from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --primary-border: hsl(var(--primary));
+  --primary-border: hsl(from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --secondary-border: hsl(var(--secondary));
+  --secondary-border: hsl(from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --muted-border: hsl(var(--muted));
+  --muted-border: hsl(from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --accent-border: hsl(var(--accent));
+  --accent-border: hsl(from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+
+  /* Fallback for older browsers */
+  --destructive-border: hsl(var(--destructive));
+  --destructive-border: hsl(from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+  }
+}
+
+/**
+ * Using the elevate system.
+ * Automatic contrast adjustment.
+ *
+ * <element className="hover-elevate" />
+ * <element className="active-elevate-2" />
+ *
+ * // Using the tailwind utility when a data attribute is "on"
+ * <element className="toggle-elevate data-[state=on]:toggle-elevated" />
+ * // Or manually controlling the toggle state
+ * <element className="toggle-elevate toggle-elevated" />
+ *
+ * Elevation systems have to handle many states.
+ * - not-hovered, vs. hovered vs. active  (three mutually exclusive states)
+ * - toggled or not
+ * - focused or not (this is not handled with these utilities)
+ *
+ * Even without handling focused or not, this is six possible combinations that
+ * need to be distinguished from eachother visually.
+ */
+@layer utilities {
+
+  /* Hide ugly search cancel button in Chrome until we can style it properly */
+  input[type="search"]::-webkit-search-cancel-button {
+    @apply hidden;
+  }
+
+  /* Placeholder styling for contentEditable div */
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  /* .no-default-hover-elevate/no-default-active-elevate is an escape hatch so consumers of
+   * buttons/badges can remove the automatic brightness adjustment on interactions
+   * and program their own. */
+  .no-default-hover-elevate {}
+
+  .no-default-active-elevate {}
+
+
+  /**
+   * Toggleable backgrounds go behind the content. Hoverable/active goes on top.
+   * This way they can stack/compound. Both will overlap the parent's borders!
+   * So borders will be automatically adjusted both on toggle, and hover/active,
+   * and they will be compounded.
+   */
+  .toggle-elevate::before,
+  .toggle-elevate-2::before {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    /*border-radius: inherit;   match rounded corners */
+    border-radius: inherit;
+    z-index: -1;
+    /* sits behind content but above backdrop */
+  }
+
+  .toggle-elevate.toggle-elevated::before {
+    background-color: var(--elevate-2);
+  }
+
+  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  .border.toggle-elevate::before {
+    inset: -1px;
+  }
+
+  /* Does not work on elements with overflow:hidden! */
+  .hover-elevate:not(.no-default-hover-elevate),
+  .active-elevate:not(.no-default-active-elevate),
+  .hover-elevate-2:not(.no-default-hover-elevate),
+  .active-elevate-2:not(.no-default-active-elevate) {
+    position: relative;
+    z-index: 0;
+  }
+
+  .hover-elevate:not(.no-default-hover-elevate)::after,
+  .active-elevate:not(.no-default-active-elevate)::after,
+  .hover-elevate-2:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:not(.no-default-active-elevate)::after {
+    content: "";
+    pointer-events: none;
+    position: absolute;
+    inset: 0px;
+    /*border-radius: inherit;   match rounded corners */
+    border-radius: inherit;
+    z-index: 999;
+    /* sits in front of content */
+  }
+
+  .hover-elevate:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-1);
+  }
+
+  .hover-elevate-2:hover:not(.no-default-hover-elevate)::after,
+  .active-elevate-2:active:not(.no-default-active-elevate)::after {
+    background-color: var(--elevate-2);
+  }
+
+  /* If there's a 1px border, adjust the inset so that it covers that parent's border */
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate-2:not(.no-hover-interaction-elevate)::after,
+  .border.active-elevate-2:not(.no-active-interaction-elevate)::after,
+  .border.hover-elevate:not(.no-hover-interaction-elevate)::after {
+    inset: -1px;
+  }
+
+  .glassmorphism {
+    background: linear-gradient(180deg, rgba(6, 26, 36, 0.9) 0%, rgba(4, 20, 29, 0.88) 100%);
+    backdrop-filter: blur(22px);
+    -webkit-backdrop-filter: blur(22px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .glassmorphism-light {
+    background: rgba(4, 20, 29, 0.7);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+}
+
+@keyframes pulse-logo {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.92;
+    transform: scale(1.015);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.05);
+  }
+}
+
+@keyframes hero-zoom {
+  from { transform: scale(1.04); }
+  to { transform: scale(1.12); }
+}
+
+/**
+ * Barra de carregamento INDETERMINADA da capa da vitrine.
+ *
+ * O Cesium não expõe progresso confiável do download do GLB, e uma barra que
+ * finge uma porcentagem é pior do que nenhuma: ela para em 90% e a espera passa
+ * a parecer travamento. O vaivém diz só "ainda estou trabalhando", que é
+ * exatamente o que se sabe.
+ */
+@keyframes carregando-vaivem {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(320%); }
+}
+
+.v-carregando {
+  animation: carregando-vaivem 1.5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-carregando {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+/*
+ * Título da vista do tour: entra subindo e some sozinho.
+ *
+ * `forwards` para parar no estado final (opacidade baixa) em vez de voltar ao
+ * início — a legenda cumpre o papel nos primeiros segundos da vista e depois
+ * sai da frente do que ela está anunciando.
+ */
+@keyframes titulo-vista {
+  0%   { opacity: 0; transform: translateY(10px); }
+  12%  { opacity: 1; transform: translateY(0); }
+  70%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-6px); }
+}
+
+.v-titulo-vista {
+  animation: titulo-vista 5s ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-titulo-vista {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+@keyframes drift {
+  0%, 100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(30px, -20px);
+  }
+  50% {
+    transform: translate(-20px, 30px);
+  }
+  75% {
+    transform: translate(20px, 10px);
+  }
+}
+
+input[type="range"].solar-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f59e0b;
+  cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.3);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+input[type="range"].solar-slider::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #f59e0b;
+  cursor: pointer;
+  border: 2px solid rgba(255,255,255,0.3);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+}
+
+/* --------------------------------------------------------------------------
+   Slider de FAIXA (dois polegares) — filtros de área, quartos, andar e preço
+   do buscador de unidades.
+
+   São dois <input type="range"> sobrepostos: a trilha fica desenhada por
+   elementos próprios atrás, os inputs ficam transparentes e só os polegares
+   recebem o ponteiro — senão o input de cima bloquearia o de baixo.
+   -------------------------------------------------------------------------- */
+.faixa-dupla {
+  position: relative;
+  height: 1.25rem;
+}
+.faixa-dupla input[type="range"] {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.faixa-dupla input[type="range"]:focus {
+  outline: none;
+}
+.faixa-dupla input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid var(--v-accent, var(--ivm-primary, #2dd4bf));
+  cursor: grab;
+  box-shadow: 0 1px 3px rgba(22, 25, 28, 0.28);
+}
+.faixa-dupla input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+}
+.faixa-dupla input[type="range"]::-moz-range-thumb {
+  pointer-events: auto;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: #fff;
+  border: 2px solid var(--v-accent, var(--ivm-primary, #2dd4bf));
+  cursor: grab;
+  box-shadow: 0 1px 3px rgba(22, 25, 28, 0.28);
+}
+.faixa-dupla input[type="range"]::-moz-range-track {
+  background: transparent;
+}
+
+/* ==========================================================================
+   CHROME DAS FERRAMENTAS (/admin e editor) — tokens do DESIGN.md (x.ai)
+
+   Canvas quase-preto único, hairline de 1px carregando toda a elevação (sem
+   sombras), branco como cor primária e pílulas como forma de todo elemento
+   interativo. Inter no lugar de Universal Sans, Geist Mono nos rótulos —
+   os substitutos abertos que o próprio DESIGN.md documenta.
+
+   Onde a spec e uma ferramenta densa divergem, a ferramenta ganha, e está
+   anotado no ponto: a spec é de uma superfície de marketing com 64px de
+   respiro, e um inspetor com trinta campos numéricos não tem esse luxo.
+   ========================================================================== */
+.ed,
+.tool {
+  /* Superfícies */
+  --ed-canvas: #0a0a0a;   /* a única superfície de página */
+  --ed-bg: #0a0a0a;       /* painéis */
+  --ed-chrome: #0a0a0a;   /* rail, topbar, status */
+  --ed-card: #191919;     /* cartões */
+  --ed-soft: #1a1c20;     /* campos, hover */
+  --ed-mid: #363a3f;      /* superfícies aninhadas */
+  --ed-line: #212327;     /* hairline: toda a elevação vem daqui */
+
+  /* Texto */
+  --ed-ink: #ffffff;
+  --ed-body: #dadbdf;
+  --ed-dim: #7d8187;
+
+  /*
+    Acento. No x.ai o branco É a cor primária e os acentos quentes quase não
+    aparecem no chrome. Aqui o laranja fica reservado ao que está ACONTECENDO
+    (posicionando no mapa, tour rodando, trabalho não salvo) — estados que uma
+    ferramenta precisa gritar e que o branco, sendo a cor de tudo, não grita.
+  */
+  --ed-accent: #ff7a17;
+  --ed-accent-soft: #ffc285;
+
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  color: var(--ed-body);
+}
+
+/*
+  Remapeia o teal herdado para os tokens novos.
+
+  O editor tem centenas de `teal-*` espalhadas por doze abas. Reescrever uma a
+  uma seria uma varredura enorme com risco de deixar rastros — este bloco troca
+  a paleta num lugar só, exatamente como a vitrine já faz em `.ivm-brand`.
+*/
+.ed .text-teal-200,
+.ed .text-teal-300,
+.ed .text-teal-400,
+.ed .text-teal-500 { color: var(--ed-ink) !important; }
+.ed .bg-teal-400,
+.ed .bg-teal-500 { background-color: var(--ed-ink) !important; color: #0a0a0a !important; }
+.ed [class*="bg-teal-500/"] { background-color: rgba(255, 255, 255, 0.1) !important; }
+.ed .accent-teal-400 { accent-color: var(--ed-ink) !important; }
+.ed [class*="ring-teal-"] { --tw-ring-color: rgba(255, 255, 255, 0.55) !important; }
+.ed [class*="border-teal-"] { border-color: rgba(255, 255, 255, 0.45) !important; }
+
+/* Âmbar = "está acontecendo agora". Vira o acento sunset da spec. */
+.ed .text-amber-100,
+.ed .text-amber-200,
+.ed .text-amber-300 { color: var(--ed-accent-soft) !important; }
+.ed .bg-amber-400 { background-color: var(--ed-accent) !important; color: #0a0a0a !important; }
+.ed [class*="bg-amber-400/"],
+.ed [class*="bg-amber-500/"] { background-color: rgba(255, 122, 23, 0.12) !important; }
+.ed [class*="border-amber-"] { border-color: rgba(255, 122, 23, 0.45) !important; }
+.ed [class*="ring-amber-"] { --tw-ring-color: rgba(255, 122, 23, 0.45) !important; }
+
+/*
+  Rótulo mono em caixa alta — a assinatura tipográfica da spec. É o cabeçalho
+  de seção do inspetor e o eyebrow dos cartões do /admin.
+*/
+.ed-eyebrow,
+.tool-eyebrow {
+  font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 16px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-weight: 400;
+}
+
+/*
+  Pílula: a forma de TODO elemento interativo, conforme a spec. Os campos de
+  texto ficam de fora — a própria spec dá a eles `rounded.sm` (8px), e num
+  inspetor denso um campo em pílula desperdiça a largura que o valor precisa.
+*/
+.ed-pill,
+.tool-pill {
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: transparent;
+  color: var(--ed-ink);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.ed-pill:hover:not(:disabled),
+.tool-pill:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.45);
+}
+.ed-pill:disabled,
+.tool-pill:disabled { opacity: 0.35; }
+
+/* A rara pílula branca preenchida: uma por tela, na ação principal. */
+.ed-pill-primary,
+.tool-pill-primary {
+  border-radius: 9999px;
+  border: 1px solid #ffffff;
+  background: #ffffff;
+  color: #0a0a0a;
+  transition: opacity 120ms ease;
+}
+.ed-pill-primary:hover:not(:disabled),
+.tool-pill-primary:hover:not(:disabled) { opacity: 0.88; }
+.ed-pill-primary:disabled,
+.tool-pill-primary:disabled { opacity: 0.35; }
+
+/* Cartão: 8px, fill levemente mais claro, hairline. Sem sombra — a spec proíbe. */
+.ed-card,
+.tool-card {
+  background: var(--ed-card);
+  border: 1px solid var(--ed-line);
+  border-radius: 8px;
+}
+
+/* Slider fino de propriedade. */
+.ed-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+}
+.ed-range::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.ed-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  margin-top: -4px;
+  width: 11px;
+  height: 11px;
+  border-radius: 9999px;
+  background: #e8eef2;
+  border: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+}
+.ed-range::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.ed-range::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: none;
+  border-radius: 9999px;
+  background: #e8eef2;
+}
+
+/* Campo numérico com scrub: o cursor anuncia o gesto de arrastar. */
+.ed-scrub {
+  cursor: ew-resize;
+  touch-action: none;
+  user-select: none;
+}
+
+/* Barra de rolagem discreta nos painéis. */
+.ed-scroll::-webkit-scrollbar { width: 9px; }
+.ed-scroll::-webkit-scrollbar-track { background: transparent; }
+.ed-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.ed-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); background-clip: content-box; }

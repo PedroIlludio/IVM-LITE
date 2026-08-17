@@ -1,0 +1,20 @@
+node_modules
+dist
+.DS_Store
+server/public
+vite.config.ts.*
+*.tar.gz
+
+# Assets enviados pelo editor no modo local (GLBs e imagens pesadas).
+# Os PROJETOS em data/projects/ ficam versionados de propósito.
+client/public/uploads/
+
+# GLBs originais/pesados (fonte). O modelo otimizado versionado fica em
+# client/public/models/. Não commitar os brutos de centenas de MB.
+glb/
+# Configs locais (podem conter chaves) — não versionar
+.claude/
+
+.env
+
+.vercel

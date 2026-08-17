@@ -1,0 +1,747 @@
+/* ============================================================================
+   SISTEMA DA VITRINE — DESIGN.vitrine.md (Starbucks)
+
+   Tudo o que o cliente final vê sai daqui. Escopado em `.vitrine` de propósito:
+   as ferramentas (/admin e editor) seguem o DESIGN.editor.md, que é outro
+   sistema — canvas quase-preto, denso, para quem trabalha o dia inteiro nele.
+   Aqui é o oposto: claro, arejado, para quem vai comprar um apartamento.
+
+   O QUE VEIO DO STARBUCKS
+   - Canvas creme-quente (#f2f0eb / #edebe9) no lugar do branco frio. É a
+     decisão que mais muda a sensação: o branco puro deixa a foto do 3D
+     parecendo recortada; o creme a acolhe.
+   - Pílula completa (50px) em TODO botão, com `scale(0.95)` no toque.
+   - Cartão de 12px com sombra sussurrada (0.14/0.24 alpha). Sem sombra
+     pesada: a elevação é uma dica, não um degrau.
+   - Tracking negativo (-0.01em) universal e hierarquia por PESO, não por
+     tamanho — dois textos de 24px, um 600 e outro 400, já são dois níveis.
+
+   O QUE NÃO VEIO, E POR QUÊ
+   O verde. Esta é uma plataforma white-label: cada empreendimento traz a sua
+   cor em `branding.primary`, e pintar tudo de verde Starbucks faria todos os
+   projetos parecerem o mesmo. Então o verde da marca vira um PAPEL, não um
+   valor — `--v-accent` recebe a cor do projeto e cumpre o papel que o verde
+   cumpre lá (CTA, destaque, estado ativo). As profundidades da faixa escura
+   saem daí por `color-mix`, para acompanharem qualquer marca.
+   ========================================================================= */
+
+.vitrine {
+  /*
+   * Superfícies. O creme quente é a página; o branco é o cartão que pousa
+   * sobre ela. Inverter isso (página branca, cartão cinza) é o que dava o ar
+   * de formulário.
+   */
+  --v-bg: #f2f0eb;          /* Neutral Warm — a tela */
+  --v-surface: #ffffff;     /* cartão, painel, modal */
+  --v-surface-2: #f9f9f9;   /* Neutral Cool — superfície quieta dentro do cartão */
+  --v-surface-3: #edebe9;   /* Ceramic — separador de zona, trilho do segmentado */
+
+  /*
+   * Tinta a 87% de preto, não #000: sobre canvas quente o preto puro fica
+   * frio e "fura" o papel. É a mesma razão do creme.
+   */
+  --v-ink: rgba(0, 0, 0, 0.87);
+  --v-ink-2: rgba(0, 0, 0, 0.58);
+  --v-ink-3: rgba(0, 0, 0, 0.40);
+
+  /* Linhas quase invisíveis. Se a divisória se nota, está forte demais. */
+  --v-line: rgba(0, 0, 0, 0.08);
+  --v-line-2: rgba(0, 0, 0, 0.14);
+
+  /*
+   * Acento = a cor da marca do projeto (o `--v-accent` é sobrescrito em
+   * ivm-view.tsx). O valor abaixo é só o fallback do piloto.
+   */
+  --v-accent: #12a19a;
+  --v-accent-ink: #ffffff;
+  --v-accent-soft: color-mix(in srgb, var(--v-accent) 12%, transparent);
+  /* O papel do "House Green": faixa escura, rodapé, banda de destaque. */
+  --v-accent-deep: color-mix(in srgb, var(--v-accent) 55%, #16211e);
+  --v-accent-hover: color-mix(in srgb, var(--v-accent) 88%, #000);
+
+  /* Status do espelho de vendas — dado, não decoração: não seguem a marca. */
+  --v-ok: #1b7f4f;
+  --v-wait: #b47d09;
+  --v-sold: #c82014;
+
+  --v-r-sm: 8px;
+  --v-r: 12px;      /* cartão */
+  --v-r-lg: 16px;   /* painel */
+  --v-r-pill: 50px; /* todo elemento interativo */
+
+  /*
+   * Sombras sussurradas. A base do Starbucks é `0 0 .5px/.14 + 0 1px 1px/.24`
+   * — quase nada. As duas maiores existem só para o que FLUTUA sobre a cena
+   * 3D, onde o cartão precisa se descolar da imagem para continuar legível.
+   */
+  --v-sh-1: 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 1px rgba(0, 0, 0, 0.24);
+  --v-sh-2: 0 0 6px rgba(0, 0, 0, 0.14), 0 4px 10px -2px rgba(0, 0, 0, 0.12);
+  --v-sh-3: 0 0 6px rgba(0, 0, 0, 0.16), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
+
+  color: var(--v-ink);
+  font-family: var(--font-sans);
+  /* Tracking apertado universal — a assinatura tipográfica do sistema. */
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- Tipografia ----------------------------------------------------------- */
+
+/*
+ * Títulos na serifada da marca do projeto. O Starbucks troca para serifada em
+ * momentos editoriais (a página de Rewards) — aqui o momento editorial é o
+ * nome do empreendimento, que é o que a marca dele já resolve.
+ */
+/*
+ * Título. `tracking-wide` numa serifada display era o oposto do que ela pede:
+ * abrir o espaçamento de uma Ivy Mode a 24px deixa as hastes finas soltas e o
+ * nome perde corpo. Tracking negativo junta o desenho e devolve presença.
+ */
+.vitrine .v-title {
+  font-family: var(--font-serif);
+  letter-spacing: -0.02em;
+  line-height: 1.12;
+  color: var(--v-ink);
+}
+
+/*
+ * Rótulo de seção. Corpo pequeno com muito tracking: é o que permite
+ * hierarquia SEM borda — o olho separa pelo peso, não por uma linha.
+ *
+ * Peso 700 e não 600: a sans da marca (Brandon) tem traço fino, e em caixa
+ * alta a 11px o 600 desaparecia contra o corpo do texto — era o rótulo mais
+ * apagado da tela justamente onde a hierarquia começa.
+ */
+.vitrine .v-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--v-ink-2);
+}
+
+/*
+ * CORPO DE TEXTO
+ *
+ * A vitrine inteira estava em 12px com tinta a 58% — tamanho de inspetor de
+ * ferramenta, não de página que alguém lê para decidir uma compra. O
+ * DESIGN.vitrine.md pede 16px de corpo e 14px de secundário, e reserva o
+ * cinza-claro para METADADO, não para a leitura principal.
+ */
+.vitrine .v-body {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--v-ink);
+}
+.vitrine .v-body-sm {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--v-ink);
+}
+/* Metadado: endereço, contagem, legenda. Aqui o cinza é correto. */
+.vitrine .v-meta {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--v-ink-2);
+}
+
+.vitrine .v-muted { color: var(--v-ink-2); }
+.vitrine .v-faint { color: var(--v-ink-3); }
+
+/* Números de dinheiro e área alinhados: tabular evita o texto "dançar". */
+.vitrine .v-num { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+/* --- Superfícies ---------------------------------------------------------- */
+
+.vitrine .v-panel {
+  background: var(--v-surface);
+  border-radius: var(--v-r-lg);
+  box-shadow: var(--v-sh-3);
+}
+
+.vitrine .v-card {
+  background: var(--v-surface);
+  border: 1px solid var(--v-line);
+  border-radius: var(--v-r);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+.vitrine .v-card:hover {
+  border-color: var(--v-line-2);
+  box-shadow: var(--v-sh-2);
+}
+.vitrine .v-card[data-sel="1"] {
+  border-color: var(--v-accent);
+  box-shadow: 0 0 0 1px var(--v-accent), var(--v-sh-2);
+}
+
+/*
+ * Faixa escura — o papel do "House Green". Fecha a página em cima e embaixo,
+ * dando o ritmo creme → branco → escuro que o sistema pede. A cor sai da
+ * marca do projeto, então cada empreendimento tem a sua faixa.
+ */
+.vitrine .v-band {
+  background: var(--v-accent-deep);
+  color: #fff;
+}
+.vitrine .v-band .v-muted { color: rgba(255, 255, 255, 0.7); }
+
+/*
+ * O painel do empreendimento usa `.glassmorphism` (definido no index.css para
+ * o tema escuro). Reescrevê-lo aqui dentro do escopo da vitrine troca o casco
+ * inteiro — desktop e a folha do celular — sem caçar a classe em 800 linhas.
+ */
+.vitrine .glassmorphism,
+.vitrine .glassmorphism-light {
+  background: rgba(255, 255, 255, 0.97);
+  backdrop-filter: blur(20px) saturate(1.2);
+  -webkit-backdrop-filter: blur(20px) saturate(1.2);
+  border: 1px solid var(--v-line);
+  box-shadow: var(--v-sh-3);
+}
+
+/* Filete de marca: dá identidade ao painel sem tingir toda a superfície. */
+/* O conteúdo editorial alterna creme e branco, como especificado no MD. */
+/* Vidro sobre a cena 3D: os controles flutuantes. */
+.vitrine .v-glass {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  border-radius: var(--v-r-pill);
+  box-shadow: var(--v-sh-2);
+}
+
+/* --- Controles ------------------------------------------------------------ */
+
+/*
+ * `scale(0.95)` no toque é a micro-interação assinatura do sistema. Aplicada
+ * em tudo que se clica, de uma vez.
+ */
+.vitrine .v-icon-btn:active,
+.vitrine .v-pill:active,
+.vitrine .v-btn:active,
+.vitrine .v-btn-ghost:active,
+.vitrine .v-fab:active { transform: scale(0.95); }
+
+.vitrine .v-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--v-r-pill);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  color: var(--v-ink);
+  box-shadow: var(--v-sh-2);
+  transition: all 0.2s ease;
+}
+.vitrine .v-icon-btn:hover { background: #fff; }
+.vitrine .v-icon-btn[data-on="1"] {
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+}
+
+.vitrine .v-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: var(--v-r-pill);
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(14px) saturate(1.25);
+  -webkit-backdrop-filter: blur(14px) saturate(1.25);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--v-ink);
+  box-shadow: var(--v-sh-2);
+  transition: all 0.2s ease;
+}
+.vitrine .v-pill:hover { background: #fff; }
+.vitrine .v-pill[data-on="1"] {
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+}
+
+/* CTA preenchido — a pílula da marca. */
+.vitrine .v-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: var(--v-r-pill);
+  border: 1px solid var(--v-accent);
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.vitrine .v-btn:hover {
+  background: var(--v-accent-hover);
+  border-color: var(--v-accent-hover);
+}
+
+/* CTA de contorno — mesma forma, sem preenchimento. */
+.vitrine .v-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: var(--v-r-pill);
+  border: 1px solid var(--v-accent);
+  background: transparent;
+  color: var(--v-accent);
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+.vitrine .v-btn-ghost:hover { background: var(--v-accent-soft); }
+
+/*
+ * FAB circular — o elemento de elevação assinatura do sistema ("Frap"). Fica
+ * sobre a cena 3D, em cima de qualquer coisa, e é a ação principal da tela.
+ */
+.vitrine .v-fab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--v-accent);
+  color: var(--v-accent-ink);
+  box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0.14);
+  transition: all 0.2s ease;
+}
+.vitrine .v-fab:active { box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0); }
+
+/*
+ * Segmentado (Disponível / Reservada / Vendida / Todas). Um trilho, sem
+ * bordas entre os itens: o ativo é uma pastilha branca que se destaca por
+ * elevação, não por contorno.
+ */
+.vitrine .v-seg {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--v-r-pill);
+  background: var(--v-surface-3);
+}
+.vitrine .v-seg > button {
+  flex: 1;
+  height: 32px;
+  border-radius: var(--v-r-pill);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--v-ink-2);
+  transition: all 0.2s ease;
+}
+.vitrine .v-seg > button:hover { color: var(--v-ink); }
+.vitrine .v-seg > button[data-on="1"] {
+  background: var(--v-surface);
+  color: var(--v-ink);
+  box-shadow: var(--v-sh-1);
+}
+
+/*
+ * Chip de filtro (categorias da galeria, faixas da busca). Diferente do
+ * `.v-chip`, que é ETIQUETA — só informa. Este é clicável, então tem a forma
+ * de pílula do sistema, estado ligado e alvo de toque de 30px.
+ */
+.vitrine .v-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 13px;
+  border-radius: var(--v-r-pill);
+  border: 1px solid var(--v-line-2);
+  background: var(--v-surface);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--v-ink-2);
+  transition: all 0.2s ease;
+}
+.vitrine .v-filter:hover {
+  border-color: var(--v-ink-3);
+  color: var(--v-ink);
+}
+.vitrine .v-filter:active { transform: scale(0.95); }
+.vitrine .v-filter[data-on="1"] {
+  background: var(--v-accent);
+  border-color: var(--v-accent);
+  color: var(--v-accent-ink);
+  font-weight: 600;
+}
+/* A contagem acompanha o texto sem competir com ele. */
+.vitrine .v-filter > span {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.55;
+}
+
+/* Etiqueta de estado. Cor no ponto e no texto; o fundo fica quase branco. */
+.vitrine .v-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--v-r-pill);
+  font-size: 12px;
+  font-weight: 600;
+}
+.vitrine .v-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+/*
+ * Linha de propriedade: rótulo à esquerda, valor à direita, divisória fina
+ * entre as linhas e nenhuma na última. É o que faz uma pilha de dados parecer
+ * uma ficha, em vez de uma tabela.
+ */
+.vitrine .v-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--v-line);
+  font-size: 14px;
+}
+.vitrine .v-row:last-child { border-bottom: 0; }
+.vitrine .v-row > span:first-child { color: var(--v-ink-2); font-size: 13px; }
+.vitrine .v-row > span:last-child {
+  color: var(--v-ink);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Campos --------------------------------------------------------------- */
+
+.vitrine .v-input {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: var(--v-r-sm);
+  border: 1px solid var(--v-line-2);
+  background: var(--v-surface);
+  font-size: 14px;
+  color: var(--v-ink);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.vitrine .v-input::placeholder { color: var(--v-ink-3); }
+.vitrine .v-input:focus {
+  outline: none;
+  border-color: var(--v-accent);
+  box-shadow: 0 0 0 3px var(--v-accent-soft);
+}
+
+/*
+  Campo com ícone dentro (a busca de unidades): abre espaço para a lupa à
+  esquerda e para o botão de limpar à direita.
+
+  Precisa existir como classe daqui, e não como `pl-9` do Tailwind, por
+  especificidade: `.vitrine .v-input` são dois seletores de classe e vence
+  qualquer utilitário de uma classe só, por mais tarde que ele venha na folha.
+  O `padding: 0 12px` acima portanto ganhava em silêncio — e o texto digitado
+  entrava por baixo da lupa.
+*/
+.vitrine .v-input.v-input-icone { padding-left: 36px; padding-right: 36px; }
+
+/* Faixa (área, preço, andar): trilho fino, polegar na cor da marca. */
+.vitrine .v-range { accent-color: var(--v-accent); }
+
+/* --- Gaveta de categorias --------------------------------------------------
+
+   O painel só mostra conteúdo quando uma categoria é escolhida. Em repouso
+   ele é o TRILHO: uma faixa estreita com os ícones na cor da marca sobre a
+   cena 3D, que é o que o visitante veio ver. O hover abre a faixa e revela
+   os nomes; escolher uma categoria abre o painel inteiro.
+
+   Quem se abre é o PAINEL, não cada ícone: passar o mouse revela os cinco
+   nomes de uma vez. Um a um obrigaria a varrer a coluna com o ponteiro para
+   descobrir o que existe ali — que é o que o menu deveria responder de
+   imediato.
+   -------------------------------------------------------------------------- */
+.vitrine .v-painel-trilho { width: 84px; }
+.vitrine .v-painel-trilho:hover,
+.vitrine .v-painel-trilho:focus-within { width: 300px; }
+
+.vitrine .v-gaveta { display: flex; flex-direction: column; gap: 6px; }
+
+.vitrine .v-gaveta-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 52px;
+  padding: 0 16px;
+  border-radius: var(--v-r-sm);
+  background: var(--v-surface-2);
+  color: var(--v-accent);
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: left;
+  transition: background-color 0.18s ease;
+}
+.vitrine .v-gaveta-item > :first-child { flex: none; }
+.vitrine .v-gaveta-item:hover { background: var(--v-accent-soft); }
+
+.vitrine .v-gaveta-rotulo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14.5px;
+  color: var(--v-ink);
+}
+.vitrine .v-gaveta-n {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  color: var(--v-ink-3);
+}
+
+/*
+  FECHADO, o botão é um quadrado com o ícone no meio: sem recuo lateral, sem
+  vão do rótulo, nada de uma linha larga com o texto cortado fora da vista.
+  ABERTO, ele recupera o recuo e o nome cresce ao lado do ícone.
+
+  A abertura responde ao hover E ao foco de teclado: quem navega por Tab passa
+  pelos mesmos botões e precisa ler o mesmo rótulo que o mouse revela.
+*/
+.vitrine .v-painel-trilho .v-gaveta-item {
+  justify-content: center;
+  padding: 0;
+  gap: 0;
+  transition: padding 0.26s cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.18s ease;
+}
+.vitrine .v-painel-trilho .v-gaveta-rotulo,
+.vitrine .v-painel-trilho .v-gaveta-n {
+  flex: 0 1 0;
+  width: 0;
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.vitrine .v-painel-trilho:hover .v-gaveta-item,
+.vitrine .v-painel-trilho:focus-within .v-gaveta-item {
+  justify-content: flex-start;
+  padding: 0 16px;
+  gap: 12px;
+}
+.vitrine .v-painel-trilho:hover .v-gaveta-rotulo,
+.vitrine .v-painel-trilho:focus-within .v-gaveta-rotulo { flex: 1; width: auto; opacity: 1; }
+.vitrine .v-painel-trilho:hover .v-gaveta-n,
+.vitrine .v-painel-trilho:focus-within .v-gaveta-n { flex: none; width: auto; opacity: 1; }
+
+/*
+  Sem ponteiro (tablet, telas de toque) não existe hover: o trilho nasce
+  aberto. Cinco ícones sem nome, num aparelho onde o único gesto disponível é
+  o toque, seriam cinco adivinhações.
+*/
+@media (hover: none) {
+  .vitrine .v-painel-trilho { width: 300px; }
+  .vitrine .v-painel-trilho .v-gaveta-item {
+    justify-content: flex-start;
+    padding: 0 16px;
+    gap: 12px;
+  }
+  .vitrine .v-painel-trilho .v-gaveta-rotulo { flex: 1; width: auto; opacity: 1; }
+  .vitrine .v-painel-trilho .v-gaveta-n { flex: none; width: auto; opacity: 1; }
+}
+
+/* Quem pediu menos movimento recebe a abertura sem a animação de largura. */
+@media (prefers-reduced-motion: reduce) {
+  .vitrine .v-painel-trilho,
+  .vitrine .v-painel-trilho .v-gaveta-item,
+  .vitrine .v-painel-trilho .v-gaveta-rotulo,
+  .vitrine .v-painel-trilho .v-gaveta-n { transition: none; }
+}
+
+/* Barra de rolagem discreta, na tinta clara. */
+.vitrine .v-scroll::-webkit-scrollbar { width: 10px; }
+.vitrine .v-scroll::-webkit-scrollbar-track { background: transparent; }
+.vitrine .v-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.14);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.vitrine .v-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.26);
+  background-clip: content-box;
+}
+
+/* Entrada dos painéis — 300ms na curva medida do sistema. */
+@keyframes v-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.vitrine .v-in { animation: v-in 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
+
+/* --- Controle solar ------------------------------------------------------ */
+@keyframes v-solar-enter {
+  from { opacity: 0; transform: translate(-50%, 18px) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
+}
+
+@keyframes v-solar-glow {
+  0%, 100% { box-shadow: 0 0 0 5px rgba(255, 183, 53, 0.12), 0 4px 14px rgba(255, 166, 0, 0.22); }
+  50% { box-shadow: 0 0 0 9px rgba(255, 183, 53, 0.06), 0 6px 22px rgba(255, 166, 0, 0.32); }
+}
+
+.vitrine .v-solar {
+  padding: 18px 20px 13px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(20px) saturate(1.3);
+  -webkit-backdrop-filter: blur(20px) saturate(1.3);
+  box-shadow: var(--v-sh-3);
+  animation: v-solar-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.vitrine .v-solar::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--v-accent), transparent);
+}
+
+.vitrine .v-solar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.vitrine .v-solar-time {
+  color: var(--v-ink);
+  font-family: var(--font-serif);
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: -0.035em;
+}
+
+.vitrine .v-solar-seasons {
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--v-r-pill);
+  background: var(--v-surface-3);
+}
+
+.vitrine .v-solar-seasons button {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: var(--v-r-pill);
+  color: var(--v-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.vitrine .v-solar-seasons button:hover { color: var(--v-ink); }
+.vitrine .v-solar-seasons button:active { transform: scale(0.95); }
+.vitrine .v-solar-seasons button[data-on="1"] {
+  color: var(--v-accent-ink);
+  background: var(--v-accent);
+  box-shadow: var(--v-sh-1);
+}
+
+.vitrine .v-solar-orbit {
+  position: relative;
+  height: 42px;
+  margin: 10px 3px -2px;
+}
+
+.vitrine .v-solar-arc {
+  position: absolute;
+  right: 21px;
+  bottom: 4px;
+  left: 21px;
+  height: 28px;
+  border-top: 1px dashed color-mix(in srgb, var(--v-accent) 42%, transparent);
+  border-radius: 50% 50% 0 0;
+}
+
+.vitrine .v-solar-edge {
+  position: absolute;
+  bottom: 0;
+  width: 17px;
+  height: 17px;
+  color: var(--v-ink-3);
+}
+
+.vitrine .v-solar-sun {
+  position: absolute;
+  left: var(--solar-x);
+  bottom: var(--solar-y);
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--v-ink-3);
+  background: var(--v-surface);
+  transform: translateX(-50%);
+  transition: left 0.2s ease, bottom 0.2s ease, color 0.25s ease, background 0.25s ease;
+}
+
+.vitrine .v-solar-sun svg { width: 15px; height: 15px; }
+.vitrine .v-solar-sun[data-day="1"] {
+  color: #8a5200;
+  background: #ffc65b;
+  animation: v-solar-glow 2.8s ease-in-out infinite;
+}
+
+.vitrine .v-solar-range {
+  width: 100%;
+  height: 18px;
+  accent-color: var(--v-accent);
+  cursor: ew-resize;
+}
+
+.vitrine .v-solar-hours {
+  display: flex;
+  justify-content: space-between;
+  margin-top: -2px;
+  color: var(--v-ink-3);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .vitrine .v-solar { padding: 14px 14px 10px; border-radius: 18px; }
+  .vitrine .v-solar-head { align-items: flex-start; }
+  .vitrine .v-solar-time { font-size: 24px; }
+  .vitrine .v-solar-seasons { max-width: 54%; overflow-x: auto; }
+  .vitrine .v-solar-seasons button { min-width: max-content; padding-inline: 9px; }
+}
+
+/*
+ * Scroll-driven animations usam a View Timeline API nativa. Não há listener
+ * por frame nem dependência de animação: cada bloco progride conforme cruza a
+ * área visível do ScrollArea. Navegadores sem suporte mantêm o layout normal.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .vitrine .v-in { animation: none; }
+  .vitrine .v-icon-btn:active,
+  .vitrine .v-pill:active,
+  .vitrine .v-btn:active,
+  .vitrine .v-btn-ghost:active,
+  .vitrine .v-fab:active { transform: none; }
+}

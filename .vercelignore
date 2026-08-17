@@ -1,0 +1,12 @@
+# A Vercel instala deps e builda do zero; o backend Express e os scripts locais
+# não são usados no deploy (usamos as funções em /api).
+node_modules
+dist
+.env
+server
+script
+identify
+replit.md
+glb
+.claude
+*.tar.gz

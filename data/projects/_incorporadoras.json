@@ -1,0 +1,23 @@
+[
+  {
+    "id": "8e9bfa0b-b4c1-4b21-8e7b-f2babfd8f838",
+    "slug": "farias",
+    "nome": "Farias Incorporadora",
+    "logo_url": null,
+    "tema": {}
+  },
+  {
+    "id": "84acd01c-6d48-4f77-9090-20d350496cb6",
+    "slug": "ebm",
+    "nome": "EBM",
+    "logo_url": null,
+    "tema": {}
+  },
+  {
+    "id": "6ac56051-3bba-4881-809e-e31fd8bdcdfb",
+    "slug": "meloborges",
+    "nome": "MeloBorges",
+    "logo_url": null,
+    "tema": {}
+  }
+]

@@ -1,0 +1,321 @@
+import {
+  Viewer,
+  ShadowMode,
+  createGooglePhotorealistic3DTileset,
+  GoogleMaps,
+  RequestScheduler,
+  type Cesium3DTileset,
+} from "cesium";
+import * as CesiumNS from "cesium";
+import "cesium/Build/Cesium/Widgets/widgets.css";
+
+/** Elevação aproximada de Ponta do Mangue, Maragogi/AL — nível do mar
+ * (fallback se o clamp de terreno falhar). */
+export const FALLBACK_GROUND_HEIGHT = 3;
+
+// ContextLimits existe em runtime (re-exportado do @cesium/engine) mas não nos
+// tipos públicos do Cesium; acessamos como um mapa de números.
+const ContextLimits = (CesiumNS as unknown as { ContextLimits: Record<string, number> })
+  .ContextLimits;
+
+const SANE_LIMITS: Record<string, number> = {
+  _maximumCombinedTextureImageUnits: 48,
+  _maximumCubeMapSize: 16384,
+  _maximumFragmentUniformVectors: 1024,
+  _maximumTextureImageUnits: 16,
+  _maximumRenderbufferSize: 16384,
+  _maximumTextureSize: 16384,
+  _maximumVaryingVectors: 30,
+  _maximumVertexAttributes: 16,
+  _maximumVertexTextureImageUnits: 16,
+  _maximumVertexUniformVectors: 1024,
+  _minimumAliasedLineWidth: 1,
+  _maximumAliasedLineWidth: 8,
+  _minimumAliasedPointSize: 1,
+  _maximumAliasedPointSize: 64,
+  _maximumViewportWidth: 16384,
+  _maximumViewportHeight: 16384,
+  _maximumTextureFilterAnisotropy: 16,
+  _maximumDrawBuffers: 8,
+  _maximumColorAttachments: 8,
+  _maximumSamples: 4,
+};
+
+let dynamicIblDisabled = false;
+
+/**
+ * Contextos WebGL degradados (acesso remoto/RDP, render farm sem GPU dedicada,
+ * headless) reportam os limites do ContextLimits como 0 e não fazem MRT. O
+ * Cesium 1.124 então lança em cascata ("Invalid array length", "lineWidth out of
+ * range", "color attachments exceeds") e PARA o render. Isto preenche os limites
+ * com valores típicos de GPU real e desliga globalmente a IBL dinâmica (que
+ * exige MRT). Em GPU real nada disso dispara.
+ */
+export function patchDegradedWebGL() {
+  const degraded =
+    !ContextLimits.maximumTextureSize ||
+    !ContextLimits.maximumColorAttachments ||
+    !ContextLimits.maximumAliasedLineWidth ||
+    !ContextLimits.maximumDrawBuffers;
+  if (!degraded) return;
+  for (const key in SANE_LIMITS) {
+    ContextLimits[key] = Math.max(ContextLimits[key] || 0, SANE_LIMITS[key]);
+  }
+  if (!dynamicIblDisabled) {
+    const DEMM = (
+      CesiumNS as unknown as {
+        DynamicEnvironmentMapManager?: { isDynamicUpdateSupported: () => boolean };
+      }
+    ).DynamicEnvironmentMapManager;
+    if (DEMM) {
+      DEMM.isDynamicUpdateSupported = () => false;
+      dynamicIblDisabled = true;
+    }
+  }
+}
+
+// --- Perfil de qualidade ----------------------------------------------------
+
+/**
+ * Mesma experiência, mesmos dados, mesmas telas — o que muda é o custo por
+ * frame. A cena era afinada para uma máquina de trabalho (MSAA 4×, sombras
+ * 2048, SSE 20, FXAA) e essa combinação, sobre um GLB de 23 MB e a
+ * fotogrametria do Google, é a mais cara possível justamente no aparelho mais
+ * fraco. O celular do corretor no plantão é o caso real, não a exceção.
+ */
+export type PerfilQualidade = "alto" | "baixo";
+
+/** O que o usuário escolheu — `auto` deixa a detecção decidir. */
+export type QualidadeOpcao = "auto" | PerfilQualidade;
+
+const CHAVE_QUALIDADE = "ivm-qualidade";
+
+/**
+ * Preferência gravada. Existe porque a detecção erra nos dois sentidos: um
+ * notebook fraco de plantão pede `baixo`, e um tablet bom ligado no telão pede
+ * `alto`. Aceita também `?qualidade=alto` na URL, que é como se força numa
+ * máquina emprestada sem mexer em configuração.
+ */
+export function qualidadeEscolhida(): QualidadeOpcao {
+  try {
+    const naUrl = new URLSearchParams(window.location.search).get("qualidade");
+    if (naUrl === "alto" || naUrl === "baixo" || naUrl === "auto") {
+      localStorage.setItem(CHAVE_QUALIDADE, naUrl);
+      return naUrl;
+    }
+    const salvo = localStorage.getItem(CHAVE_QUALIDADE);
+    if (salvo === "alto" || salvo === "baixo" || salvo === "auto") return salvo;
+  } catch {
+    /* localStorage bloqueado (modo privado): segue no automático */
+  }
+  return "auto";
+}
+
+export function definirQualidade(v: QualidadeOpcao) {
+  try {
+    localStorage.setItem(CHAVE_QUALIDADE, v);
+  } catch {
+    /* sem persistência: vale só para esta sessão */
+  }
+}
+
+/**
+ * Detecção por capacidade, não por user-agent: o que interessa é quantos
+ * núcleos, quanta memória e que tamanho de tela o aparelho tem — sniffar o
+ * nome do navegador envelhece mal e erra em tablet.
+ *
+ * `deviceMemory` e `hardwareConcurrency` não existem em todo navegador; a
+ * ausência não conta como sinal de fraqueza (senão todo Safari cairia em
+ * `baixo`), só a presença com valor baixo conta.
+ */
+export function detectarPerfil(): PerfilQualidade {
+  if (typeof window === "undefined") return "alto";
+  const nav = navigator as Navigator & { deviceMemory?: number };
+
+  const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
+  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
+  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 700;
+  // Ponteiro grosso = dedo. Sozinho não decide (há laptop com touch), mas
+  // somado à tela estreita é a assinatura do celular.
+  const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+
+  const sinais = [poucosNucleos, poucaMemoria, telaEstreita && toque];
+  return sinais.filter(Boolean).length >= 2 ? "baixo" : "alto";
+}
+
+/** Perfil em vigor: a escolha do usuário quando há uma, senão a detecção. */
+export function perfilEmVigor(): PerfilQualidade {
+  const escolha = qualidadeEscolhida();
+  return escolha === "auto" ? detectarPerfil() : escolha;
+}
+
+interface AjustesQualidade {
+  msaa: number;
+  fxaa: boolean;
+  sombras: boolean;
+  sombraTam: number;
+  /** Erro de tela do tileset: maior = menos tiles, menos carga, menos detalhe. */
+  sse: number;
+}
+
+const QUALIDADE: Record<PerfilQualidade, AjustesQualidade> = {
+  alto: { msaa: 4, fxaa: true, sombras: true, sombraTam: 2048, sse: 20 },
+  // Sombras seguem LIGADAS no perfil baixo, em 1024: a simulação solar é o
+  // argumento de venda da cena, e uma vitrine sem sombra é outra experiência,
+  // não a mesma mais leve. O que cai é a resolução do mapa, não o recurso.
+  baixo: { msaa: 0, fxaa: false, sombras: true, sombraTam: 1024, sse: 36 },
+};
+
+interface CreatedViewer {
+  viewer: Viewer;
+  tileset: Cesium3DTileset;
+  /** Perfil efetivamente aplicado (para a interface poder exibi-lo). */
+  perfil: PerfilQualidade;
+}
+
+/**
+ * Cria o Viewer do Cesium com a fotogrametria fotorrealista do Google, já com
+ * todas as correções descobertas: WebGL degradado blindado, throttle de
+ * requests desligado (senão os tiles do Google nunca são emitidos), IBL do
+ * tileset desligada e sombras solares ativas.
+ */
+export async function createVision3DViewer(
+  container: HTMLElement,
+  apiKey: string,
+): Promise<CreatedViewer> {
+  // Must run before Viewer creates WebGL and reads ContextLimits. Running it
+  // afterward leaves the first render broken on remote/software GPUs.
+  patchDegradedWebGL();
+
+  const perfil = perfilEmVigor();
+  const q = QUALIDADE[perfil];
+
+  const viewer = new Viewer(container, {
+    // preserveDrawingBuffer: sem isto o navegador descarta o buffer logo após
+    // compor o frame, e `canvas.toDataURL()` devolve uma imagem em branco — ou
+    // seja, não haveria como capturar a miniatura das vistas no editor nem o
+    // botão de screenshot. Custa um pouco de memória; é o preço da captura.
+    contextOptions: { webgl: { preserveDrawingBuffer: true } },
+    // Sem globo/imagery padrão: os 3D Tiles do Google fornecem a superfície e
+    // evitamos exigir token do Cesium Ion.
+    globe: false,
+    baseLayer: false,
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    animation: false,
+    timeline: false,
+    fullscreenButton: false,
+    selectionIndicator: false,
+    infoBox: false,
+    shadows: q.sombras,
+    // PERFORMANCE: só renderiza quando algo muda (câmera, tiles novos, sol,
+    // seleção). Sem isto o Cesium redesenha 60x/s a mesma cena — o que travava
+    // a navegação nesta máquina (WebGL degradado/remoto). As mutações chamam
+    // scene.requestRender() explicitamente em Scene3D.
+    requestRenderMode: true,
+    // O relógio fica fixo no instante solar, então nenhuma passagem de tempo de
+    // simulação deve provocar render. O nome correto é maximumRenderTimeChange:
+    // antes estava escrito "maximumRenderTime", que não existe — a opção era
+    // descartada em silêncio.
+    maximumRenderTimeChange: Infinity,
+  });
+
+  const scene = viewer.scene;
+
+  // Sombras: 2048 no perfil alto (era 4096) já reduzia muito o custo por frame
+  // mantendo qualidade para a simulação solar; 1024 no perfil baixo. As sombras
+  // suaves são o extra que sai primeiro — são um segundo passe de filtragem.
+  viewer.shadowMap.softShadows = perfil === "alto";
+  viewer.shadowMap.size = q.sombraTam;
+  viewer.shadowMap.maximumDistance = 6000;
+  viewer.shadowMap.enabled = q.sombras;
+  viewer.shadowMap.darkness = 0.45;
+  if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
+
+  // Luz solar um pouco mais forte para o modelo GLB (vidro escuro) ler melhor.
+  // scene.light é a SunLight padrão (segue o sol do relógio → sombras corretas).
+  scene.light.intensity = 2.0;
+
+  // Anti-aliasing: MSAA suaviza as arestas de geometria (silhueta do prédio,
+  // linhas) e FXAA suaviza o resto. Com requestRenderMode a cena fica ociosa
+  // (0 frames), então o custo do AA só aparece durante a interação — vale a
+  // qualidade num desktop. No perfil baixo os dois saem: o serrilhado numa tela
+  // de 5" com densidade alta praticamente não se vê, e o passe de pós-processo
+  // é justamente o que custa caro numa GPU integrada de celular.
+  scene.msaaSamples = q.msaa;
+  scene.postProcessStages.fxaa.enabled = q.fxaa;
+  scene.fog.enabled = false;
+  // Não recolorir/relightar globalmente a cada frame.
+  scene.highDynamicRange = false;
+
+  /**
+   * Limites da navegação.
+   *
+   * Sem globo (`globe: false`), o Cesium não tem uma superfície contra a qual
+   * medir o zoom: ele cai na altura acima da elipsoide, e cada passo é uma
+   * fração dessa altura. Subindo, o passo cresce junto — e a roda do mouse
+   * acelera até mandar a câmera para o infinito, de onde não se volta. O teto
+   * de 20 km é folgado (a vitrine inteira cabe em menos de 1 km) e o piso de
+   * 5 m evita atravessar a fachada.
+   */
+  const nav = scene.screenSpaceCameraController;
+  nav.minimumZoomDistance = 5;
+  nav.maximumZoomDistance = 20000;
+  // Em frames pesados um único evento acumulava deslocamento demais e o zoom
+  // parecia "arremessar" a câmera. Menos inércia e um teto menor por quadro
+  // deixam mouse e touchpad previsíveis sem remover liberdade de navegação.
+  nav.inertiaZoom = 0.15;
+  nav.inertiaTranslate = 0.25;
+  nav.inertiaSpin = 0.25;
+  nav.maximumMovementRatio = 0.05;
+  nav.zoomFactor = 2;
+  /**
+   * NÃO existe piso de câmera nesta cena, e é uma decisão consciente.
+   *
+   * `enableCollisionDetection` (que fica no padrão, ligado) mede contra o
+   * GLOBO, e aqui `globe: false` — a superfície é a fotogrametria, que para o
+   * controlador é geometria como outra qualquer. Então ele não barra nada, e a
+   * câmera atravessa o chão.
+   *
+   * Um piso próprio foi tentado e removido. O motivo não foi a dificuldade: é
+   * que ele dependia da amostragem de altura do terreno, que desiste em
+   * silêncio quando os tiles do Google demoram — e o resultado era um editor
+   * que barrava a câmera num projeto e não barrava em outro, conforme a rede do
+   * momento. Comportamento que varia com a sorte é pior do que ausência de
+   * comportamento. Além disso, as duas implementações (por quadro e por
+   * `moveEnd`) travaram a aplicação inteira, cada uma do seu jeito.
+   *
+   * Refazer exige uma referência de altura CONFIÁVEL — gravada no projeto na
+   * calibração, não amostrada em tempo de execução.
+   */
+
+  GoogleMaps.defaultApiKey = apiKey;
+
+  // CRÍTICO: com o throttle padrão os tiles do Google ficam com prioridade
+  // baixa (globe:false) e NUNCA são emitidos na rede (fotogrametria invisível).
+  // Desligar força a emissão. O "flood" que travava era, na verdade, a
+  // amostragem de terreno com clampToHeightMostDetailed em vários pontos ao
+  // mesmo tempo (força alta resolução na cidade toda) — isso agora é feito
+  // apenas 1 prédio por vez, ao selecionar.
+  RequestScheduler.throttleRequests = false;
+
+  const tileset = await createGooglePhotorealistic3DTileset({
+    onlyUsingWithGoogleGeocoder: true,
+  });
+  // A fotogrametria já traz iluminação/sombras na textura. Fazê-la participar
+  // novamente do shadow map duplica milhares de comandos e, com clipping
+  // polygons, ativa um bug do Cesium em que o sampler ainda não tem `_target`.
+  // O GLB do empreendimento continua projetando e recebendo sombras normalmente.
+  tileset.shadows = ShadowMode.DISABLED;
+  // SSE maior = menos tiles pedidos, menos memória, menos rede. É a alavanca de
+  // maior efeito no celular, onde o gargalo costuma ser baixar a fotogrametria,
+  // não desenhá-la.
+  tileset.maximumScreenSpaceError = q.sse;
+  if (tileset.environmentMapManager) tileset.environmentMapManager.enabled = false;
+  viewer.scene.primitives.add(tileset);
+
+  return { viewer, tileset, perfil };
+}

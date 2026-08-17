@@ -1,0 +1,1776 @@
+import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import {
+  Viewer,
+  Cartesian3,
+  Cartographic,
+  Cartesian2,
+  Color,
+  Math as CesiumMath,
+  JulianDate,
+  HeadingPitchRoll,
+  HeadingPitchRange,
+  BoundingSphere,
+  Transforms,
+  Matrix3,
+  Matrix4,
+  Quaternion,
+  ShadowMode,
+  Model,
+  Entity,
+  ConstantProperty,
+  ConstantPositionProperty,
+  ColorMaterialProperty,
+  ScreenSpaceEventHandler,
+  ScreenSpaceEventType,
+  KeyboardEventModifier,
+  LabelStyle,
+  VerticalOrigin,
+  NearFarScalar,
+  Plane,
+  IntersectionTests,
+  CallbackProperty,
+  CallbackPositionProperty,
+  PolylineArrowMaterialProperty,
+  ColorBlendMode,
+  ClippingPlaneCollection,
+  ClippingPlane,
+  Ellipsoid,
+  Cartesian4,
+  PolygonHierarchy,
+  PolylineGraphics,
+  PostProcessStage,
+  type Cesium3DTileset,
+} from "cesium";
+import { createVision3DViewer, FALLBACK_GROUND_HEIGHT } from "@/lib/cesium-setup";
+import { corDaCategoriaPoi } from "@/lib/poi-icones";
+import type { Building3D } from "@/lib/vision3d-config";
+import type { CameraView } from "@/lib/placements";
+import type { UnitBox } from "@/lib/unidades3d";
+
+/**
+ * Corte de pavimento: um plano horizontal no espaço do modelo, opcionalmente
+ * limitado à pegada de um bloco.
+ *
+ * Sem `bloco`, o corte atravessa o empreendimento inteiro — o comportamento
+ * antigo, e o certo para um prédio único. Com `bloco`, só aquela torre é
+ * aberta e as vizinhas ficam íntegras, que é o que dá contexto ao cliente.
+ */
+export interface CorteDef {
+  /** Altura do corte em metros do MODELO (pré-escala), como `posicao.z`. */
+  z: number;
+  /** Retângulo do corte; tudo acima dele some. Ausente = o modelo inteiro. */
+  area?: { x: number; y: number; comprimento: number; largura: number; rot: number };
+}
+
+/** Caixa da torre em edição, desenhada como contorno para calibrar o volume. */
+export interface TowerOutline {
+  buildingId: string;
+  /** Centro no plano do modelo e base do bloco. */
+  x: number;
+  y: number;
+  z: number;
+  comprimento: number;
+  largura: number;
+  altura: number;
+  rot: number;
+  rotX?: number;
+  rotY?: number;
+}
+
+export interface Scene3DHandle {
+  getCurrentCamera: () => CameraView | null;
+  flyToCamera: (cam: CameraView, duration?: number) => void;
+  flyToPoi: (lat: number, lng: number) => void;
+  flyHome: () => void;
+  /** Corta o modelo do empreendimento selecionado (null = limpa). */
+  cutAtFloor: (corte: CorteDef | number | null) => void;
+  /** Voa a câmera para a altura de um pavimento, olhando para o mar. */
+  viewFromFloor: (camH: number, heading: number, duration?: number) => void;
+  /** Visão externa oblíqua para ver o corte. */
+  viewCutExternal: (duration?: number) => void;
+  /**
+   * Vista do corte: a `distancia` metros do modelo do centro da área, na
+   * inclinação `pitchGraus` (-90 = de cima) e girada `giroGraus` a partir do
+   * eixo maior do retângulo.
+   */
+  viewCorteDeCima: (
+    corte: CorteDef, distancia: number,
+    pitchGraus?: number, giroGraus?: number, duration?: number,
+  ) => void;
+  /** Enquadra o prédio selecionado (visão externa). */
+  frameBuilding: () => void;
+  /** Enquadra uma unidade do espelho 3D (pelo id da caixa). */
+  frameUnit: (
+    unitId: string,
+    /** Enquadramento configurado da unidade; sem ele, mantém o azimute atual. */
+    cam?: { angulo: number; inclinacao: number; distancia: number },
+    duration?: number,
+  ) => boolean;
+  /** Converte um ponto do mapa nas coordenadas X/Y do modelo (editor). */
+  modelLocalFromLatLng: (buildingId: string, lat: number, lng: number) => { x: number; y: number } | null;
+  /**
+   * Imagem do que está na tela agora, como data URL JPEG. Usada para a
+   * miniatura das vistas salvas e para o botão de captura da experiência.
+   * `maxW` limita a largura (a altura acompanha a proporção).
+   */
+  captureImage: (maxW?: number, quality?: number) => string | null;
+}
+
+// A cor do POI vem de `lib/poi-icones`, a mesma fonte do mapa 2D e do editor.
+// Havia aqui uma terceira tabela fixa, que ignorava o `estiloCategoriaPoi` do
+// projeto: uma categoria criada pelo usuário ("Marina") aparecia com a cor
+// escolhida no mapa, com outra cor na lista do editor e cinza na cena 3D.
+
+interface Scene3DProps {
+  apiKey: string;
+  buildings: Building3D[];
+  /** Instante UTC do sol (já convertido do horário local). */
+  solarUtc: Date;
+  /** Elevação solar em graus; dirige céu, luz e contraste do crepúsculo. */
+  solarAltitude?: number;
+  selectedId: string | null;
+  editMode?: boolean;
+  onSelect?: (id: string | null) => void;
+  onReady?: () => void;
+  /**
+   * Há um GLB baixando agora.
+   *
+   * `onReady` avisa que o VIEWER existe — o que acontece em milissegundos,
+   * muito antes de o modelo estar na cena. Quem só escutava `onReady` tirava a
+   * tela de carregamento cedo demais e o prédio surgia do nada, segundos
+   * depois, sobre uma cena já entregue como pronta. Este aviso cobre justamente
+   * a janela entre uma coisa e outra.
+   */
+  onModelLoading?: (carregando: boolean) => void;
+  onError?: (msg: string) => void;
+  /** Clique no terreno em modo edição, com um empreendimento selecionado. */
+  onEditPlace?: (id: string, lat: number, lng: number) => void;
+  /** Arraste dos gizmos (modo edição): atualiza posição/rotação/escala ao vivo. */
+  onEditTransform?: (
+    id: string,
+    patch: Partial<Record<
+      "offsetEast" | "offsetNorth" | "heightOffset" | "heading" | "pitch" | "roll" | "scale",
+      number
+    >>,
+  ) => void;
+  /** Espelho de vendas em 3D: uma caixa por unidade, colorida por status. */
+  unitBoxes?: UnitBox[];
+  /**
+   * Clique numa unidade do espelho 3D. Os modificadores acompanham o clique
+   * para o editor poder acumular a seleção (Ctrl) sem reimplementar o
+   * rastreamento de teclado — a cena já o mantém para o encaixe do gizmo.
+   */
+  onSelectUnit?: (unitId: string, mods: { ctrl: boolean; shift: boolean }) => void;
+  /** Contorno da torre em calibração (editor). */
+  towerOutline?: TowerOutline | null;
+  /**
+   * Retângulo do corte em edição, desenhado como uma laje fina na altura do
+   * corte. Sem ele o ajuste é às cegas: o recorte só se enxerga onde há
+   * geometria, e é justamente na borda vazia que se erra o enquadramento.
+   */
+  corteArea?: (CorteDef & { buildingId: string }) | null;
+  /** Há um posicionamento por clique em curso: o clique não seleciona, posiciona. */
+  placementActive?: boolean;
+  /**
+   * Modo noturno: baixa a luz da cena e realça o modelo para ele não virar uma
+   * silhueta preta. Não acende janelas — isso depende de material emissivo no
+   * próprio GLB, que o Cesium respeita mas não sabe criar.
+   */
+  noturno?: boolean;
+  /** Quanto realçar o modelo à noite (0..1). */
+  realceNoturno?: number;
+  /** Heading da câmera em graus, emitido durante o movimento (bússola). */
+  onCameraMove?: (headingGraus: number) => void;
+  /**
+   * Ferramenta ativa do gizmo, como em qualquer editor 3D: só a alça da
+   * ferramenta escolhida aparece. Com as cinco alças na tela ao mesmo tempo,
+   * acertar a certa era loteria.
+   */
+  gizmoModo?: GizmoModo;
+  /** Valor em curso durante o arraste (para exibir sobre o viewport). */
+  onGizmoInfo?: (info: string | null) => void;
+  /**
+   * Mostra o pivô do EMPREENDIMENTO (posição/giro/escala do GLB inteiro).
+   *
+   * Existe separado de `editMode` porque as duas coisas não são a mesma: o
+   * editor está sempre em modo edição (é dele que dependem o clique de
+   * posicionar e o arraste), mas o pivô do modelo só faz sentido na aba em que
+   * ele se edita. Fora dela, as alças ficavam plantadas no meio da cena e —
+   * como os pontos das pontas ignoram profundidade — roubavam o clique de
+   * tudo o que estivesse atrás.
+   */
+  gizmoEmpreendimento?: boolean;
+  /** Pivô de um alvo no espaço do modelo (torre, unidade avulsa, grupo). */
+  gizmoLocal?: GizmoLocal | null;
+  /** Arraste do pivô local, em coordenadas do modelo. */
+  onGizmoLocalTransform?: (id: string, patch: GizmoLocalPatch) => void;
+}
+
+/** Ferramentas de manipulação do modelo. */
+export type GizmoModo = "mover" | "girar" | "escalar";
+
+/**
+ * Alvo do pivô no referencial do MODELO (não o ENU do mundo).
+ *
+ * As torres e as unidades avulsas guardam X/Y/Z em metros do modelo, então o
+ * pivô delas tem de andar nos eixos do modelo: puxar a seta vermelha muda o
+ * campo "X (m)" e nada mais. Um pivô em ENU faria cada arraste mexer nos três
+ * campos ao mesmo tempo, que é o oposto de calibrar.
+ */
+export interface GizmoLocal {
+  /** Identifica o alvo para o editor (`torre:<id>`, `unidade:<id>`, `grupo`). */
+  id: string;
+  buildingId: string;
+  x: number;
+  y: number;
+  z: number;
+  /** Giro em torno do Z do modelo (graus, anti-horário). */
+  rot: number;
+  /** Inclinação nos eixos X e Y do modelo (graus). Compostos Rz · Ry · Rx. */
+  rotX?: number;
+  rotY?: number;
+  /** Caixa do alvo: define o tamanho das alças e o que a escala redimensiona. */
+  dims?: { dx: number; dy: number; dz: number };
+  /**
+   * O alvo não tem altura própria — o plano de corte é o caso: ele tem um
+   * retângulo (X e Y) mas nenhuma espessura, e o `dz` que vai em `dims` é só
+   * um valor de fachada para as alças terem tamanho. Sem isto a alça azul de
+   * escala apareceria e não faria absolutamente nada ao ser arrastada.
+   */
+  semEscalaZ?: boolean;
+  /** Seleção múltipla: só a translação tem significado sobre um centroide. */
+  somenteMover?: boolean;
+  /**
+   * Só a alça vertical. É o pivô de um corte de pavimento: ele tem uma
+   * liberdade só — a altura —, e mostrar as três setas convidaria a arrastar
+   * as duas que não fazem nada.
+   */
+  somenteZ?: boolean;
+}
+
+/** Patch emitido pelo arraste do pivô local (metros/graus do modelo). */
+export type GizmoLocalPatch = Partial<
+  Record<"x" | "y" | "z" | "rot" | "rotX" | "rotY" | "dx" | "dy" | "dz", number>
+>;
+
+/** Os três anéis do modo girar, nomeados pelo eixo em torno do qual giram. */
+type AnelKind = "rot" | "rotX" | "rotY";
+
+interface BuildingNode {
+  model?: Model;
+  box?: Entity;
+  marker?: Entity;
+  loadedUrl?: string;
+  /**
+   * URL do GLB em voo AGORA.
+   *
+   * `loadedUrl` só é gravado quando o download termina, então enquanto ele
+   * corria o `reconcile` continuava vendo "o modelo carregado não é o pedido" e
+   * disparava outro. E `reconcile` roda a cada mudança de `buildings` — que no
+   * editor é a cada tecla digitada: dava para ter meia dúzia de downloads do
+   * mesmo arquivo de 23 MB em paralelo.
+   */
+  loadingUrl?: string;
+  /** Símbolo em uso no marcador — se mudar, o marcador é recriado. */
+  markerImg?: string;
+  groundHeight: number;
+}
+
+// Paleta da marca Quinta das Mangueiras.
+const BRAND_TURQUOISE = "#12a19a";
+const BRAND_NAVY = "#094676";
+const MARKER_BG = Color.fromCssColorString(BRAND_NAVY).withAlpha(0.92);
+const MARKER_BG_SEL = Color.fromCssColorString(BRAND_TURQUOISE).withAlpha(0.96);
+
+/**
+ * Opções de polilinha das alças — passa direto, existe só para marcar o ponto.
+ *
+ * ATENÇÃO: `disableDepthTestDistance` NÃO existe em PolylineGraphics — só em
+ * pontos, rótulos e billboards. Ele estava sendo passado aqui e simplesmente
+ * ignorado, o que significa que as setas SÃO testadas em profundidade e podem
+ * ficar escondidas dentro do modelo. Por isso quem carrega o clique são os
+ * PONTOS nas pontas, que aceitam a propriedade e ficam sempre por cima.
+ */
+function linhaDaAlca(opts: PolylineGraphics.ConstructorOptions): PolylineGraphics.ConstructorOptions {
+  return opts;
+}
+
+const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
+  {
+    apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
+    onModelLoading, onError,
+    onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
+    noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
+    gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform, corteArea = null,
+  },
+  ref,
+) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<Viewer | null>(null);
+  const nightStageRef = useRef<PostProcessStage | null>(null);
+  const nightAmountRef = useRef(0);
+  const tilesetRef = useRef<Cesium3DTileset | null>(null);
+  const nodesRef = useRef<Map<string, BuildingNode>>(new Map());
+  const poiMarkersRef = useRef<Entity[]>([]);
+  const readyRef = useRef(false);
+  /**
+   * Modelos baixando agora, por id de empreendimento. É um conjunto, e não um
+   * booleano, porque a cena aceita vários prédios: o carregamento só termina
+   * quando o último deles termina.
+   */
+  const carregandoRef = useRef<Set<string>>(new Set());
+  const onModelLoadingRef = useRef(onModelLoading);
+  onModelLoadingRef.current = onModelLoading;
+
+  /** Entra/sai da lista de carregamento e avisa a página só quando o todo muda. */
+  function marcarCarregamento(id: string, carregando: boolean) {
+    const s = carregandoRef.current;
+    const antes = s.size > 0;
+    if (carregando) s.add(id);
+    else s.delete(id);
+    const agora = s.size > 0;
+    if (antes !== agora) onModelLoadingRef.current?.(agora);
+  }
+  // Entidades do espelho 3D, por id de unidade.
+  const unitEntitiesRef = useRef<Map<string, Entity>>(new Map());
+  const outlineRef = useRef<Entity | null>(null);
+  /** Laje do retângulo do corte em edição. */
+  const corteAreaRef = useRef<Entity | null>(null);
+  /** Contorno do terreno (perímetro do empreendimento). */
+  const perimetroRef = useRef<Entity[]>([]);
+  const onSelectUnitRef = useRef(onSelectUnit);
+  onSelectUnitRef.current = onSelectUnit;
+  // O handler de clique é registrado uma vez na init, então ele congelaria o
+  // callback do primeiro render — daí a ref (mesmo motivo dos outros aqui).
+  const onEditPlaceRef = useRef(onEditPlace);
+  onEditPlaceRef.current = onEditPlace;
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const placementRef = useRef(placementActive);
+  placementRef.current = placementActive;
+  const onCameraMoveRef = useRef(onCameraMove);
+  onCameraMoveRef.current = onCameraMove;
+  const gizmoModoRef = useRef(gizmoModo);
+  gizmoModoRef.current = gizmoModo;
+  const onGizmoInfoRef = useRef(onGizmoInfo);
+  onGizmoInfoRef.current = onGizmoInfo;
+  /**
+   * Modificadores do teclado. O handler de eventos do Cesium não informa se
+   * Ctrl ou Shift estão pressionados, então acompanhamos pela janela.
+   */
+  const modRef = useRef({ ctrl: false, shift: false });
+  /** Último heading emitido — evita disparar a cada frame por variação mínima. */
+  const headingRef = useRef(-999);
+  // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
+  const noturnoRef = useRef(noturno);
+  noturnoRef.current = noturno;
+  const realceRef = useRef(realceNoturno);
+  realceRef.current = realceNoturno;
+
+  const buildingsRef = useRef(buildings);
+  const selectedRef = useRef(selectedId);
+  const editRef = useRef(editMode);
+  const onEditTransformRef = useRef(onEditTransform);
+  buildingsRef.current = buildings;
+  selectedRef.current = selectedId;
+  editRef.current = editMode;
+  onEditTransformRef.current = onEditTransform;
+
+  // --- Gizmo de manipulação (só modo edição) ----------------------------------
+  const gizmoRef = useRef<Entity[]>([]);
+  const gizmoEmpRef = useRef(gizmoEmpreendimento);
+  gizmoEmpRef.current = gizmoEmpreendimento;
+  const gizmoLocalRef = useRef(gizmoLocal);
+  gizmoLocalRef.current = gizmoLocal;
+  const onGizmoLocalTransformRef = useRef(onGizmoLocalTransform);
+  onGizmoLocalTransformRef.current = onGizmoLocalTransform;
+  /**
+   * Frame ao vivo do gizmo, lido pelas CallbackProperty.
+   *
+   * `east/north/up` são os três eixos do pivô: o ENU do mundo quando o alvo é o
+   * empreendimento, e o X/Y/Z do modelo quando é um alvo local. O resto do
+   * código de arraste é o mesmo nos dois casos — muda só o que o eixo significa.
+   */
+  const gframeRef = useRef<{
+    /** Onde as alças são desenhadas — o pivô, que pode ter sido reposicionado. */
+    origin: Cartesian3;
+    /** Centro real do alvo. Girar/escalar acontece em torno de `origin`, mas é
+     *  este ponto que se desloca quando o pivô não está no centro. */
+    origemNatural: Cartesian3;
+    east: Cartesian3;
+    north: Cartesian3;
+    up: Cartesian3;
+    /**
+     * Eixos do ALVO já girado — `east/north/up` compostos com o `rot/rotX/rotY`
+     * dele. São coisas diferentes e cada ferramenta precisa de uma:
+     *
+     * - MOVER usa os eixos do modelo, porque `posicao.x/y/z` são medidos no
+     *   espaço do modelo e não acompanham o giro da peça;
+     * - REDIMENSIONAR e GIRAR usam estes, porque `dx` se estende ao longo do X
+     *   DA PEÇA, e o eixo do fator `Rx` em `Rz·Ry·Rx` é `Rz·Ry·(1,0,0)`.
+     *
+     * Sem a distinção, numa torre com `rot: 90` — o caso do piloto — a alça
+     * vermelha crescia a caixa na direção para onde a verde apontava, e o anel
+     * vermelho girava em torno do eixo do anel verde. Era isso que aparecia
+     * como "os pivôs estão invertidos".
+     */
+    eastObj: Cartesian3;
+    northObj: Cartesian3;
+    upObj: Cartesian3;
+    L: number;
+    /** Alvo local (eixos do modelo) em vez do empreendimento (eixos ENU). */
+    local: boolean;
+    /** Escala do modelo: converte metros do mundo em metros do modelo. */
+    escala: number;
+  } | null>(null);
+  /**
+   * Pivô reposicionado, em PONTO ABSOLUTO do mundo (não deslocamento).
+   *
+   * Guardar o ponto, e não um offset, é o que faz o pivô ficar onde foi
+   * largado: o alvo gira em torno dele e sai do lugar, mas o pivô não se mexe
+   * junto — é o comportamento do Unreal. `null` = pivô no centro do alvo.
+   */
+  const pivotRef = useRef<Cartesian3 | null>(null);
+  // Estado de arraste em curso.
+  const dragRef = useRef<null | {
+    id: string;
+    /** `sX`/`sY`/`sZ` redimensionam UM eixo; `scale` é a escala uniforme. */
+    kind: "tE" | "tN" | "tU" | AnelKind | "scale" | "sX" | "sY" | "sZ";
+    local: boolean;
+    /** b.scale no início do arraste (mundo → modelo). */
+    escala: number;
+    axisO: Cartesian3; // origem do eixo/plano fixada no início do arraste
+    axisD: Cartesian3; // direção do eixo (translação)
+    up: Cartesian3;
+    east: Cartesian3;
+    north: Cartesian3;
+    startScalar: number; // t inicial no eixo (translação) ou dist/ângulo inicial
+    startValue: number; // valor inicial do campo (offset/height/heading/scale)
+    /** Caixa do alvo local no início do arraste (ferramenta de escala). */
+    startDims?: { dx: number; dy: number; dz: number };
+    /** Plano do anel em curso: normal e a base em que o ângulo é medido. */
+    anel?: { n: Cartesian3; u1: Cartesian3; u2: Cartesian3 };
+    /**
+     * Deslocamento do pivô em relação ao centro do alvo, no mundo, fixado no
+     * início do arraste. Vazio quando o pivô está no centro — o caso em que
+     * girar e escalar não movem o alvo de lugar.
+     */
+    pivot?: Cartesian3;
+    /** Posição do alvo no início do arraste, para recentrar em torno do pivô. */
+    startPos?: { a: number; b: number; c: number };
+  }>(null);
+  const gizmoDraggedRef = useRef(false);
+
+  // Com requestRenderMode ligado, a cena só redesenha sob demanda. Chamamos isto
+  // após qualquer mutação (sol, seleção, modelo, POIs) para refletir a mudança.
+  const requestRender = () => viewerRef.current?.scene.requestRender();
+
+  // --- Imperative handle (usado pelo editor / páginas) ------------------------
+  useImperativeHandle(ref, () => ({
+    getCurrentCamera: () => {
+      const v = viewerRef.current;
+      if (!v) return null;
+      const c = v.camera.positionCartographic;
+      return {
+        lng: CesiumMath.toDegrees(c.longitude),
+        lat: CesiumMath.toDegrees(c.latitude),
+        height: c.height,
+        heading: CesiumMath.toDegrees(v.camera.heading),
+        pitch: CesiumMath.toDegrees(v.camera.pitch),
+        roll: CesiumMath.toDegrees(v.camera.roll),
+      };
+    },
+    flyToCamera: (cam, duration = 1.5) => flyToCamera(cam, duration),
+    flyToPoi: (lat, lng) => flyToPoi(lat, lng),
+    flyHome: () => flyHome(),
+    cutAtFloor: (modelZ) => cutAtFloor(modelZ),
+    viewFromFloor: (camH, heading, duration) => viewFromFloor(camH, heading, duration),
+    viewCutExternal: (duration) => viewCutExternal(duration),
+    viewCorteDeCima: (corte, distancia, pitchGraus, giroGraus, duration) =>
+      viewCorteDeCima(corte, distancia, pitchGraus, giroGraus, duration),
+    frameBuilding: () => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
+      if (b) flyToBuilding(b);
+    },
+    frameUnit: (unitId, cam, duration) => frameUnit(unitId, cam, duration),
+    modelLocalFromLatLng: (buildingId, lat, lng) => modelLocalFromLatLng(buildingId, lat, lng),
+    captureImage: (maxW = 240, quality = 0.6) => captureImage(maxW, quality),
+  }));
+
+  /**
+   * Captura o frame atual. Com `requestRenderMode` ligado a cena fica ociosa,
+   * então é preciso forçar um render antes de ler o canvas — senão a imagem
+   * volta preta ou desatualizada.
+   */
+  function captureImage(maxW: number, quality: number): string | null {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return null;
+    try {
+      v.scene.render();
+      const origem = v.scene.canvas;
+      if (!origem.width || !origem.height) return null;
+      const escala = Math.min(1, maxW / origem.width);
+      const destino = document.createElement("canvas");
+      destino.width = Math.max(1, Math.round(origem.width * escala));
+      destino.height = Math.max(1, Math.round(origem.height * escala));
+      const ctx = destino.getContext("2d");
+      if (!ctx) return null;
+      ctx.drawImage(origem, 0, 0, destino.width, destino.height);
+      return destino.toDataURL("image/jpeg", quality);
+    } catch (e) {
+      console.error("[Scene3D] falha ao capturar imagem:", e);
+      return null;
+    }
+  }
+
+  // --- Init do viewer + tiles -------------------------------------------------
+  useEffect(() => {
+    if (!containerRef.current || viewerRef.current || !apiKey) return;
+    let destroyed = false;
+    let handler: ScreenSpaceEventHandler | null = null;
+    let aoPressionar: ((e: PointerEvent) => void) | null = null;
+
+    createVision3DViewer(containerRef.current, apiKey)
+      .then(({ viewer, tileset }) => {
+        if (destroyed) {
+          if (!viewer.isDestroyed()) viewer.destroy();
+          return;
+        }
+        viewerRef.current = viewer;
+        tilesetRef.current = tileset;
+        readyRef.current = true;
+
+        // Clique: seleciona empreendimento OU reposiciona (modo edição).
+        handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
+        const aoClicar = (ev: ScreenSpaceEventHandler.PositionedEvent) => {
+          // O Cesium engole exceções lançadas aqui dentro: sem este try/catch,
+          // qualquer erro no clique vira "não acontece nada" e some.
+          try {
+            onClick(ev.position);
+          } catch (e) {
+            console.error("[Scene3D] erro ao processar o clique:", e);
+          }
+        };
+        /**
+         * O clique precisa ser registrado UMA VEZ POR MODIFICADOR.
+         *
+         * O `ScreenSpaceEventHandler` do Cesium indexa as ações por (tipo,
+         * modificador) e procura a entrada exata: sem estas três linhas, um
+         * Ctrl+clique não encontra ação registrada e é simplesmente descartado
+         * — que é exatamente o clique de acumular seleção.
+         */
+        handler.setInputAction(aoClicar, ScreenSpaceEventType.LEFT_CLICK);
+        handler.setInputAction(aoClicar, ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.CTRL);
+        handler.setInputAction(aoClicar, ScreenSpaceEventType.LEFT_CLICK, KeyboardEventModifier.SHIFT);
+        /**
+         * ARRASTE DOS GIZMOS — em eventos DOM, não pelo handler do Cesium.
+         *
+         * O `ScreenSpaceCameraController` registra os próprios listeners no
+         * canvas durante a construção do Viewer, ou seja, ANTES dos nossos. Ao
+         * pressionar o botão ele já inicia a rotação da câmera; desligar
+         * `enableInputs` no mesmo evento não aborta um arraste em curso — e o
+         * resultado era exatamente "só a câmera se mexe, nunca o modelo".
+         *
+         * A solução é ouvir `pointerdown` no CONTÊINER (ancestral do canvas) em
+         * fase de CAPTURA: aí o evento passa por nós antes de chegar ao canvas.
+         * Se acertou uma alça, `stopPropagation` impede que o Cesium chegue a
+         * ver o clique, e o arraste segue por eventos de janela.
+         */
+        const container = containerRef.current;
+        if (container) {
+          const canvas = viewer.scene.canvas;
+          const posDoEvento = (e: PointerEvent) => {
+            const r = canvas.getBoundingClientRect();
+            return new Cartesian2(e.clientX - r.left, e.clientY - r.top);
+          };
+
+          aoPressionar = (e: PointerEvent) => {
+            // Fonte mais confiável que o keydown da janela: se o Ctrl foi
+            // pressionado antes da página receber o foco, o listener de teclado
+            // perdeu o evento — o do ponteiro traz o estado real.
+            modRef.current = { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey };
+
+            /**
+             * ALT + BOTÃO DO MEIO reposiciona o pivô, como no Unreal.
+             *
+             * Girar sempre pelo centro é a limitação que mais atrapalha ao
+             * encaixar uma peça: alinhar uma quina exige girar pela quina. O
+             * pivô fica no ponto clicado da superfície e o alvo passa a girar
+             * e escalar em torno dele. Alt+meio no vazio devolve ao centro.
+             */
+            if (e.button === 1 && e.altKey && editRef.current && gframeRef.current) {
+              const p = pickGround(posDoEvento(e));
+              pivotRef.current = p ?? null;
+              updateGframe();
+              requestRender();
+              onGizmoInfoRef.current?.(
+                p ? "Pivô reposicionado · Alt+meio no vazio devolve ao centro" : "Pivô de volta ao centro",
+              );
+              setTimeout(() => onGizmoInfoRef.current?.(null), 2600);
+              e.stopPropagation();
+              e.preventDefault();
+              return;
+            }
+
+            if (e.button !== 0 || !editRef.current) return;
+            let pegou = false;
+            try {
+              pegou = gizmoDown(posDoEvento(e));
+            } catch (err) {
+              console.error("[Scene3D] erro ao agarrar o gizmo:", err);
+            }
+            if (!pegou) {
+              // Diagnóstico na tela: quantas alças existem e o que estava sob o
+              // cursor. Sem isto, "não pega" é indistinguível de "não existe".
+              //
+              // Só quando HÁ alças: fora disso todo clique da cena (selecionar
+              // uma unidade, posicionar um POI) abriria um aviso dizendo
+              // "alças: 0", que não é diagnóstico de nada.
+              if (!gizmoRef.current.length) return;
+              try {
+                const p = viewer.scene.pick(posDoEvento(e));
+                const sob = idDaEntidade(p)
+                  ?? (typeof (p?.primitive as { id?: unknown } | undefined)?.id === "string"
+                      ? String((p!.primitive as { id: string }).id)
+                      : p ? "geometria sem id" : "nada");
+                onGizmoInfoRef.current?.(
+                  `alças: ${gizmoRef.current.length} · frame: ${gframeRef.current ? "ok" : "ausente"} · sob o cursor: ${sob}`,
+                );
+                setTimeout(() => onGizmoInfoRef.current?.(null), 3500);
+              } catch {
+                /* diagnóstico é melhor-esforço */
+              }
+              return;
+            }
+
+            e.stopPropagation();
+            e.preventDefault();
+
+            const mover = (ev: PointerEvent) => gizmoMove(posDoEvento(ev));
+            const soltar = () => {
+              gizmoUp();
+              window.removeEventListener("pointermove", mover);
+              window.removeEventListener("pointerup", soltar);
+              window.removeEventListener("pointercancel", soltar);
+            };
+            window.addEventListener("pointermove", mover);
+            window.addEventListener("pointerup", soltar);
+            window.addEventListener("pointercancel", soltar);
+          };
+          container.addEventListener("pointerdown", aoPressionar, true);
+        }
+
+        // Heading para a bússola. Com requestRenderMode a cena só desenha quando
+        // algo muda — que é exatamente quando a bússola precisa se mexer. O
+        // limiar evita reagir a variações imperceptíveis a cada frame.
+        viewer.scene.postRender.addEventListener(() => {
+          if (viewer.isDestroyed()) return;
+          const h = CesiumMath.toDegrees(viewer.camera.heading);
+          if (Math.abs(h - headingRef.current) > 0.3) {
+            headingRef.current = h;
+            onCameraMoveRef.current?.(h);
+          }
+        });
+
+        applySun();
+        reconcile();
+        // Se já há um empreendimento selecionado no load (projeto de
+        // empreendimento único abre direto nele), voa até o prédio e mostra os
+        // POIs; senão, dá a visão geral.
+        const selId = selectedRef.current;
+        const selB = selId ? buildingsRef.current.find((x) => x.id === selId) : undefined;
+        if (selB) {
+          flyToBuilding(selB);
+          showPoiMarkers(selB);
+          setTimeout(() => void sampleGroundFor(selB.id), 2500);
+        } else {
+          flyHome();
+        }
+        onReady?.();
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Falha ao carregar os 3D Tiles";
+        onError?.(
+          msg + " — verifique se a 'Map Tiles API' está habilitada e com billing na chave do Google.",
+        );
+      });
+
+    return () => {
+      destroyed = true;
+      readyRef.current = false;
+      if (aoPressionar && containerRef.current) {
+        containerRef.current.removeEventListener("pointerdown", aoPressionar, true);
+      }
+      handler?.destroy();
+      nodesRef.current.clear();
+      const v = viewerRef.current;
+      if (v && !v.isDestroyed()) v.destroy();
+      viewerRef.current = null;
+      tilesetRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey]);
+
+  // --- Amostragem de altura do terreno (só do prédio selecionado, sob demanda) -
+  // Evita forçar alta resolução na cidade toda (que floodava e travava). Amostra
+  // 1 ponto, quando a câmera já está perto do prédio e os tiles carregaram.
+  async function sampleGroundFor(id: string) {
+    const v = viewerRef.current;
+    if (!v || !readyRef.current) return;
+    const b = buildingsRef.current.find((x) => x.id === id);
+    const node = nodesRef.current.get(id);
+    if (!b || !node) return;
+    const probe = Cartesian3.fromDegrees(b.lng, b.lat, 3000);
+    try {
+      const timeout = new Promise<undefined>((r) => setTimeout(() => r(undefined), 8000));
+      const res = await Promise.race([v.scene.clampToHeightMostDetailed([probe]), timeout]);
+      const p = res && res[0];
+      if (!p || !viewerRef.current) return;
+      const carto = Cartographic.fromCartesian(p);
+      if (!carto || !Number.isFinite(carto.height)) return;
+      node.groundHeight = carto.height;
+      const cur = buildingsRef.current.find((x) => x.id === id);
+      if (!cur) return;
+      upsertMarker(cur, node);
+      if (cur.modelUrl) updateModelTransform(cur, node);
+      else upsertPlaceholder(cur, node);
+      // As caixas do espelho 3D usam a mesma matriz do modelo: sem isto, elas
+      // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
+      syncUnitBoxes();
+      syncTowerOutline();
+      requestRender();
+    } catch {
+      /* mantém fallback */
+    }
+  }
+
+  // --- Posicionamento ---------------------------------------------------------
+  function offsetLngLat(b: Building3D): [number, number] {
+    const mPerLat = 111320;
+    const mPerLng = 111320 * Math.cos(CesiumMath.toRadians(b.lat));
+    return [b.lng + b.offsetEast / mPerLng, b.lat + b.offsetNorth / mPerLat];
+  }
+
+  function modelMatrix(b: Building3D, gh: number): Matrix4 {
+    const [lng, lat] = offsetLngLat(b);
+    const origin = Cartesian3.fromDegrees(lng, lat, gh + b.heightOffset);
+    const hpr = new HeadingPitchRoll(
+      CesiumMath.toRadians(b.heading),
+      CesiumMath.toRadians(b.pitch),
+      CesiumMath.toRadians(b.roll),
+    );
+    return Transforms.headingPitchRollToFixedFrame(origin, hpr);
+  }
+
+  // --- Espelho de vendas em 3D ------------------------------------------------
+
+  /**
+   * Sincroniza as caixas das unidades. Cada caixa é posicionada no referencial
+   * do modelo (a mesma matriz do GLB), então ela acompanha posição, heading e
+   * altura do prédio automaticamente.
+   */
+  /**
+   * Aparência do GLB. Dois estados:
+   *
+   * 1. **Noturno** — realce claro para o prédio não virar uma silhueta preta.
+   *    Não é iluminação: janela acesa depende de material emissivo no GLB.
+   * 2. **Normal** — mistura leve e fria, que levanta o vidro escuro da fachada.
+   *
+   * Havia um terceiro, o "fantasma": com o espelho 3D ligado a fachada inteira
+   * virava vidro (alpha 0.16) para as caixas das unidades aparecerem por trás
+   * dela. O empreendimento — que é o produto — deixava de ser visível
+   * justamente na tela em que o cliente escolhe o apartamento, e sem a fachada
+   * legível as caixas flutuavam sem referência: não dava para dizer em que
+   * altura ou em que face estavam.
+   *
+   * Agora o modelo fica SEMPRE íntegro e quem ganha transparência é a caixa
+   * (ver `opacidade` em `buildUnitBoxes`) — na vitrine e no editor.
+   */
+  function aplicarAparenciaModelo() {
+    for (const node of Array.from(nodesRef.current.values())) {
+      const m = node.model;
+      if (!m) continue;
+      if (noturnoRef.current) {
+        m.color = Color.fromCssColorString("#cfe3f0");
+        m.colorBlendMode = ColorBlendMode.MIX;
+        m.colorBlendAmount = Math.max(0, Math.min(1, realceRef.current));
+      } else {
+        m.color = Color.fromCssColorString("#e6eef2");
+        m.colorBlendMode = ColorBlendMode.MIX;
+        m.colorBlendAmount = 0.3;
+      }
+    }
+  }
+
+  /**
+   * Pose (posição + orientação) de uma caixa dada em coordenadas do modelo.
+   * Tudo do espelho 3D passa por aqui, então herda a matriz do GLB.
+   */
+  function poseNoModelo(
+    b: Building3D, gh: number,
+    x: number, y: number, z: number,
+    rot: number, rotX = 0, rotY = 0,
+  ) {
+    const s = b.scale;
+    const m = modelMatrix(b, gh);
+    // Rz · Ry · Rx, a mesma ordem documentada no schema. Com rotX/rotY em zero
+    // (o caso normal) isto é exatamente a rotação em Z de antes.
+    const r = Matrix3.multiply(
+      Matrix3.fromRotationZ(CesiumMath.toRadians(rot)),
+      Matrix3.multiply(
+        Matrix3.fromRotationY(CesiumMath.toRadians(rotY)),
+        Matrix3.fromRotationX(CesiumMath.toRadians(rotX)),
+        new Matrix3(),
+      ),
+      new Matrix3(),
+    );
+    const local = Matrix4.fromRotationTranslation(
+      r,
+      new Cartesian3(x * s, y * s, z * s),
+    );
+    const bm = Matrix4.multiply(m, local, new Matrix4());
+    return {
+      position: Matrix4.getTranslation(bm, new Cartesian3()),
+      orientation: Quaternion.fromRotationMatrix(Matrix4.getMatrix3(bm, new Matrix3())),
+    };
+  }
+
+  /** Converte um ponto do mapa para as coordenadas X/Y do modelo. */
+  function modelLocalFromLatLng(buildingId: string, lat: number, lng: number) {
+    const b = buildingsRef.current.find((x) => x.id === buildingId);
+    const node = nodesRef.current.get(buildingId);
+    if (!b || !node) return null;
+    const m = modelMatrix(b, node.groundHeight);
+    const inv = Matrix4.inverse(m, new Matrix4());
+    const world = Cartesian3.fromDegrees(lng, lat, node.groundHeight + b.heightOffset);
+    const local = Matrix4.multiplyByPoint(inv, world, new Cartesian3());
+    return { x: local.x / b.scale, y: local.y / b.scale };
+  }
+
+  /** Contorno da torre em calibração: mostra a caixa que se está ajustando. */
+  function syncTowerOutline() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    if (outlineRef.current) {
+      v.entities.remove(outlineRef.current);
+      outlineRef.current = null;
+    }
+    const o = towerOutline;
+    if (!o) return;
+    const b = buildingsRef.current.find((x) => x.id === o.buildingId);
+    const node = nodesRef.current.get(o.buildingId);
+    if (!b || !node) return;
+    const { position, orientation } = poseNoModelo(
+      b, node.groundHeight, o.x, o.y, o.z + o.altura / 2, o.rot, o.rotX ?? 0, o.rotY ?? 0,
+    );
+    outlineRef.current = v.entities.add({
+      id: `tower-outline:${o.buildingId}`,
+      position,
+      orientation: new ConstantProperty(orientation),
+      box: {
+        dimensions: new Cartesian3(o.comprimento * b.scale, o.largura * b.scale, o.altura * b.scale),
+        fill: true,
+        material: new ColorMaterialProperty(Color.fromCssColorString(BRAND_TURQUOISE).withAlpha(0.08)),
+        outline: true,
+        outlineColor: Color.fromCssColorString("#22d3ee"),
+        shadows: ShadowMode.DISABLED,
+      },
+    });
+    requestRender();
+  }
+
+  /**
+   * Laje fina no plano do corte, do tamanho do retângulo — é o "quadrado" do
+   * qual tudo acima some. Sem área definida ela não aparece: o corte atravessa
+   * o modelo inteiro e não há retângulo a mostrar.
+   *
+   * Sem este desenho o ajuste é às cegas, porque o recorte só se enxerga onde
+   * existe geometria — e é justamente na borda vazia que se erra o
+   * enquadramento da área.
+   */
+  function syncCorteArea() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    if (corteAreaRef.current) {
+      v.entities.remove(corteAreaRef.current);
+      corteAreaRef.current = null;
+    }
+    const c = corteArea;
+    if (!c?.area) return;
+    const b = buildingsRef.current.find((x) => x.id === c.buildingId);
+    const node = nodesRef.current.get(c.buildingId);
+    if (!b || !node) return;
+    const a = c.area;
+    const { position, orientation } = poseNoModelo(b, node.groundHeight, a.x, a.y, c.z, a.rot);
+    corteAreaRef.current = v.entities.add({
+      id: `corte-area:${c.buildingId}`,
+      position,
+      orientation: new ConstantProperty(orientation),
+      box: {
+        // Uma laje, não uma caixa: o que importa é a pegada e a altura.
+        dimensions: new Cartesian3(a.comprimento * b.scale, a.largura * b.scale, 0.35 * b.scale),
+        fill: true,
+        material: new ColorMaterialProperty(Color.fromCssColorString("#22d3ee").withAlpha(0.2)),
+        outline: true,
+        outlineColor: Color.fromCssColorString("#22d3ee"),
+        shadows: ShadowMode.DISABLED,
+      },
+    });
+    requestRender();
+  }
+
+  /**
+   * Desenha o perímetro do terreno sobre a fotogrametria: linha fechada mais
+   * uma área translúcida. O campo `perimetro` existia no modelo desde o começo
+   * e nunca era desenhado — cadastrá-lo não produzia efeito nenhum.
+   */
+  function syncPerimetro() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    perimetroRef.current.forEach((e) => v.entities.remove(e));
+    perimetroRef.current = [];
+
+    for (const b of buildingsRef.current) {
+      const pts = b.empreendimento.perimetro ?? [];
+      if (pts.length < 2) continue;
+      const gh = nodesRef.current.get(b.id)?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
+      // Um palmo acima do solo: no mesmo nível a linha briga com a fotogrametria
+      // e aparece piscando (z-fighting).
+      const posicoes = pts.map((p) => Cartesian3.fromDegrees(p.lng, p.lat, gh + 0.6));
+
+      perimetroRef.current.push(
+        v.entities.add({
+          id: `perimetro:linha:${b.id}`,
+          polyline: {
+            positions: [...posicoes, posicoes[0]],
+            width: 3,
+            material: new ColorMaterialProperty(Color.fromCssColorString(BRAND_TURQUOISE).withAlpha(0.95)),
+          },
+        }),
+      );
+
+      if (pts.length >= 3) {
+        perimetroRef.current.push(
+          v.entities.add({
+            id: `perimetro:area:${b.id}`,
+            polygon: {
+              hierarchy: new PolygonHierarchy(posicoes),
+              material: new ColorMaterialProperty(Color.fromCssColorString(BRAND_TURQUOISE).withAlpha(0.12)),
+              perPositionHeight: true,
+              shadows: ShadowMode.DISABLED,
+            },
+          }),
+        );
+      }
+    }
+    requestRender();
+  }
+
+  function syncUnitBoxes() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    const boxes = unitBoxes ?? [];
+    const vistos = new Set<string>();
+
+    for (const ub of boxes) {
+      const b = buildingsRef.current.find((x) => x.id === ub.buildingId);
+      const node = nodesRef.current.get(ub.buildingId);
+      if (!b || !node) continue;
+      vistos.add(ub.id);
+
+      const s = b.scale;
+      const { position, orientation } = poseNoModelo(
+        b, node.groundHeight, ub.x, ub.y, ub.z, ub.rot, ub.rotX, ub.rotY,
+      );
+      const dims = new Cartesian3(ub.dx * s, ub.dy * s, ub.dz * s);
+      const cor = Color.fromCssColorString(ub.color).withAlpha(ub.alpha);
+
+      const existente = unitEntitiesRef.current.get(ub.id);
+      if (existente) {
+        existente.show = ub.visible !== false;
+        existente.position = new ConstantPositionProperty(position);
+        existente.orientation = new ConstantProperty(orientation);
+        const g = existente.box!;
+        g.dimensions = new ConstantProperty(dims);
+        g.material = new ColorMaterialProperty(cor);
+        g.outline = new ConstantProperty(ub.outline);
+        g.show = new ConstantProperty(true);
+      } else {
+        unitEntitiesRef.current.set(
+          ub.id,
+          v.entities.add({
+            id: `unit:${ub.id}`,
+            show: ub.visible !== false,
+            position,
+            orientation: new ConstantProperty(orientation),
+            box: {
+              dimensions: dims,
+              material: new ColorMaterialProperty(cor),
+              outline: ub.outline,
+              outlineColor: Color.WHITE.withAlpha(0.9),
+              // Sombras desligadas: são centenas de caixas translúcidas e o
+              // custo não paga o ganho visual.
+              shadows: ShadowMode.DISABLED,
+            },
+          }),
+        );
+      }
+    }
+
+    // Remove as que saíram da lista.
+    for (const [id, ent] of Array.from(unitEntitiesRef.current.entries())) {
+      if (vistos.has(id)) continue;
+      v.entities.remove(ent);
+      unitEntitiesRef.current.delete(id);
+    }
+    requestRender();
+  }
+
+  /**
+   * Enquadra uma unidade.
+   *
+   * Sem `cam`, mantém o azimute atual da câmera — o comportamento antigo, que
+   * evita um giro brusco quando o visitante só está navegando pela lista. Com
+   * `cam`, usa o enquadramento configurado para aquela unidade no editor.
+   */
+  function frameUnit(
+    unitId: string,
+    cam?: { angulo: number; inclinacao: number; distancia: number },
+    duration = 1.2,
+  ) {
+    const v = viewerRef.current;
+    const ent = unitEntitiesRef.current.get(unitId);
+    if (!v || !ent) return false;
+    const pos = ent.position?.getValue(v.clock.currentTime);
+    if (!pos) return false;
+    v.camera.flyToBoundingSphere(new BoundingSphere(pos, 26), {
+      duration,
+      offset: new HeadingPitchRange(
+        cam ? CesiumMath.toRadians(cam.angulo) : v.camera.heading,
+        CesiumMath.toRadians(cam ? cam.inclinacao : -12),
+        cam ? Math.max(5, cam.distancia) : 90,
+      ),
+    });
+    return true;
+  }
+
+  /**
+   * Marcador do empreendimento no mapa.
+   *
+   * Quando o projeto tem símbolo de marca (`markerImageUrl`), ele vira a
+   * imagem do marcador. Antes esse upload era salvo e nunca usado: a cena
+   * desenhava sempre um ponto turquesa com etiqueta de texto.
+   */
+  function upsertMarker(b: Building3D, node: BuildingNode) {
+    const v = viewerRef.current!;
+    const isSel = b.id === selectedRef.current;
+    const pos = Cartesian3.fromDegrees(b.lng, b.lat, node.groundHeight + 8);
+    const img = b.empreendimento.markerImageUrl;
+
+    // Trocar entre ponto e imagem exige recriar: são gráficos diferentes.
+    if (node.marker && node.markerImg !== img) {
+      v.entities.remove(node.marker);
+      node.marker = undefined;
+    }
+
+    if (!node.marker) {
+      node.markerImg = img;
+      node.marker = v.entities.add({
+        id: `marker:${b.id}`,
+        position: pos,
+        ...(img
+          ? {
+              billboard: {
+                image: img,
+                width: 46,
+                height: 46,
+                verticalOrigin: VerticalOrigin.BOTTOM,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                scaleByDistance: new NearFarScalar(500, 1.0, 8000, 0.55),
+              },
+            }
+          : {
+              point: {
+                pixelSize: 9,
+                color: Color.fromCssColorString(BRAND_TURQUOISE),
+                outlineColor: Color.WHITE,
+                outlineWidth: 2,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              },
+            }),
+        label: {
+          text: b.empreendimento.name.toUpperCase(),
+          font: "600 13px Brandon, Montserrat, sans-serif",
+          fillColor: Color.WHITE,
+          style: LabelStyle.FILL,
+          showBackground: true,
+          backgroundColor: MARKER_BG,
+          backgroundPadding: new Cartesian2(8, 5),
+          verticalOrigin: VerticalOrigin.BOTTOM,
+          // Com símbolo, a etiqueta desce para não cobrir a imagem.
+          pixelOffset: new Cartesian2(0, img ? 8 : -16),
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          scaleByDistance: new NearFarScalar(500, 1.0, 8000, 0.6),
+        },
+      });
+    } else {
+      node.marker.position = new ConstantPositionProperty(pos);
+    }
+    if (node.marker.label) {
+      node.marker.label.backgroundColor = new ConstantProperty(isSel ? MARKER_BG_SEL : MARKER_BG);
+    }
+  }
+
+  function upsertPlaceholder(b: Building3D, node: BuildingNode) {
+    const v = viewerRef.current!;
+    if (node.box) {
+      v.entities.remove(node.box);
+      node.box = undefined;
+    }
+    const ph = b.placeholder ?? { width: 28, depth: 28, height: 90 };
+    const h = ph.height * b.scale;
+    const [lng, lat] = offsetLngLat(b);
+    const position = Cartesian3.fromDegrees(lng, lat, node.groundHeight + b.heightOffset + h / 2);
+    const hpr = new HeadingPitchRoll(
+      CesiumMath.toRadians(b.heading),
+      CesiumMath.toRadians(b.pitch),
+      CesiumMath.toRadians(b.roll),
+    );
+    const orientation = Transforms.headingPitchRollQuaternion(position, hpr);
+    const isSel = b.id === selectedRef.current;
+    node.box = v.entities.add({
+      id: `box:${b.id}`,
+      position,
+      orientation: new ConstantProperty(orientation),
+      box: {
+        dimensions: new Cartesian3(ph.width * b.scale, ph.depth * b.scale, h),
+        material: new ColorMaterialProperty(
+          Color.fromCssColorString(isSel ? "#84cc16" : "#cfd8a8").withAlpha(0.85),
+        ),
+        outline: true,
+        outlineColor: Color.fromCssColorString("#a3b535"),
+        shadows: ShadowMode.ENABLED,
+      },
+    });
+  }
+
+  async function loadModel(b: Building3D, node: BuildingNode) {
+    const v = viewerRef.current;
+    if (!v || !b.modelUrl) return;
+    const url = b.modelUrl;
+    node.loadingUrl = url;
+    marcarCarregamento(b.id, true);
+
+    try {
+      const gltf = await Model.fromGltfAsync({
+        url: b.modelUrl,
+        modelMatrix: modelMatrix(b, node.groundHeight),
+        scale: b.scale,
+        shadows: ShadowMode.ENABLED,
+        // As texturas entram JUNTO, não em fluxo depois. Com o padrão
+        // (incremental), `readyEvent` dispara com a geometria pronta e o prédio
+        // aparece cinza, texturizando-se na frente do cliente — trocar o
+        // "aparecer do nada" por "aparecer errado e se corrigir" não é ganho.
+        incrementallyLoadTextures: false,
+      });
+      if (!viewerRef.current || v.isDestroyed()) {
+        node.loadingUrl = undefined;
+        marcarCarregamento(b.id, false);
+        return;
+      }
+      // Trocaram o GLB no meio do caminho: este que chegou já é o antigo.
+      // Descartar é obrigatório — adicioná-lo à cena deixaria dois modelos
+      // sobrepostos, e o que o editor mostra deixaria de ser o que está salvo.
+      if (node.loadingUrl !== url) {
+        gltf.destroy();
+        return;
+      }
+      // Desliga o mapa de ambiente DINÂMICO do modelo (gera por vários frames =
+      // render contínuo). Mantemos a IBL estática (luminanceAtZenith) para o
+      // ambiente difuso, sem o loop de renderização.
+      const em = (gltf as unknown as { environmentMapManager?: { enabled: boolean } }).environmentMapManager;
+      if (em) em.enabled = false;
+      // Realce ESTÁTICO (sem loop de render): mistura leve com um tom claro/frio
+      // levanta o vidro escuro e deixa a fachada legível, mantendo variação.
+      gltf.color = Color.fromCssColorString("#e6eef2");
+      gltf.colorBlendMode = ColorBlendMode.MIX;
+      gltf.colorBlendAmount = 0.3;
+      (gltf as unknown as { id: unknown }).id = `model:${b.id}`;
+      v.scene.primitives.add(gltf);
+      node.model = gltf;
+      node.loadedUrl = b.modelUrl;
+      updateModelTransform(b, node);
+      // O modelo pode ter chegado com o espelho 3D ou o noturno já ligados.
+      aplicarAparenciaModelo();
+      requestRender();
+
+      /**
+       * `fromGltfAsync` resolve com o glTF BAIXADO — não com ele desenhável.
+       * Entre uma coisa e outra o Cesium ainda cria os recursos de WebGL, e é
+       * nesse intervalo que a cena fica com um buraco no lugar do prédio.
+       * `readyEvent` é o marco certo para dizer que acabou.
+       */
+      const concluir = () => {
+        if (node.loadingUrl === url) node.loadingUrl = undefined;
+        marcarCarregamento(b.id, false);
+      };
+      if (gltf.ready) {
+        concluir();
+      } else {
+        const pronto = gltf.readyEvent.addEventListener(() => {
+          pronto();
+          concluir();
+          requestRender();
+        });
+        // Sem isto, um GLB corrompido deixaria a tela de carregamento presa
+        // para sempre — o erro é do modelo, não motivo para reter a cena.
+        const falhou = gltf.errorEvent.addEventListener(() => {
+          falhou();
+          concluir();
+        });
+      }
+    } catch (e) {
+      console.error(`[Scene3D] falha ao carregar modelo de ${b.id}:`, e);
+      node.loadingUrl = undefined;
+      marcarCarregamento(b.id, false);
+    }
+  }
+
+  function updateModelTransform(b: Building3D, node: BuildingNode) {
+    if (!node.model) return;
+    node.model.modelMatrix = modelMatrix(b, node.groundHeight);
+    node.model.scale = b.scale;
+    const isSel = b.id === selectedRef.current;
+    node.model.silhouetteColor = Color.fromCssColorString(BRAND_TURQUOISE);
+    node.model.silhouetteSize = isSel ? 2 : 0;
+  }
+
+  // ==== GIZMO DE MANIPULAÇÃO (modo edição) ===================================
+  const GIZMO_COLOR = {
+    tE: "#ff5a5a", // Leste (X) — vermelho
+    tN: "#4ade80", // Norte (Y) — verde
+    tU: "#4aa8ff", // Cima (Z)  — azul
+    scale: "#22d3ee", // Escala  — ciano
+    // Os anéis de giro não têm cor própria: cada um usa a do eixo em torno do
+    // qual gira, para o vermelho do anel e o vermelho da seta serem o mesmo X.
+  };
+
+  /** Os três eixos de uma matriz de transformação, normalizados. */
+  function eixosDaMatriz(m: Matrix4) {
+    // getColumn devolve Cartesian4; só os três primeiros componentes interessam.
+    const coluna = (i: number) => {
+      const c = Matrix4.getColumn(m, i, new Cartesian4());
+      return Cartesian3.normalize(new Cartesian3(c.x, c.y, c.z), new Cartesian3());
+    };
+    return { east: coluna(0), north: coluna(1), up: coluna(2) };
+  }
+
+  /** Origem (mundo) + base ENU + tamanho do gizmo do prédio selecionado. */
+  function computeGframe(b: Building3D, node: BuildingNode) {
+    const [lng, lat] = offsetLngLat(b);
+    const origin = Cartesian3.fromDegrees(lng, lat, node.groundHeight + b.heightOffset);
+    const { east, north, up } = eixosDaMatriz(Transforms.eastNorthUpToFixedFrame(origin));
+    // Reserva: o tamanho de verdade vem de `alcaL()`, que o mede em pixels de
+    // tela. Este valor só é usado no instante em que ainda não há viewer.
+    const r = node.model?.boundingSphere?.radius ?? (b.placeholder?.height ?? 90) * 0.6;
+    const L = Math.max(25, Math.min(r * 0.35, 120));
+    return {
+      origin: pivotRef.current ?? origin, origemNatural: origin,
+      east, north, up,
+      // No empreendimento os anéis mapeiam heading/pitch/roll sobre o ENU, que
+      // já é o referencial dos campos. Não há segundo referencial a distinguir.
+      eastObj: east, northObj: north, upObj: up,
+      L, local: false, escala: b.scale,
+    };
+  }
+
+  /**
+   * Frame de um alvo no espaço do modelo. A origem é o ponto (x,y,z) do modelo
+   * levado ao mundo pela mesma matriz das caixas do espelho, e os eixos são os
+   * do modelo — de forma que cada alça corresponda a um campo do inspetor.
+   */
+  function computeGframeLocal(b: Building3D, node: BuildingNode, alvo: GizmoLocal) {
+    const { position } = poseNoModelo(b, node.groundHeight, alvo.x, alvo.y, alvo.z, 0);
+    const m = modelMatrix(b, node.groundHeight);
+    const { east, north, up } = eixosDaMatriz(m);
+    // Os eixos da PEÇA: a mesma composição Rz·Ry·Rx que orienta a caixa dela,
+    // aplicada sobre a matriz do modelo. Ver `eastObj` na declaração do frame.
+    const rotAlvo = Matrix3.multiply(
+      Matrix3.fromRotationZ(CesiumMath.toRadians(alvo.rot)),
+      Matrix3.multiply(
+        Matrix3.fromRotationY(CesiumMath.toRadians(alvo.rotY ?? 0)),
+        Matrix3.fromRotationX(CesiumMath.toRadians(alvo.rotX ?? 0)),
+        new Matrix3(),
+      ),
+      new Matrix3(),
+    );
+    const mObj = Matrix4.multiply(
+      m,
+      Matrix4.fromRotationTranslation(rotAlvo, Cartesian3.ZERO),
+      new Matrix4(),
+    );
+    const obj = eixosDaMatriz(mObj);
+    // Reserva, como em `computeGframe`. Era AQUI que a alça inchava: numa torre
+    // de 63 m de comprimento, `ref * 1.4` dava uma seta de 88 m — mais alta que
+    // a torre e tapando o que se estava calibrando. Quem decide agora é `alcaL()`.
+    const d = alvo.dims;
+    const ref = d ? Math.max(d.dx, d.dy, d.dz) : 12;
+    const L = Math.max(10, Math.min(ref * 1.4, 90)) * b.scale;
+    return {
+      origin: pivotRef.current ?? position, origemNatural: position,
+      east, north, up,
+      eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      L, local: true, escala: b.scale,
+    };
+  }
+
+  /**
+   * Fração da ALTURA DA TELA que o braço da alça ocupa.
+   *
+   * 0.13 ≈ um oitavo da tela, que é a proporção que Blender, Unity e Unreal
+   * usam: grande o bastante para pegar com o mouse, pequena o bastante para não
+   * tapar o que se está posicionando.
+   */
+  const FRACAO_TELA_GIZMO = 0.13;
+
+  /**
+   * Comprimento da alça, em metros do mundo, para ela ter SEMPRE o mesmo
+   * tamanho na tela.
+   *
+   * Antes o comprimento vinha do tamanho do ALVO: `ref * 1.4`, limitado a 90 m.
+   * Numa torre de 63 m de comprimento isso dava uma seta de 88 m — três vezes
+   * mais alta que a própria torre, atravessando a tela inteira e tapando
+   * justamente o prédio que se está calibrando. E o defeito era dos dois lados:
+   * afastando a câmera, a mesma seta virava um risco de poucos pixels.
+   *
+   * O tamanho do alvo é a referência errada. O que importa é quantos pixels a
+   * alça ocupa para a mão, e isso depende da DISTÂNCIA DA CÂMERA — que é o que
+   * todo editor 3D usa. Como as posições são `CallbackProperty`, o valor é
+   * reavaliado a cada frame e a alça acompanha o zoom sozinha.
+   */
+  function alcaL(g: NonNullable<typeof gframeRef.current>): number {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return g.L;
+    const dist = Cartesian3.distance(v.camera.positionWC, g.origin);
+    if (!Number.isFinite(dist) || dist <= 0) return g.L;
+    // Altura visível do mundo à distância do pivô, pela abertura real da lente.
+    const frustum = v.camera.frustum as { fovy?: number };
+    const fovy = Number.isFinite(frustum.fovy) ? (frustum.fovy as number) : Math.PI / 3;
+    const alturaVisivel = 2 * dist * Math.tan(fovy / 2);
+    // Piso mínimo só para o caso degenerado da câmera colada no pivô.
+    return Math.max(0.5, alturaVisivel * FRACAO_TELA_GIZMO);
+  }
+
+  function updateGframe() {
+    const alvo = gizmoLocalRef.current;
+    if (alvo) {
+      const b = buildingsRef.current.find((x) => x.id === alvo.buildingId);
+      const node = nodesRef.current.get(alvo.buildingId);
+      gframeRef.current = b && node ? computeGframeLocal(b, node, alvo) : null;
+      return;
+    }
+    if (!gizmoEmpRef.current) { gframeRef.current = null; return; }
+    const id = selectedRef.current;
+    const b = id ? buildingsRef.current.find((x) => x.id === id) : undefined;
+    const node = id ? nodesRef.current.get(id) : undefined;
+    // Antes exigia `b.modelUrl`: um projeto ainda sem GLB não tinha gizmo
+    // nenhum, justamente quando posicionar o volume mais importa.
+    gframeRef.current = b && node ? computeGframe(b, node) : null;
+  }
+
+  function clearGizmo() {
+    const v = viewerRef.current;
+    if (v) gizmoRef.current.forEach((e) => v.entities.remove(e));
+    gizmoRef.current = [];
+  }
+
+  /**
+   * Plano de cada anel de giro: a normal e a base (u1, u2) em que o ângulo é
+   * medido, indo de u1 para u2.
+   *
+   * As duas convenções são diferentes e é aqui que a diferença fica contida:
+   *
+   * - **Empreendimento** — a do Cesium (`HeadingPitchRoll`): heading gira em
+   *   torno de -Z (horário a partir do norte, como bússola), pitch em torno de
+   *   -Y (o leste do modelo sobe) e roll em torno de +X (o norte sobe).
+   * - **Alvo local** — rotações anti-horárias em torno dos eixos POSITIVOS do
+   *   modelo, compostas Rz · Ry · Rx, que é como `poseNoModelo` monta a caixa.
+   *
+   * O anel `rotX` cai na mesma medida nos dois casos; `rot` e `rotY` invertem.
+   */
+  function planoDoAnel(kind: AnelKind, g: NonNullable<typeof gframeRef.current>) {
+    // Eixos da PEÇA: o anel tem de girar em torno do eixo do fator que ele
+    // controla. Num alvo sem giro próprio estes são os mesmos de sempre; num
+    // alvo girado (uma torre com `rot: 90`) são o que corrige a inversão.
+    const eX = g.eastObj;
+    const eY = g.northObj;
+    const eZ = g.upObj;
+    if (kind === "rot") {
+      return g.local ? { n: eZ, u1: eX, u2: eY } : { n: eZ, u1: eY, u2: eX };
+    }
+    if (kind === "rotX") return { n: eX, u1: eY, u2: eZ };
+    return g.local ? { n: eY, u1: eZ, u2: eX } : { n: eY, u1: eX, u2: eZ };
+  }
+
+  /** Campo que cada anel edita, conforme o alvo. */
+  function campoDoAnel(kind: AnelKind, local: boolean): string {
+    if (local) return kind;
+    return kind === "rot" ? "heading" : kind === "rotX" ? "roll" : "pitch";
+  }
+
+  const ANEL_ROTULO: Record<AnelKind, string> = {
+    rot: "Giro (Z)",
+    rotX: "Inclinar (X)",
+    rotY: "Inclinar (Y)",
+  };
+
+  /** Valor atual do ângulo de um anel, em graus. */
+  function valorDoAnel(kind: AnelKind, local: boolean): number {
+    if (local) {
+      const alvo = gizmoLocalRef.current;
+      if (!alvo) return 0;
+      return kind === "rot" ? alvo.rot : kind === "rotX" ? (alvo.rotX ?? 0) : (alvo.rotY ?? 0);
+    }
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
+    if (!b) return 0;
+    return kind === "rot" ? b.heading : kind === "rotX" ? b.roll : b.pitch;
+  }
+
+  /** Ponto do anel na posição do ângulo atual — o puxador clicável dele. */
+  function pontaDoAnel(kind: AnelKind): Cartesian3 | undefined {
+    const g = gframeRef.current;
+    if (!g) return undefined;
+    const { u1, u2 } = planoDoAnel(kind, g);
+    const rad = CesiumMath.toRadians(valorDoAnel(kind, g.local));
+    const d = Cartesian3.add(
+      Cartesian3.multiplyByScalar(u1, Math.cos(rad), new Cartesian3()),
+      Cartesian3.multiplyByScalar(u2, Math.sin(rad), new Cartesian3()),
+      new Cartesian3(),
+    );
+    return Cartesian3.add(
+      g.origin,
+      Cartesian3.multiplyByScalar(d, alcaL(g) * 0.9, new Cartesian3()),
+      new Cartesian3(),
+    );
+  }
+
+  function buildGizmo() {
+    const v = viewerRef.current;
+    if (!v) return;
+    if (!gframeRef.current) { clearGizmo(); return; }
+    if (gizmoRef.current.length) { requestRender(); return; }
+
+    // Sobre um centroide de vários alvos, girar e escalar não têm significado
+    // único — só a translação move o grupo inteiro de forma previsível.
+    const alvoAtual = gizmoLocalRef.current;
+    const modo = alvoAtual?.somenteMover || alvoAtual?.somenteZ ? "mover" : gizmoModoRef.current;
+    const soZ = !!alvoAtual?.somenteZ;
+
+    /** Seta de translação + ponta clicável (a linha sozinha é difícil de pegar). */
+    const eixo = (kind: "tE" | "tN" | "tU", dir: "east" | "north" | "up", css: string) => {
+      const ponta = () => {
+        const g = gframeRef.current;
+        if (!g) return undefined;
+        return Cartesian3.add(
+          g.origin,
+          Cartesian3.multiplyByScalar(g[dir], alcaL(g), new Cartesian3()),
+          new Cartesian3(),
+        );
+      };
+      gizmoRef.current.push(
+        v.entities.add({
+          id: `gizmo:${kind}`,
+          polyline: linhaDaAlca({
+            positions: new CallbackProperty(() => {
+              const g = gframeRef.current;
+              const p = ponta();
+              return g && p ? [g.origin, p] : [];
+            }, false),
+            width: 14,
+            material: new PolylineArrowMaterialProperty(Color.fromCssColorString(css)),
+          }),
+        }),
+      );
+      // Alvo generoso na ponta: dobra a área de clique do eixo.
+      gizmoRef.current.push(
+        v.entities.add({
+          id: `gizmo:${kind}:ponta`,
+          position: new CallbackPositionProperty(ponta, false),
+          point: {
+            // Alvo real do clique: o ponto ignora a profundidade e continua
+            // clicável mesmo quando a seta está dentro do prédio.
+            pixelSize: 20,
+            color: Color.fromCssColorString(css),
+            outlineColor: Color.WHITE,
+            outlineWidth: 3,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        }),
+      );
+    };
+
+    if (modo === "mover") {
+      if (!soZ) {
+        eixo("tE", "east", GIZMO_COLOR.tE);
+        eixo("tN", "north", GIZMO_COLOR.tN);
+      }
+      eixo("tU", "up", GIZMO_COLOR.tU);
+    }
+
+    if (modo === "girar") {
+      /**
+       * Um anel por eixo, colorido pelo eixo em torno do qual gira — a mesma
+       * convenção do Blender e do Unity, e as mesmas cores das setas de mover.
+       * Antes existia só o anel de heading: qualquer inclinação do modelo (um
+       * terreno em declive, um GLB exportado torto) só se corrigia editando
+       * pitch/roll no painel, se é que se descobria que eles existiam.
+       */
+      const anel = (kind: AnelKind, css: string) => {
+        gizmoRef.current.push(
+          v.entities.add({
+            id: `gizmo:${kind}`,
+            polyline: linhaDaAlca({
+              positions: new CallbackProperty(() => {
+                const g = gframeRef.current;
+                if (!g) return [];
+                const { u1, u2 } = planoDoAnel(kind, g);
+                const R = alcaL(g) * 0.9;
+                const pts: Cartesian3[] = [];
+                for (let i = 0; i <= 72; i++) {
+                  const a = (i / 72) * Math.PI * 2;
+                  const off = Cartesian3.add(
+                    Cartesian3.multiplyByScalar(u1, R * Math.cos(a), new Cartesian3()),
+                    Cartesian3.multiplyByScalar(u2, R * Math.sin(a), new Cartesian3()),
+                    new Cartesian3(),
+                  );
+                  pts.push(Cartesian3.add(g.origin, off, new Cartesian3()));
+                }
+                return pts;
+              }, false),
+              width: 12,
+              material: new ColorMaterialProperty(Color.fromCssColorString(css).withAlpha(0.9)),
+            }),
+          }),
+        );
+        // Puxador no ângulo atual: é o alvo clicável do anel, que sendo
+        // polilinha pode ficar escondido dentro do prédio. Também é a leitura
+        // visual do valor — o puxador está onde o ângulo está.
+        gizmoRef.current.push(
+          v.entities.add({
+            id: `gizmo:${kind}:puxador`,
+            position: new CallbackPositionProperty(() => pontaDoAnel(kind), false),
+            point: {
+              pixelSize: 20,
+              color: Color.fromCssColorString(css),
+              outlineColor: Color.WHITE,
+              outlineWidth: 3,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+          }),
+        );
+      };
+
+      anel("rot", GIZMO_COLOR.tU);   // em torno do vertical — azul, como o eixo Z
+      anel("rotX", GIZMO_COLOR.tE);  // em torno do leste/X — vermelho
+      anel("rotY", GIZMO_COLOR.tN);  // em torno do norte/Y — verde
+
+      // Agulha da frente do modelo: mostra para onde ele está apontando.
+      gizmoRef.current.push(
+        v.entities.add({
+          id: "gizmo:rot:agulha",
+          polyline: linhaDaAlca({
+            positions: new CallbackProperty(() => {
+              const p = pontaDoAnel("rot");
+              const g = gframeRef.current;
+              return g && p ? [g.origin, p] : [];
+            }, false),
+            width: 6,
+            material: new ColorMaterialProperty(Color.WHITE.withAlpha(0.85)),
+          }),
+        }),
+      );
+    }
+
+    /**
+     * Escala POR EIXO — só faz sentido num alvo local (torre, unidade, área do
+     * corte), que guarda três medidas em metros.
+     *
+     * O empreendimento tem uma `scale` só, um número que multiplica o GLB
+     * inteiro: ali não há eixo a separar, e a alça diagonal única continua
+     * sendo a representação certa.
+     *
+     * Havia só a diagonal para todo mundo, e ela multiplica os três eixos
+     * juntos: não existia gesto para alargar uma torre sem esticá-la na altura
+     * também. Cada alça agora anda no seu eixo e mexe numa medida só, na mesma
+     * cor da seta de mover do mesmo eixo.
+     */
+    const alvoTemDims = !!alvoAtual?.dims;
+
+    if (modo === "escalar" && alvoTemDims) {
+      // Eixos da PEÇA, não do modelo: `dx` se estende ao longo do X da caixa
+      // já girada, então a alça vermelha tem de apontar para onde ela cresce.
+      const eixoEscala = (
+        kind: "sX" | "sY" | "sZ",
+        dir: "eastObj" | "northObj" | "upObj",
+        css: string,
+      ) => {
+        const ponta = () => {
+          const g = gframeRef.current;
+          if (!g) return undefined;
+          return Cartesian3.add(
+            g.origin,
+            Cartesian3.multiplyByScalar(g[dir], alcaL(g), new Cartesian3()),
+            new Cartesian3(),
+          );
+        };
+        gizmoRef.current.push(
+          v.entities.add({
+            id: `gizmo:${kind}:linha`,
+            polyline: linhaDaAlca({
+              positions: new CallbackProperty(() => {
+                const g = gframeRef.current;
+                const p = ponta();
+                return g && p ? [g.origin, p] : [];
+              }, false),
+              width: 4,
+              material: new ColorMaterialProperty(Color.fromCssColorString(css).withAlpha(0.7)),
+            }),
+          }),
+        );
+        gizmoRef.current.push(
+          v.entities.add({
+            id: `gizmo:${kind}`,
+            position: new CallbackPositionProperty(ponta, false),
+            /**
+             * PONTO, não caixa.
+             *
+             * A primeira versão usou um cubo — a forma distingue "redimensiona"
+             * de "move" à primeira vista. Só que `box` é geometria de verdade e
+             * é testada em profundidade: dentro do volume do prédio ela sumia e,
+             * pior, deixava de ser clicável. A alça existia e não respondia.
+             *
+             * `point` aceita `disableDepthTestDistance` e fica sempre por cima —
+             * é por isso que as setas de mover usam ponto na ponta. O que
+             * diferencia a ferramenta aqui é o miolo branco.
+             */
+            point: {
+              pixelSize: 20,
+              color: Color.WHITE,
+              outlineColor: Color.fromCssColorString(css),
+              outlineWidth: 6,
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            },
+          }),
+        );
+      };
+      eixoEscala("sX", "eastObj", GIZMO_COLOR.tE);
+      eixoEscala("sY", "northObj", GIZMO_COLOR.tN);
+      if (!alvoAtual?.semEscalaZ) eixoEscala("sZ", "upObj", GIZMO_COLOR.tU);
+    }
+
+    if (modo === "escalar" && !alvoTemDims) {
+      gizmoRef.current.push(
+        v.entities.add({
+          id: "gizmo:scale",
+          position: new CallbackPositionProperty(() => {
+            const g = gframeRef.current;
+            if (!g) return undefined;
+            const d = Cartesian3.normalize(Cartesian3.add(g.east, g.north, new Cartesian3()), new Cartesian3());
+            return Cartesian3.add(g.origin, Cartesian3.multiplyByScalar(d, alcaL(g), new Cartesian3()), new Cartesian3());
+          }, false),
+          point: {
+            pixelSize: 22,
+            color: Color.fromCssColorString(GIZMO_COLOR.scale),
+            outlineColor: Color.WHITE,
+            outlineWidth: 2,
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+        }),
+      );
+      gizmoRef.current.push(
+        v.entities.add({
+          id: "gizmo:scale:linha",
+          polyline: linhaDaAlca({
+            positions: new CallbackProperty(() => {
+              const g = gframeRef.current;
+              if (!g) return [];
+              const d = Cartesian3.normalize(Cartesian3.add(g.east, g.north, new Cartesian3()), new Cartesian3());
+              return [
+                g.origin,
+                Cartesian3.add(g.origin, Cartesian3.multiplyByScalar(d, alcaL(g), new Cartesian3()), new Cartesian3()),
+              ];
+            }, false),
+            width: 4,
+            material: new ColorMaterialProperty(Color.fromCssColorString(GIZMO_COLOR.scale).withAlpha(0.6)),
+          }),
+        }),
+      );
+    }
+
+    // Ponto na origem — referência comum a todos os modos. Fica âmbar quando o
+    // pivô foi reposicionado, para não haver dúvida de que o giro não é pelo
+    // centro; a linha tracejada liga o pivô ao centro real do alvo.
+    gizmoRef.current.push(
+      v.entities.add({
+        id: "gizmo:origin",
+        position: new CallbackPositionProperty(() => gframeRef.current?.origin, false),
+        point: {
+          pixelSize: new CallbackProperty(() => (pivotRef.current ? 12 : 9), false),
+          color: new CallbackProperty(
+            () => (pivotRef.current ? Color.fromCssColorString("#fbbf24") : Color.WHITE),
+            false,
+          ),
+          outlineColor: Color.fromCssColorString("#04141d"),
+          outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY,
+        },
+      }),
+    );
+    gizmoRef.current.push(
+      v.entities.add({
+        id: "gizmo:origin:elo",
+        polyline: linhaDaAlca({
+          positions: new CallbackProperty(() => {
+            const g = gframeRef.current;
+            if (!g || !pivotRef.current) return [];
+            return [g.origemNatural, g.origin];
+          }, false),
+          width: 2,
+          material: new ColorMaterialProperty(Color.fromCssColorString("#fbbf24").withAlpha(0.55)),
+        }),
+      }),
+    );
+
+    requestRender();
+  }
+
+  /**
+   * Trocar de ferramenta OU de alvo troca as alças em cena.
+   *
+   * A chave é a identidade do alvo, não o objeto: durante um arraste o
+   * `gizmoLocal` é recriado a cada quadro, e reconstruir as entidades a 60 Hz
+   * derrubaria o arraste (o Cesium perderia a entidade sob o cursor). As alças
+   * leem o frame por CallbackProperty, então acompanhar o movimento não exige
+   * reconstruí-las.
+   */
+  const alvoChave = gizmoLocal ? `local:${gizmoLocal.id}` : gizmoEmpreendimento ? "emp" : "nenhum";
+  useEffect(() => {
+    // O pivô reposicionado é auxílio de edição, não propriedade do alvo: ao
+    // trocar de alvo ele volta ao centro, como no Unreal ao reselecionar.
+    pivotRef.current = null;
+    clearGizmo();
+    refreshGizmo();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gizmoModo, alvoChave, gizmoLocal?.somenteMover, gizmoLocal?.somenteZ]);
+
+  // Alvo se moveu (arraste ou campo do inspetor): só reposiciona o frame.
+  useEffect(() => {
+    updateGframe();
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gizmoLocal]);
+
+  return <div ref={containerRef} className="absolute inset-0 h-full w-full" />;
+});
+
+export default Scene3D;

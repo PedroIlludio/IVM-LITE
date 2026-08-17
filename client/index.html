@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <!--
+      Título e descrição GENÉRICOS de propósito.
+
+      Estes valores são do documento estático, servido igual para toda rota:
+      /admin, o editor e a vitrine de qualquer incorporadora. O nome de um
+      empreendimento específico aqui aparecia na aba de todos os outros — e o
+      piloto anunciava "Maragogi/AL" na aba de um projeto em Anápolis.
+
+      A vitrine sobrescreve os três ao carregar o projeto (ver `ivm-view`), que
+      é o único momento em que se sabe de qual empreendimento se trata.
+    -->
+    <meta name="description" content="Tour interativo 3D de empreendimentos imobiliários." />
+    <meta property="og:title" content="IVM Lite" />
+    <meta property="og:description" content="Tour interativo 3D de empreendimentos imobiliários." />
+    <title>IVM Lite</title>
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <!--
+      Fontes do CHROME das ferramentas (/admin e o editor), não da vitrine: a
+      vitrine usa as fontes da marca de cada empreendimento. Inter e Geist Mono
+      são os substitutos abertos de Universal Sans / Geist Mono documentados no
+      DESIGN.md.
+    -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=Geist+Mono:wght@400&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      (function(){
+        var _h=location.hostname;
+        if(_h==='localhost'||_h==='0.0.0.0'||_h.indexOf('.replit')!==-1||_h.indexOf('.repl.')!==-1)return;
+        document.addEventListener('contextmenu',function(e){e.preventDefault();});
+        document.addEventListener('keydown',function(e){
+          if(e.key==='F12'){e.preventDefault();return false;}
+          if(e.ctrlKey&&e.shiftKey&&['I','J','C'].includes(e.key.toUpperCase())){e.preventDefault();return false;}
+          if(e.ctrlKey&&e.key.toUpperCase()==='U'){e.preventDefault();return false;}
+          if(e.metaKey&&e.altKey&&['I','J','C'].includes(e.key.toUpperCase())){e.preventDefault();return false;}
+        });
+        document.addEventListener('dragstart',function(e){e.preventDefault();});
+        document.addEventListener('selectstart',function(e){if(e.target.tagName!=='INPUT'&&e.target.tagName!=='TEXTAREA')e.preventDefault();});
+      })();
+    </script>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
