@@ -7,7 +7,6 @@ import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
 import PavimentosView from "@/components/PavimentosView";
 import BuscadorUnidades3D from "@/components/BuscadorUnidades3D";
 import Bussola from "@/components/Bussola";
-import QualidadeSeletor from "@/components/QualidadeSeletor";
 import {
   aplicarCrm,
   getProjectByPath,
@@ -687,7 +686,6 @@ export default function IvmViewPage() {
           {/* Override manual da qualidade. Não é configurável por projeto de
               propósito: é uma preferência do APARELHO de quem está vendo, não
               uma característica do empreendimento. */}
-          <QualidadeSeletor />
         </div>
       )}
 

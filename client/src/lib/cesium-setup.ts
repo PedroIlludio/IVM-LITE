@@ -83,94 +83,32 @@ export function patchDegradedWebGL() {
  * fotogrametria do Google, é a mais cara possível justamente no aparelho mais
  * fraco. O celular do corretor no plantão é o caso real, não a exceção.
  */
-export type PerfilQualidade = "alto" | "baixo";
-
-/** O que o usuário escolheu — `auto` deixa a detecção decidir. */
-export type QualidadeOpcao = "auto" | PerfilQualidade;
-
-const CHAVE_QUALIDADE = "ivm-qualidade";
-
 /**
- * Preferência gravada. Existe porque a detecção erra nos dois sentidos: um
- * notebook fraco de plantão pede `baixo`, e um tablet bom ligado no telão pede
- * `alto`. Aceita também `?qualidade=alto` na URL, que é como se força numa
- * máquina emprestada sem mexer em configuração.
- */
-export function qualidadeEscolhida(): QualidadeOpcao {
-  try {
-    const naUrl = new URLSearchParams(window.location.search).get("qualidade");
-    if (naUrl === "alto" || naUrl === "baixo" || naUrl === "auto") {
-      localStorage.setItem(CHAVE_QUALIDADE, naUrl);
-      return naUrl;
-    }
-    const salvo = localStorage.getItem(CHAVE_QUALIDADE);
-    if (salvo === "alto" || salvo === "baixo" || salvo === "auto") return salvo;
-  } catch {
-    /* localStorage bloqueado (modo privado): segue no automático */
-  }
-  return "auto";
-}
-
-export function definirQualidade(v: QualidadeOpcao) {
-  try {
-    localStorage.setItem(CHAVE_QUALIDADE, v);
-  } catch {
-    /* sem persistência: vale só para esta sessão */
-  }
-}
-
-/**
- * Detecção por capacidade, não por user-agent: o que interessa é quantos
- * núcleos, quanta memória e que tamanho de tela o aparelho tem — sniffar o
- * nome do navegador envelhece mal e erra em tablet.
+ * Ajustes de render — únicos, sem modo leve.
  *
- * `deviceMemory` e `hardwareConcurrency` não existem em todo navegador; a
- * ausência não conta como sinal de fraqueza (senão todo Safari cairia em
- * `baixo`), só a presença com valor baixo conta.
+ * Havia dois perfis ("alto" e "baixo") com detecção automática e um seletor
+ * para o visitante. Saíram: no perfil baixo as caixas do espelho de vendas
+ * apareciam sem cor e a planta do pavimento não desenhava, ou seja, o modo
+ * econômico entregava outra experiência, não a mesma mais leve — e a cena 3D é
+ * o produto. Um recurso que quebra o que se está vendendo custa mais do que os
+ * frames que economiza.
+ *
+ * Se um dia voltar a existir modo leve, ele precisa cortar custo SEM apagar
+ * informação: menos tiles, sombra menor, anti-aliasing fora — nunca o espelho.
  */
-export function detectarPerfil(): PerfilQualidade {
-  if (typeof window === "undefined") return "alto";
-  const nav = navigator as Navigator & { deviceMemory?: number };
-
-  const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
-  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
-  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 700;
-  // Ponteiro grosso = dedo. Sozinho não decide (há laptop com touch), mas
-  // somado à tela estreita é a assinatura do celular.
-  const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-
-  const sinais = [poucosNucleos, poucaMemoria, telaEstreita && toque];
-  return sinais.filter(Boolean).length >= 2 ? "baixo" : "alto";
-}
-
-/** Perfil em vigor: a escolha do usuário quando há uma, senão a detecção. */
-export function perfilEmVigor(): PerfilQualidade {
-  const escolha = qualidadeEscolhida();
-  return escolha === "auto" ? detectarPerfil() : escolha;
-}
-
-interface AjustesQualidade {
-  msaa: number;
-  fxaa: boolean;
-  sombras: boolean;
-  sombraTam: number;
+const AJUSTES = {
+  msaa: 4,
+  fxaa: true,
+  sombras: true,
+  sombraTam: 2048,
   /** Erro de tela do tileset: maior = menos tiles, menos carga, menos detalhe. */
-  sse: number;
-}
-
-const QUALIDADE: Record<PerfilQualidade, AjustesQualidade> = {
-  alto: { msaa: 4, fxaa: true, sombras: true, sombraTam: 2048, sse: 20 },
-  // Sombras seguem LIGADAS no perfil baixo, em 1024: a simulação solar é o
-  // argumento de venda da cena, e uma vitrine sem sombra é outra experiência,
-  // não a mesma mais leve. O que cai é a resolução do mapa, não o recurso.
-  baixo: { msaa: 0, fxaa: false, sombras: true, sombraTam: 1024, sse: 36 },
+  sse: 20,
 };
 
 interface CreatedViewer {
   viewer: Viewer;
   tileset: Cesium3DTileset;
   /** Perfil efetivamente aplicado (para a interface poder exibi-lo). */
-  perfil: PerfilQualidade;
 }
 
 /**
@@ -187,8 +125,7 @@ export async function createVision3DViewer(
   // afterward leaves the first render broken on remote/software GPUs.
   patchDegradedWebGL();
 
-  const perfil = perfilEmVigor();
-  const q = QUALIDADE[perfil];
+  const q = AJUSTES;
 
   const viewer = new Viewer(container, {
     // preserveDrawingBuffer: sem isto o navegador descarta o buffer logo após
@@ -225,10 +162,10 @@ export async function createVision3DViewer(
 
   const scene = viewer.scene;
 
-  // Sombras: 2048 no perfil alto (era 4096) já reduzia muito o custo por frame
-  // mantendo qualidade para a simulação solar; 1024 no perfil baixo. As sombras
+  // Sombras: 2048 (era 4096) já reduz muito o custo por frame mantendo
+  // qualidade para a simulação solar. As sombras
   // suaves são o extra que sai primeiro — são um segundo passe de filtragem.
-  viewer.shadowMap.softShadows = perfil === "alto";
+  viewer.shadowMap.softShadows = true;
   viewer.shadowMap.size = q.sombraTam;
   viewer.shadowMap.maximumDistance = 6000;
   viewer.shadowMap.enabled = q.sombras;
@@ -242,9 +179,7 @@ export async function createVision3DViewer(
   // Anti-aliasing: MSAA suaviza as arestas de geometria (silhueta do prédio,
   // linhas) e FXAA suaviza o resto. Com requestRenderMode a cena fica ociosa
   // (0 frames), então o custo do AA só aparece durante a interação — vale a
-  // qualidade num desktop. No perfil baixo os dois saem: o serrilhado numa tela
-  // de 5" com densidade alta praticamente não se vê, e o passe de pós-processo
-  // é justamente o que custa caro numa GPU integrada de celular.
+  // qualidade num desktop.
   scene.msaaSamples = q.msaa;
   scene.postProcessStages.fxaa.enabled = q.fxaa;
   scene.fog.enabled = false;
@@ -317,5 +252,5 @@ export async function createVision3DViewer(
   if (tileset.environmentMapManager) tileset.environmentMapManager.enabled = false;
   viewer.scene.primitives.add(tileset);
 
-  return { viewer, tileset, perfil };
+  return { viewer, tileset };
 }

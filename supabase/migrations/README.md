@@ -4,10 +4,13 @@ Aplicar **em ordem**, pelo SQL Editor do Supabase.
 
 | Arquivo | O que faz | Onde está |
 |---|---|---|
-| `0001_ivm_lite.sql` | Tabelas base (`ivm_lites`, `ivm_pois`, `ivm_assets`) + RLS | `../../../JOOY-Empreendimentos-Map-main/supabase/migrations/` — repositório de origem, ainda não movido |
+| `0001_ivm_lite.sql` | Tabelas base (`ivm_lites`, `ivm_pois`, `ivm_assets`) + RLS | aqui |
 | `0002_incorporadoras.sql` | Multi-tenant: tabela `incorporadoras`, `ivm_lites.incorporadora_id`, slug único por tenant | aqui |
+| `0003_storage_ivm_assets.sql` | Bucket `ivm-assets` + RLS do Storage (upload de GLB, plantas e fotos) | aqui |
+| `0004_ivm_lites_data.sql` | Coluna `data` (jsonb) — onde o projeto inteiro vive | aqui |
 
-Se o banco já está em uso (as tabelas de `0001` existem), rode apenas o `0002`.
+Num Supabase NOVO, rode os quatro na ordem. Se o banco já está em uso (as tabelas
+de `0001` existem), rode apenas o `0002`, o `0003` e o `0004`.
 Ele é idempotente — pode ser executado mais de uma vez sem quebrar nada.
 
 ## Depois de aplicar o 0002

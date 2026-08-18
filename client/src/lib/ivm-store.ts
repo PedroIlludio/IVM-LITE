@@ -17,7 +17,19 @@ import * as local from "./local-store";
  * As funções exportadas abaixo têm a mesma assinatura nos dois modos, então as
  * páginas não sabem — nem precisam saber — qual está ativo.
  */
-export const MODO_LOCAL = import.meta.env.DEV;
+/**
+ * Banco em uso: Supabase (padrão) ou os arquivos de `data/projects/`.
+ *
+ * Era `import.meta.env.DEV`, e isso amarrava duas decisões que não são a
+ * mesma: "estou rodando na minha máquina" virava "edito um banco diferente do
+ * que está no ar". O efeito prático era um projeto calibrado localmente que
+ * simplesmente não existia em produção, e nenhum aviso disso em lugar nenhum.
+ *
+ * Agora o padrão é o Supabase em qualquer ambiente — `npm run dev` e o site
+ * publicado mexem nos MESMOS dados. O modo local continua alcançável para
+ * trabalhar sem rede, mas por escolha explícita: `VITE_MODO_LOCAL=1` no `.env`.
+ */
+export const MODO_LOCAL = import.meta.env.VITE_MODO_LOCAL === "1";
 
 /**
  * Plataforma IVM Lite: cada projeto = UM empreendimento (vitrine completa).
@@ -671,11 +683,30 @@ function toProject(row: unknown): IvmProject {
   });
 }
 
+/**
+ * Projetos do PAINEL — só os do usuário logado.
+ *
+ * Antes a consulta não filtrava nada, e o RLS sozinho não resolve: a política
+ * `ivm_lites_public_read` libera a leitura de tudo que está publicado, para
+ * qualquer um. O efeito no /admin era todo mundo enxergando a carteira inteira
+ * de projetos alheios e podendo abrir o editor de qualquer um — o salvamento
+ * até era recusado depois (`ivm_lites_owner_all`), mas só depois do trabalho
+ * feito, com uma mensagem que não explica nada.
+ *
+ * Ler o que é público é papel da VITRINE (`getProjectBySlug` e afins). O
+ * painel é a área de trabalho de uma pessoa, então a consulta se limita ao
+ * dono. Sem sessão não há painel nenhum: devolve vazio em vez de listar o que
+ * está publicado.
+ */
 export async function listProjects(): Promise<IvmProject[]> {
   if (MODO_LOCAL) return (await local.localListProjects()).map(normalizeRow);
   const sb = await getSupabase();
+  const { data: sessao } = await sb.auth.getUser();
+  const dono = sessao.user?.id;
+  if (!dono) return [];
   const run = (sel: string) =>
-    sb.from("ivm_lites").select(sel).order("updated_at", { ascending: false });
+    sb.from("ivm_lites").select(sel).eq("owner", dono)
+      .order("updated_at", { ascending: false });
   let res = await run(PROJECT_SELECT);
   // Banco ainda não migrado: refaz sem o join para o painel seguir funcionando.
   if (semIncorporadoras(res.error)) res = await run(PROJECT_SELECT_BASE);
