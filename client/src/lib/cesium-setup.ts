@@ -165,6 +165,26 @@ export async function createVision3DViewer(
     // seleção). Sem isto o Cesium redesenha 60x/s a mesma cena — o que travava
     // a navegação nesta máquina (WebGL degradado/remoto). As mutações chamam
     // scene.requestRender() explicitamente em Scene3D.
+    /**
+     * Translucidez por mistura clássica, não por OIT.
+     *
+     * O Cesium liga sozinho a *order-independent translucency*, que resolve a
+     * ordem dos objetos transparentes com buffers auxiliares e extensões de
+     * WebGL. Nesta base de máquinas (WebGL degradado) esse caminho falha
+     * calado: as caixas do espelho de vendas desenham sem cor e a planta do
+     * pavimento não aparece — as duas são geometria translúcida.
+     *
+     * O sintoma vinha amarrado ao MSAA por acidente: com multiamostragem ligada
+     * o Cesium usa outro buffer e o defeito sumia, o que fazia parecer culpa do
+     * perfil de qualidade. Não era — era o OIT. Desligado, a translucidez volta
+     * a funcionar SEM exigir MSAA 4×, que é o que travava a cena.
+     *
+     * O preço é a ordenação: dois translúcidos sobrepostos podem desenhar fora
+     * de ordem em ângulos rasantes. Numa cena de caixas separadas por andar
+     * isso quase não aparece — e um artefato de ordem é muito melhor do que não
+     * mostrar a informação.
+     */
+    orderIndependentTranslucency: false,
     requestRenderMode: true,
     // O relógio fica fixo no instante solar, então nenhuma passagem de tempo de
     // simulação deve provocar render. O nome correto é maximumRenderTimeChange:
@@ -195,6 +215,7 @@ export async function createVision3DViewer(
   // qualidade num desktop.
   scene.msaaSamples = q.msaa;
   scene.postProcessStages.fxaa.enabled = q.fxaa;
+
   scene.fog.enabled = false;
   // Não recolorir/relightar globalmente a cada frame.
   scene.highDynamicRange = false;
