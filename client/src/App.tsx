@@ -4,8 +4,6 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
-import ExplorarPage from "@/pages/explorar";
-import EditorPage from "@/pages/editor";
 import AdminPage from "@/pages/admin";
 import IvmEditorPage from "@/pages/ivm-editor";
 import IvmViewPage from "@/pages/ivm-view";
@@ -35,8 +33,6 @@ function Router() {
         <Redirect to="/admin" />
       </Route>
       {/* Piloto local (Quinta hardcoded) — base/template da experiência. */}
-      <Route path="/explorar" component={ExplorarPage} />
-      <Route path="/editor" component={EditorPage} />
       {/* Plataforma IVM Lite (Supabase): admin + editor + páginas públicas. */}
       <Route path="/admin" component={AdminPage} />
       {/* Ferramenta de migração local → Supabase. Só em dev: ela lê

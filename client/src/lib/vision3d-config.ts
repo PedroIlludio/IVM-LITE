@@ -1,6 +1,5 @@
-import { empreendimentos } from "./empreendimentos";
 import type { Empreendimento } from "@shared/schema";
-import type { CameraView, Placement, Placements } from "./placements";
+import type { CameraView, Placement } from "./placements";
 
 /**
  * Configuração de posicionamento 3D de cada empreendimento sobre os
@@ -89,49 +88,3 @@ const TRANSFORM_KEYS = [
   "offsetEast",
   "offsetNorth",
 ] as const;
-
-/**
- * Resolve a config final de um empreendimento: DEFAULTS < OVERRIDES (código) <
- * placement (JSON salvo no editor). `placements` é opcional (experiência lê do
- * servidor; se ausente, usa só o código).
- */
-export function getBuilding3D(id: string, placements?: Placements): Building3D | null {
-  const emp = empreendimentos.find((e) => e.id === id);
-  if (!emp) return null;
-  const override = OVERRIDES[id] ?? {};
-  const p: Placement = placements?.[id] ?? {};
-  const merged: Building3D = {
-    id,
-    ...DEFAULTS,
-    ...override,
-    empreendimento: emp,
-    lat: p.lat ?? emp.lat,
-    lng: p.lng ?? emp.lng,
-    camera: p.camera,
-  };
-  for (const k of TRANSFORM_KEYS) {
-    if (typeof p[k] === "number") (merged[k] as number) = p[k] as number;
-  }
-  return merged;
-}
-
-/** Todos os empreendimentos resolvidos (com placements aplicados). */
-export function getAllBuildings3D(placements?: Placements): Building3D[] {
-  return empreendimentos
-    .map((e) => getBuilding3D(e.id, placements))
-    .filter((b): b is Building3D => b !== null);
-}
-
-/** Lista de empreendimentos disponíveis para o seletor do visualizador 3D. */
-export function listBuildings3D(): { id: string; name: string }[] {
-  return empreendimentos.map((e) => ({ id: e.id, name: e.name }));
-}
-
-/** Empreendimento inicial do visualizador. */
-export const DEFAULT_BUILDING_ID =
-  empreendimentos.find((e) => e.id === "quinta-das-mangueiras")?.id ??
-  empreendimentos[0]?.id ??
-  "";
-
-/** Fuso de Maragogi/AL: UTC-3 (sem horário de verão). */
-export const MARAGOGI_TZ_OFFSET = -3;

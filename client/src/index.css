@@ -193,6 +193,29 @@
   body {
     @apply font-sans antialiased bg-background text-foreground;
   }
+
+  html {
+    height: 100%;
+  }
+
+  /*
+    Tela fixa, sem rolagem de PÁGINA — aplicada só onde faz sentido.
+
+    A vitrine ocupa a tela inteira e quem rola são os painéis por dentro dela.
+    Sem esta trava, no tablet a página inteira deslizava: o layout de `100vh` é
+    mais alto que a área realmente visível (o `vh` conta o espaço atrás das
+    barras do navegador), então o rodapé — barra solar, botões — saía por baixo
+    da barra do navegador e só aparecia arrastando a página.
+
+    A classe é posta e retirada pela página da vitrine, e não em `body` direto,
+    porque o /admin e o editor PRECISAM rolar. Uma regra global mataria os dois.
+  */
+  body.sem-rolagem {
+    height: 100%;
+    overflow: hidden;
+    /* Impede o "puxa e volta" elástico, que no iPad descola a cena da tela. */
+    overscroll-behavior: none;
+  }
 }
 
 /**

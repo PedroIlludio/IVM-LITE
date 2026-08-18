@@ -1232,7 +1232,9 @@ export default function EmpreendimentoPanel({
       className={`absolute top-0 left-0 bottom-0 z-30 flex flex-col glassmorphism transition-[transform,width] duration-300 ease-out ${
         isOpen ? "translate-x-0" : "-translate-x-full"
       } ${noTrilho ? "v-painel-trilho" : "w-[460px] max-w-[94vw]"}`}
-      style={{ maxHeight: "100vh" }}
+      /* dvh, nao vh: no tablet o 100vh conta a area atras das barras do
+         navegador e o rodape do painel some por baixo delas. */
+      style={{ maxHeight: "100dvh" }}
     >
       {!selectedEmp ? (
         <>

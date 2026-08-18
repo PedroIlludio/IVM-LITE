@@ -97,7 +97,20 @@ export function patchDegradedWebGL() {
  * informação: menos tiles, sombra menor, anti-aliasing fora — nunca o espelho.
  */
 const AJUSTES = {
-  msaa: 4,
+  /**
+   * MSAA DESLIGADO, FXAA ligado.
+   *
+   * O anti-aliasing por multiamostragem recalcula cada pixel de borda quatro
+   * vezes; numa GPU integrada é o item mais caro da lista, e foi o que travou a
+   * cena quando os perfis saíram (a máquina rodava com `msaa: 0` antes, pela
+   * detecção automática). O FXAA cobre boa parte do serrilhado passando um
+   * filtro na imagem pronta, por uma fração do custo.
+   *
+   * A troca é consciente: borda serrilhada é estética e some sem apagar nada;
+   * unidade sem cor e planta que não desenha são informação. Se um dia a base
+   * de máquinas mudar, subir para 2 ou 4 é uma linha.
+   */
+  msaa: 0,
   fxaa: true,
   sombras: true,
   sombraTam: 2048,

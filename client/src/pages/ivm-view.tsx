@@ -76,6 +76,22 @@ export default function IvmViewPage() {
 
   const sceneRef = useRef<Scene3DHandle>(null);
 
+  /**
+   * A vitrine trava a rolagem da PÁGINA enquanto estiver aberta.
+   *
+   * Ela é uma tela cheia com painéis que rolam por dentro; a página em si não
+   * tem por que deslizar. No tablet isso não era detalhe: a barra solar e os
+   * botões do rodapé ficavam escondidos atrás da barra do navegador, e só
+   * apareciam arrastando a tela — que ao mesmo tempo tirava a cena do lugar.
+   *
+   * Posto e retirado aqui, e não no CSS global, porque /admin e editor precisam
+   * rolar normalmente.
+   */
+  useEffect(() => {
+    document.body.classList.add("sem-rolagem");
+    return () => document.body.classList.remove("sem-rolagem");
+  }, []);
+
   useEffect(() => {
     fetch("/api/config")
       .then((r) => r.json())
@@ -345,7 +361,7 @@ export default function IvmViewPage() {
 
   if (notFound) {
     return (
-      <div className="vitrine flex h-screen items-center justify-center bg-[var(--v-bg)] text-[var(--v-ink-2)]">
+      <div className="vitrine flex h-[100dvh] items-center justify-center bg-[var(--v-bg)] text-[var(--v-ink-2)]">
         IVM Lite não encontrado ou não publicado.
       </div>
     );
@@ -362,7 +378,7 @@ export default function IvmViewPage() {
 
   return (
     <div
-      className="vitrine ivm-brand relative h-screen w-full overflow-hidden"
+      className="vitrine ivm-brand relative h-[100dvh] w-full overflow-hidden"
       style={
         {
           background: brandBg,

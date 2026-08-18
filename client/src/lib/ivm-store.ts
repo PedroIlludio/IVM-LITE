@@ -2,7 +2,6 @@ import { getSupabase } from "./supabase";
 import type { Empreendimento, Incorporadora, ItemLista, Tipologia, Unidade, UnidadeStatus } from "@shared/schema";
 import type { CameraView } from "./placements";
 import type { Building3D } from "./vision3d-config";
-import { empreendimentos } from "./empreendimentos";
 import type { TorreDef } from "./unidades";
 import { DEFAULT_PAV_CFG, type PavimentosCfg, type NivelDef } from "./pavimentos";
 import { parseArea, tipologiaDaUnidade, tipologiasDe } from "./tipologias";
@@ -899,67 +898,3 @@ export function projectToBuilding3D(data: ProjectData): Building3D {
   };
 }
 
-/**
- * Projeto-semente do Quinta das Mangueiras: o empreendimento rico já existente
- * no código + a calibração 3D validada (posição em Maragogi, heading, offsets e
- * câmera inicial) + o espelho de vendas. Usado no /admin para importar o piloto.
- */
-export async function quintaSeedProject(): Promise<{ name: string; slug: string; data: ProjectData }> {
-  const emp = empreendimentos.find((e) => e.id === "quinta-das-mangueiras") ?? empreendimentos[0];
-  // Traz o espelho do arquivo do piloto para dentro do projeto (na plataforma
-  // as unidades vivem no projeto, não num JSON servido pelo backend).
-  let unidades: Unidade[] = [];
-  let tipologias: Tipologia[] | undefined;
-  try {
-    const r = await fetch("/api/unidades");
-    if (r.ok) {
-      const body = await r.json();
-      unidades = body.unidades ?? [];
-      // O gerador do mock já emite as tipologias com área, quartos e vagas;
-      // sem elas o normalizador derivaria só o nome e a imagem da planta.
-      tipologias = body.tipologias;
-    }
-  } catch {
-    /* segue sem espelho; dá pra gerar no editor */
-  }
-  return {
-    name: emp.name,
-    slug: "quinta-das-mangueiras",
-    data: {
-      empreendimento: tipologias?.length ? { ...emp, tipologias } : emp,
-      unidades,
-      config: {
-        // Volumes 3D medidos na geometria do GLB (vértices dos pavimentos-tipo).
-        // Nos eixos do modelo no Cesium, os blocos correm ao longo do Y — daí
-        // rot 90 — entre Y 92 e 281, e a espessura fica no X (negativo).
-        torres: [
-          { id: "ocean", label: "Ocean", volume: { x: -9.4, y: 123, z: -0.1, comprimento: 63, largura: 10, altura: 27, rot: 90 } },
-          { id: "sea", label: "Sea", volume: { x: -11, y: 186, z: -0.1, comprimento: 63, largura: 11, altura: 27, rot: 90 } },
-          { id: "river", label: "River", volume: { x: -24, y: 249, z: -0.1, comprimento: 63, largura: 20, altura: 27, rot: 90 } },
-        ],
-        pavimentosCfg: { ...DEFAULT_PAV_CFG },
-        crm: { mode: "manual" },
-        modelUrl: "/models/hsm-fachada.glb",
-        heading: 103,
-        pitch: 0,
-        roll: 0,
-        scale: 1,
-        heightOffset: -3.5,
-        offsetEast: -101,
-        offsetNorth: 11,
-        lat: -8.93954721813508,
-        lng: -35.170556874124706,
-        camera: {
-          lng: -35.173401029981534,
-          lat: -8.941119049776615,
-          height: 269.7099904470845,
-          heading: 65.60189152345015,
-          pitch: -31.971947458511877,
-          roll: 359.9999868296653,
-        },
-        placeholder: { width: 30, depth: 30, height: 96 },
-        tzOffset: -3,
-      },
-    },
-  };
-}
