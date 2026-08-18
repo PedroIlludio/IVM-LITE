@@ -214,6 +214,26 @@ interface Scene3DProps {
    * silhueta preta. Não acende janelas — isso depende de material emissivo no
    * próprio GLB, que o Cesium respeita mas não sabe criar.
    */
+  /**
+   * Mostrar a fotogrametria do Google (a cidade em volta).
+   *
+   * Desligada, o empreendimento fica "flutuando": o GLB, o espelho de vendas e
+   * a simulação solar continuam inteiros, e o que sai é o streaming de tiles —
+   * de longe o item mais caro da cena, e o que trava tablet.
+   */
+  cidade?: boolean;
+  /**
+   * Navegação em ÓRBITA em torno do empreendimento.
+   *
+   * O controle padrão do Cesium é de globo: arrastar gira a Terra e, de perto,
+   * isso se lê como arrastar o chão — some com o prédio de vista e ninguém
+   * entende como voltar. Numa vitrine o objeto é UM só, então o gesto natural é
+   * o de maquete: arrasta e o prédio roda, roda do mouse aproxima e afasta.
+   *
+   * Ligada só na vitrine. O editor precisa de câmera livre para posicionar
+   * modelo, traçar via e desenhar área.
+   */
+  orbitar?: boolean;
   noturno?: boolean;
   /** Quanto realçar o modelo à noite (0..1). */
   realceNoturno?: number;
@@ -382,7 +402,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
     onModelLoading, onError,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
-    noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
+    cidade = true, orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform, corteArea = null,
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
@@ -555,6 +575,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   /** Impede um carregamento tardio do GLB de sequestrar a câmera do usuário. */
   const cameraInteragidaRef = useRef(false);
   // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
+  const orbitarRef = useRef(orbitar);
+  orbitarRef.current = orbitar;
   const noturnoRef = useRef(noturno);
   noturnoRef.current = noturno;
   const realceRef = useRef(realceNoturno);
@@ -2549,6 +2571,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v) return false;
     const pos = centroDaUnidade(unitId);
     if (!pos) return false;
+    soltarOrbita();
     v.camera.flyToBoundingSphere(new BoundingSphere(pos, 26), {
       duration,
       offset: new HeadingPitchRange(
@@ -3756,6 +3779,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   function flyToCamera(cam: CameraView, duration = 1.5) {
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
       orientation: {
@@ -3774,6 +3798,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const gh = (id ? nodesRef.current.get(id)?.groundHeight : undefined) ?? FALLBACK_GROUND_HEIGHT;
     // `flyToBoundingSphere` centraliza o ponto de forma confiável, o que
     // `flyTo` com destino puro não faz quando o pitch é oblíquo.
+    soltarOrbita();
     v.camera.flyToBoundingSphere(new BoundingSphere(Cartesian3.fromDegrees(lng, lat, gh + 5), 50), {
       offset: new HeadingPitchRange(0, CesiumMath.toRadians(-45), 260),
       duration: 1.4,
@@ -3850,6 +3875,47 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     return Number.isFinite(d) && d < 5000;
   }
 
+  /**
+   * Prende a câmera ao empreendimento: arrastar ORBITA, roda aproxima.
+   *
+   * `lookAt` amarra a câmera a um referencial centrado no alvo; enquanto ele
+   * vale, os controles padrão do Cesium passam a girar em torno desse ponto em
+   * vez de girar a Terra. É a diferença entre navegar um planeta e examinar uma
+   * maquete — e a vitrine é uma maquete.
+   *
+   * Preserva o ângulo e a distância atuais, para ligar a órbita não dar um
+   * salto de câmera.
+   */
+  function aplicarOrbita() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed() || !orbitarRef.current) return;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (!b) return;
+    const esfera = esferaDoPredio(b);
+    if (!esfera) return;
+    const cam = v.camera;
+    const distancia = Cartesian3.distance(cam.positionWC, esfera.center);
+    cam.lookAt(
+      esfera.center,
+      new HeadingPitchRange(cam.heading, cam.pitch, distancia),
+    );
+    requestRender();
+  }
+
+  /**
+   * Solta o referencial da órbita.
+   *
+   * Obrigatório antes de qualquer voo: com o `lookAt` ativo, `flyTo` e
+   * `setView` passam a interpretar as coordenadas NO REFERENCIAL DO ALVO, e o
+   * destino sai completamente errado.
+   */
+  function soltarOrbita() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    v.camera.lookAtTransform(Matrix4.IDENTITY);
+  }
+
   function flyToBuilding(b: Building3D) {
     if (b.camera && cameraAindaServe(b, b.camera)) return flyToCamera(b.camera, 1.6);
     const v = viewerRef.current;
@@ -3860,6 +3926,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // 1,9× o raio enquadra a esfera inteira com uma folga discreta. Estava em
       // 2,8×, que sobrava tanto espaço em volta que o prédio virava um detalhe
       // no meio do bairro.
+      soltarOrbita();
       v.camera.flyToBoundingSphere(esfera, {
         duration: 1.6,
         offset: new HeadingPitchRange(
@@ -3867,6 +3934,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           CesiumMath.toRadians(-32),
           esfera.radius * 1.9,
         ),
+        // Pousou no prédio: a órbita volta a valer, e o arraste roda em torno
+        // dele em vez de girar a Terra.
+        complete: () => aplicarOrbita(),
       });
       return;
     }
@@ -3883,6 +3953,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const lng = bs.reduce((s, b) => s + b.lng, 0) / n;
     // Altura moderada, não a cidade toda: um overview muito alto carrega
     // poucos tiles e a fotogrametria aparece preta.
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(lng, lat - 0.012, 2800),
       orientation: {
@@ -4614,6 +4685,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const node = id ? nodesRef.current.get(id) : undefined;
     if (!v || !b || !node) return;
     const gh = node.groundHeight;
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(b.lng, b.lat, gh + b.heightOffset + camH * b.scale),
       orientation: {
@@ -4635,6 +4707,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     const esfera = esferaDoPredio(b);
     if (!v || !esfera) return flyToBuilding(b);
+    soltarOrbita();
     v.camera.flyToBoundingSphere(esfera, {
       duration,
       offset: new HeadingPitchRange(
@@ -4701,6 +4774,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const maiorEmY = a ? a.largura > a.comprimento : false;
     const heading = CesiumMath.toRadians(rotArea + (maiorEmY ? 90 : 0) + giroGraus);
     const alcance = Math.max(20, distancia * (b.scale || 1));
+
+    soltarOrbita();
 
     v.camera.flyToBoundingSphere(new BoundingSphere(alvo, 1), {
       duration,
@@ -4802,6 +4877,35 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     applySun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solarUtc, solarAltitude, pronto]);
+
+  /**
+   * Liga/desliga a órbita quando o modo muda ou a cena fica pronta.
+   */
+  useEffect(() => {
+    if (!pronto) return;
+    if (orbitar) aplicarOrbita();
+    else soltarOrbita();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbitar, pronto]);
+
+  /**
+   * Fotogrametria ligada/desligada.
+   *
+   * `show = false` para o tileset inteiro: o Cesium para de pedir, decodificar
+   * e desenhar tiles, que é o grosso do custo da cena. O empreendimento (GLB),
+   * o espelho de vendas e as sombras seguem intactos — o prédio fica flutuando
+   * sobre o fundo, que é exatamente a leitura de maquete.
+   *
+   * Não é o mesmo que desmontar a cena: aqui a câmera, o modelo e todos os
+   * controles continuam vivos.
+   */
+  useEffect(() => {
+    const ts = tilesetRef.current;
+    if (!ts) return;
+    ts.show = cidade;
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cidade, pronto]);
 
   /**
    * Modo noturno. Reaproveita `applySun`, que já decide luz e realce a partir
