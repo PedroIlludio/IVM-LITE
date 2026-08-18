@@ -84,39 +84,68 @@ export function patchDegradedWebGL() {
  * fraco. O celular do corretor no plantão é o caso real, não a exceção.
  */
 /**
- * Ajustes de render — únicos, sem modo leve.
+ * Ajustes de render.
  *
- * Havia dois perfis ("alto" e "baixo") com detecção automática e um seletor
- * para o visitante. Saíram: no perfil baixo as caixas do espelho de vendas
- * apareciam sem cor e a planta do pavimento não desenhava, ou seja, o modo
- * econômico entregava outra experiência, não a mesma mais leve — e a cena 3D é
- * o produto. Um recurso que quebra o que se está vendendo custa mais do que os
- * frames que economiza.
+ * Houve dois perfis com um seletor para o visitante, e eles saíram porque o
+ * perfil leve entregava OUTRA experiência: as caixas do espelho de vendas sem
+ * cor e a planta do pavimento sem desenhar. Depois se descobriu que a causa
+ * disso nunca foi o perfil — era o OIT (ver `orderIndependentTranslucency`
+ * abaixo), e o MSAA só mascarava o defeito por usar outro buffer.
  *
- * Se um dia voltar a existir modo leve, ele precisa cortar custo SEM apagar
- * informação: menos tiles, sombra menor, anti-aliasing fora — nunca o espelho.
+ * Com a causa resolvida, aliviar aparelho fraco volta a ser possível. A regra
+ * que sobrou do episódio, e que vale para sempre: **cortar custo, nunca
+ * informação**. Menos tiles, sombra menor, render em resolução mais baixa —
+ * tudo isso o visitante não percebe como falta. Unidade sem cor, ele percebe.
+ *
+ * Por isso não há mais escolha para o usuário: há uma adaptação automática, e
+ * ela só mexe em coisas que ninguém consegue nomear olhando a tela.
  */
-const AJUSTES = {
+function ajustesDoAparelho() {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
+  const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
+  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 900;
+  const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+
   /**
-   * MSAA DESLIGADO, FXAA ligado.
-   *
-   * O anti-aliasing por multiamostragem recalcula cada pixel de borda quatro
-   * vezes; numa GPU integrada é o item mais caro da lista, e foi o que travou a
-   * cena quando os perfis saíram (a máquina rodava com `msaa: 0` antes, pela
-   * detecção automática). O FXAA cobre boa parte do serrilhado passando um
-   * filtro na imagem pronta, por uma fração do custo.
-   *
-   * A troca é consciente: borda serrilhada é estética e some sem apagar nada;
-   * unidade sem cor e planta que não desenha são informação. Se um dia a base
-   * de máquinas mudar, subir para 2 ou 4 é uma linha.
+   * Tablet e celular: ponteiro grosso + tela não-grande. É a assinatura do
+   * aparelho de plantão de vendas, e casa melhor com a realidade do que medir
+   * memória — que muito navegador nem informa.
    */
-  msaa: 0,
-  fxaa: true,
-  sombras: true,
-  sombraTam: 2048,
-  /** Erro de tela do tileset: maior = menos tiles, menos carga, menos detalhe. */
-  sse: 20,
-};
+  const aparelhoLeve = (toque && telaEstreita) || poucaMemoria || poucosNucleos;
+
+  return {
+    /**
+     * MSAA sempre desligado; FXAA cobre o serrilhado por uma fração do custo.
+     * Multiamostragem recalcula cada pixel de borda N vezes e é o item mais
+     * caro da lista numa GPU integrada.
+     */
+    msaa: 0,
+    fxaa: true,
+
+    /** Sombras seguem existindo — a simulação solar é argumento de venda. */
+    sombras: true,
+    /** O que cai no aparelho leve é a RESOLUÇÃO do mapa de sombra, não o recurso. */
+    sombraTam: aparelhoLeve ? 1024 : 2048,
+    /** Sombra suave custa amostras extras por pixel; no tablet vira sombra dura. */
+    sombraSuave: !aparelhoLeve,
+
+    /**
+     * Erro de tela do tileset: maior = menos tiles da fotogrametria = menos
+     * geometria, textura e memória. É o controle de maior efeito num tablet, e
+     * o custo visual é a cidade ao redor ficar um pouco menos detalhada — o
+     * empreendimento em si é o GLB, que não passa por aqui.
+     */
+    sse: aparelhoLeve ? 32 : 20,
+
+    /**
+     * Escala de render. Num tablet de tela densa, a cena é desenhada em muito
+     * mais pixels do que a tela precisa mostrar; 0.8 corta ~36% dos pixels e
+     * quase não se nota, porque o upscale acontece numa densidade alta.
+     */
+    escalaRender: aparelhoLeve ? 0.8 : 1,
+  };
+}
 
 interface CreatedViewer {
   viewer: Viewer;
@@ -138,7 +167,7 @@ export async function createVision3DViewer(
   // afterward leaves the first render broken on remote/software GPUs.
   patchDegradedWebGL();
 
-  const q = AJUSTES;
+  const q = ajustesDoAparelho();
 
   const viewer = new Viewer(container, {
     // preserveDrawingBuffer: sem isto o navegador descarta o buffer logo após
@@ -198,11 +227,21 @@ export async function createVision3DViewer(
   // Sombras: 2048 (era 4096) já reduz muito o custo por frame mantendo
   // qualidade para a simulação solar. As sombras
   // suaves são o extra que sai primeiro — são um segundo passe de filtragem.
-  viewer.shadowMap.softShadows = true;
+  viewer.shadowMap.softShadows = q.sombraSuave;
   viewer.shadowMap.size = q.sombraTam;
   viewer.shadowMap.maximumDistance = 6000;
   viewer.shadowMap.enabled = q.sombras;
   viewer.shadowMap.darkness = 0.45;
+
+  /**
+   * Render em resolução reduzida no aparelho leve.
+   *
+   * É o corte de custo mais direto que existe: metade do trabalho por frame
+   * vem do número de pixels. Num tablet de tela densa a diferença mal aparece,
+   * porque o upscale acontece numa densidade alta — e nada de INFORMAÇÃO se
+   * perde, só nitidez.
+   */
+  viewer.resolutionScale = q.escalaRender;
   if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
 
   // Luz solar um pouco mais forte para o modelo GLB (vidro escuro) ler melhor.

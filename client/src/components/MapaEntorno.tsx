@@ -122,6 +122,27 @@ export default function MapaEntorno({
     const t = setInterval(() => setEsperando((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [pronto, erro]);
+
+  /**
+   * Depois da espera, pergunta ao servidor de tiles se ELE está de pé.
+   *
+   * Separa as duas causas que produzem a mesma tela girando: "não alcancei o
+   * servidor" (rede, bloqueio, serviço fora) e "o servidor respondeu, mas o
+   * mapa não montou aqui" — que aponta para o aparelho, tipicamente falta de
+   * contexto WebGL livre, já que o Cesium 3D segura um na mesma página.
+   *
+   * Sem essa distinção o diagnóstico empata: foi exatamente o que aconteceu
+   * comparando localhost no PC com o site publicado no tablet, duas variáveis
+   * trocadas de uma vez.
+   */
+  const [alcance, setAlcance] = useState<"testando" | "ok" | "falhou" | null>(null);
+  useEffect(() => {
+    if (esperando !== 12 || pronto || erro) return;
+    setAlcance("testando");
+    fetch(ESTILO_POSITRON, { cache: "no-store" })
+      .then((r) => setAlcance(r.ok ? "ok" : "falhou"))
+      .catch(() => setAlcance("falhou"));
+  }, [esperando, pronto, erro]);
   const [rotaCalculada, setRotaCalculada] = useState<{
     chave: string;
     coordenadas: [number, number][];
@@ -481,11 +502,27 @@ export default function MapaEntorno({
               <p className="v-meta font-mono text-[10px] leading-relaxed opacity-70">
                 tiles.openfreemap.org
               </p>
-              <p className="v-meta max-w-[38ch] text-[11px] opacity-70">
-                É um serviço externo de mapas, sem chave e sem conta. Se ele
-                estiver fora do ar ou bloqueado nesta rede, o mapa não desenha —
-                o 3D não depende dele.
-              </p>
+              {alcance === "falhou" && (
+                <p className="v-meta max-w-[40ch] text-[11px] opacity-70">
+                  Não consegui alcançar o servidor de mapas a partir deste
+                  aparelho. É rede: bloqueio, DNS ou o serviço fora do ar. O 3D
+                  não depende dele.
+                </p>
+              )}
+              {alcance === "ok" && (
+                <p className="v-meta max-w-[40ch] text-[11px] opacity-70">
+                  O servidor de mapas respondeu normalmente, mas o mapa não
+                  montou neste aparelho. A causa provável é falta de contexto
+                  gráfico livre — a cena 3D já ocupa um nesta mesma página, e
+                  alguns tablets só permitem um por vez.
+                </p>
+              )}
+              {alcance !== "ok" && alcance !== "falhou" && (
+                <p className="v-meta max-w-[38ch] text-[11px] opacity-70">
+                  É um serviço externo de mapas, sem chave e sem conta —
+                  verificando se ele responde deste aparelho…
+                </p>
+              )}
             </>
           )}
         </div>
