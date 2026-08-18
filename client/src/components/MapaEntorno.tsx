@@ -108,6 +108,20 @@ export default function MapaEntorno({
   const vertices = useRef<Marker[]>([]);
   const [pronto, setPronto] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  /**
+   * Segundos esperando o mapa carregar.
+   *
+   * O MapLibre avisa por `error` quando a requisição FALHA, mas não quando ela
+   * simplesmente não volta — servidor de tiles lento, rede do plantão, DNS
+   * preso. Nesse caso não há `load` nem `error`: fica o giro eterno, sem uma
+   * palavra sobre o que se espera. O contador transforma isso em informação.
+   */
+  const [esperando, setEsperando] = useState(0);
+  useEffect(() => {
+    if (pronto || erro) return;
+    const t = setInterval(() => setEsperando((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [pronto, erro]);
   const [rotaCalculada, setRotaCalculada] = useState<{
     chave: string;
     coordenadas: [number, number][];
@@ -454,8 +468,26 @@ export default function MapaEntorno({
         </div>
       )}
       {!pronto && !erro && (
-        <div className="absolute inset-0 z-[1] flex items-center justify-center bg-[var(--v-surface-3)]">
+        <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 bg-[var(--v-surface-3)] p-6 text-center">
           <Loader2 className="h-5 w-5 animate-spin text-[var(--v-ink-3)]" />
+          {/* Passados 12s não é mais "carregando", é "não veio" — e a tela
+              precisa dizer de ONDE não veio. Sem isto o diagnóstico dependia do
+              console, que não existe no tablet do plantão. */}
+          {esperando >= 12 && (
+            <>
+              <p className="v-meta">
+                O mapa não respondeu em {esperando}s.
+              </p>
+              <p className="v-meta font-mono text-[10px] leading-relaxed opacity-70">
+                tiles.openfreemap.org
+              </p>
+              <p className="v-meta max-w-[38ch] text-[11px] opacity-70">
+                É um serviço externo de mapas, sem chave e sem conta. Se ele
+                estiver fora do ar ou bloqueado nesta rede, o mapa não desenha —
+                o 3D não depende dele.
+              </p>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -33,7 +33,15 @@ export async function registerRoutes(
     });
   });
 
-  /** Rota viaria real entre o empreendimento e um ponto de interesse. */
+  /**
+   * Rota viaria real entre o empreendimento e um ponto de interesse.
+   *
+   * GEMEA de `api/route.ts`. Esta versao serve o desenvolvimento (Express);
+   * a de `api/` serve a producao, porque o `.vercelignore` exclui `server/` e
+   * nada daqui existe no deploy. Mexeu numa, mexa na outra — foi justamente
+   * por so existir esta que o tracado de rota funcionava na maquina de quem
+   * edita e falhava calado no site publicado.
+   */
   app.get("/api/route", async (req, res) => {
     const fromLng = Number(req.query.fromLng);
     const fromLat = Number(req.query.fromLat);
