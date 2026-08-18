@@ -3892,6 +3892,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
       ?? buildingsRef.current[0];
     if (!b) return;
+    // Sem esfera o GLB ainda não foi medido; o `moveEnd` tenta de novo depois.
     const esfera = esferaDoPredio(b);
     if (!esfera) return;
     const cam = v.camera;
@@ -4882,9 +4883,40 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * Liga/desliga a órbita quando o modo muda ou a cena fica pronta.
    */
   useEffect(() => {
-    if (!pronto) return;
-    if (orbitar) aplicarOrbita();
-    else soltarOrbita();
+    const v = viewerRef.current;
+    if (!pronto || !v || v.isDestroyed()) return;
+    if (!orbitar) {
+      soltarOrbita();
+      return;
+    }
+    aplicarOrbita();
+
+    /**
+     * Reata a órbita ao FIM de cada movimento de câmera.
+     *
+     * Não basta ligá-la uma vez: todo voo programado precisa soltar o
+     * referencial antes de partir (senão `flyTo` lê as coordenadas no
+     * referencial do alvo e vai parar em outro lugar), e quem solta não sabe
+     * quando o voo acaba. Ligar no `moveEnd` cobre todos os caminhos de uma
+     * vez — inclusive o da câmera salva do projeto, que era por onde a vitrine
+     * abria e o motivo de a órbita nunca valer na prática.
+     *
+     * Reatar é barato e invisível: `aplicarOrbita` preserva ângulo e distância
+     * atuais, então quando o referencial já está posto não há salto nenhum.
+     */
+    const aoParar = () => {
+      if (!orbitarRef.current) return;
+      const cam = viewerRef.current?.camera;
+      if (!cam) return;
+      // Já orbitando? Não mexe — reaplicar a cada parada do arraste brigaria
+      // com o próprio gesto do usuário.
+      if (!Matrix4.equals(cam.transform, Matrix4.IDENTITY)) return;
+      aplicarOrbita();
+    };
+    v.camera.moveEnd.addEventListener(aoParar);
+    return () => {
+      if (!v.isDestroyed()) v.camera.moveEnd.removeEventListener(aoParar);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orbitar, pronto]);
 
