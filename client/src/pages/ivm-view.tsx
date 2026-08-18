@@ -353,6 +353,21 @@ export default function IvmViewPage() {
   const temModelo = !!project?.data.config.modelUrl;
   const carregando = !project || !ready || (temModelo && !modeloPronto);
 
+  /**
+   * Segundos parado na tela de carregamento.
+   *
+   * Serve ao diagnóstico: passado um tempo razoável, o que era "carregando"
+   * vira "algo não chegou", e a tela precisa dizer O QUÊ. Sem isso a única
+   * saída era o console do navegador — que num tablet não existe, e é onde a
+   * vitrine mais roda em plantão de vendas.
+   */
+  const [segundosCarregando, setSegundosCarregando] = useState(0);
+  useEffect(() => {
+    if (!carregando) return;
+    const t = setInterval(() => setSegundosCarregando((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [carregando]);
+
   const etapaCarregamento = !project
     ? "Abrindo o empreendimento..."
     : !ready
@@ -757,6 +772,54 @@ export default function IvmViewPage() {
             <div className="mx-auto mt-5 h-[3px] w-40 overflow-hidden rounded-full bg-white/10">
               <div className="v-carregando h-full w-1/3 rounded-full bg-[var(--v-accent)]" />
             </div>
+
+            {/*
+              Diagnóstico, depois de 15s.
+
+              Passado esse tempo o que se vê não é mais "carregando", é "algo
+              não chegou" — e a barra girando some com a informação de qual das
+              três etapas falhou. Cada linha aqui é uma das condições de
+              `carregando`, com o dado que permite agir: variável de ambiente
+              faltando, tile do Google recusado, GLB que não baixa.
+
+              Vive na tela, e não no console, porque a vitrine roda em tablet no
+              plantão de vendas — lá não há F12.
+            */}
+            {segundosCarregando >= 15 && (
+              <div className="mt-8 space-y-2 text-left">
+                <p className="v-eyebrow text-[var(--v-ink-3)]">
+                  Parado há {segundosCarregando}s. O que falta:
+                </p>
+                {([
+                  {
+                    ok: !!project,
+                    label: "Projeto",
+                    dica: "não veio do banco — confira SUPABASE_URL e SUPABASE_ANON_KEY no deploy",
+                  },
+                  {
+                    ok: ready,
+                    label: "Cena 3D",
+                    dica: "a fotogrametria do Google não montou — confira GOOGLE_MAPS_API_KEY, se a Map Tiles API está ativa e se a restrição de domínio inclui este site",
+                  },
+                  {
+                    ok: !temModelo || modeloPronto,
+                    label: "Modelo 3D",
+                    dica: "o GLB não baixou — se a URL for do Supabase, o bucket ivm-assets precisa estar público",
+                  },
+                ] as { ok: boolean; label: string; dica: string }[]).map((c) => (
+                  <p key={c.label} className={`text-[11px] leading-relaxed ${
+                    c.ok ? "text-[var(--v-ink-3)]" : "text-amber-300"}`}>
+                    {c.ok ? "✓" : "✕"} <span className="font-semibold">{c.label}</span>
+                    {!c.ok && <> — {c.dica}</>}
+                  </p>
+                ))}
+                {temModelo && !modeloPronto && (
+                  <p className="break-all text-[10px] text-[var(--v-ink-3)]">
+                    modelo: {project?.data.config.modelUrl}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
