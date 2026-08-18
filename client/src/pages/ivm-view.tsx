@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium } from "lucide-react";
+import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3 } from "lucide-react";
 import Scene3D, { type Scene3DHandle } from "@/components/Scene3D";
 import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
@@ -73,6 +73,47 @@ export default function IvmViewPage() {
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
   /** Nível aberto na vista de pavimentos — de onde sai a planta no chão. */
   const [nivelAberto, setNivelAberto] = useState<NivelDef | null>(null);
+
+  /**
+   * Cena 3D ligada?
+   *
+   * Existe porque o 3D é caro e nem todo aparelho dá conta: num tablet de
+   * plantão a fotogrametria trava, e o mapa do entorno chega a nem montar —
+   * navegador nenhum garante dois contextos gráficos na mesma página, e o
+   * Cesium já ocupa um.
+   *
+   * Desligada, a cena é DESMONTADA (não escondida): é isso que devolve o
+   * contexto gráfico e a memória. Todo o resto continua — painel, ficha,
+   * unidades, galeria, plantas, entorno. O visitante perde o passeio 3D, não a
+   * vitrine.
+   *
+   * A escolha fica no navegador dele: quem precisou desligar num aparelho vai
+   * precisar de novo na próxima visita.
+   */
+  const CHAVE_3D = "ivm-cena-3d";
+  const [cena3D, setCena3D] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("ivm-cena-3d") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  function alternarCena3D() {
+    setCena3D((v) => {
+      const novo = !v;
+      try {
+        localStorage.setItem(CHAVE_3D, novo ? "on" : "off");
+      } catch {
+        /* navegação privada: vale só para esta sessão */
+      }
+      // Sair do 3D fecha o que só existe dentro dele.
+      if (!novo) {
+        setPavMode(false);
+        setBuscaMode(false);
+      }
+      return novo;
+    });
+  }
 
   const sceneRef = useRef<Scene3DHandle>(null);
 
@@ -351,7 +392,12 @@ export default function IvmViewPage() {
    * que esperar, senão a capa nunca sairia num projeto que ainda não subiu o 3D.
    */
   const temModelo = !!project?.data.config.modelUrl;
-  const carregando = !project || !ready || (temModelo && !modeloPronto);
+  /**
+   * Sem cena 3D não há o que esperar: `ready` e `modeloPronto` só existem
+   * quando o Cesium monta. Sem esta condição, desligar o 3D deixaria a vitrine
+   * presa para sempre na tela de carregamento.
+   */
+  const carregando = !project || (cena3D && (!ready || (temModelo && !modeloPronto)));
 
   /**
    * Segundos parado na tela de carregamento.
@@ -426,7 +472,33 @@ export default function IvmViewPage() {
         ${brand.fontDisplay ? `.ivm-brand .font-serif { font-family: ${brand.fontDisplay}, serif; }` : ""}
       `}</style>
 
-      {apiKey && building && (
+      {/*
+        Sem a cena, o palco não pode ficar preto: a capa do empreendimento
+        ocupa o lugar dela. É a mesma imagem do painel, então nada precisa ser
+        cadastrado a mais.
+      */}
+      {!cena3D && (
+        <div className="absolute inset-0 z-0 bg-[var(--v-bg)]">
+          {project?.data.empreendimento.thumbnailUrl && (
+            <img
+              src={project.data.empreendimento.thumbnailUrl}
+              alt={project.name}
+              className="h-full w-full object-cover opacity-40"
+            />
+          )}
+          <div className="absolute inset-0 grid place-items-center p-6 text-center">
+            <div>
+              <p className="v-eyebrow mb-2">Modo leve</p>
+              <p className="v-meta max-w-[34ch] text-[12px] opacity-80">
+                A cena 3D está desligada neste aparelho. Unidades, plantas,
+                galeria e entorno continuam disponíveis no painel.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {cena3D && apiKey && building && (
         <Scene3D
           ref={sceneRef}
           apiKey={apiKey}
@@ -501,7 +573,7 @@ export default function IvmViewPage() {
       )}
 
       {/* Bússola */}
-      {project && modoEntorno !== "mapa" && !tilesError && ambiente?.mostrarBussola && (
+      {cena3D && project && modoEntorno !== "mapa" && !tilesError && ambiente?.mostrarBussola && (
         <Bussola heading={heading} onClick={() => sceneRef.current?.flyToCamera({
           ...(sceneRef.current.getCurrentCamera() ?? { lng: 0, lat: 0, height: 500, pitch: -30, roll: 0, heading: 0 }),
           heading: 0,
@@ -678,6 +750,25 @@ export default function IvmViewPage() {
       */}
       {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && (
         <div className="absolute right-4 top-4 z-40 flex items-center gap-2">
+          {/*
+            Ligar/desligar a cena 3D. Fica FORA das condições do resto porque
+            precisa existir nos dois estados — é o único caminho de volta para
+            quem desligou.
+          */}
+          <button
+            onClick={alternarCena3D}
+            className="v-icon-btn"
+            data-on={cena3D ? undefined : "1"}
+            title={cena3D
+              ? "Desligar a cena 3D (deixa a vitrine mais leve neste aparelho)"
+              : "Ligar a cena 3D"}
+          >
+            <Layers3 className="h-4 w-4" />
+          </button>
+
+          {/* O resto só faz sentido com a cena montada: todos operam a câmera. */}
+          {cena3D && (
+          <>
           <button onClick={irParaPrincipal} title="Voltar à vista principal" className="v-pill">
             <Home className="h-4 w-4" />
             <span className="hidden sm:inline">Vista principal</span>
@@ -714,9 +805,8 @@ export default function IvmViewPage() {
             </button>
           )}
 
-          {/* Override manual da qualidade. Não é configurável por projeto de
-              propósito: é uma preferência do APARELHO de quem está vendo, não
-              uma característica do empreendimento. */}
+          </>
+          )}
         </div>
       )}
 
@@ -727,7 +817,8 @@ export default function IvmViewPage() {
         </button>
       )}
 
-      {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && (
+      {/* Barra solar move o sol DA CENA: sem cena, é um controle sem efeito. */}
+      {cena3D && !tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && (
         <SolarBar
           timeMinutes={timeMinutes}
           onTimeChange={(v) => {
