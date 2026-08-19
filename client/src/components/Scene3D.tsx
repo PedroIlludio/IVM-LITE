@@ -3895,12 +3895,20 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // Sem esfera o GLB ainda não foi medido; o `moveEnd` tenta de novo depois.
     const esfera = esferaDoPredio(b);
     if (!esfera) return;
-    const cam = v.camera;
-    const distancia = Cartesian3.distance(cam.positionWC, esfera.center);
-    cam.lookAt(
-      esfera.center,
-      new HeadingPitchRange(cam.heading, cam.pitch, distancia),
-    );
+    /**
+     * `lookAtTransform` SEM deslocamento, nunca `lookAt`.
+     *
+     * `lookAt(alvo, offset)` MOVE a câmera para `alvo + offset` — e era isso
+     * que teleportava a cena: escolhida uma unidade ou um pavimento, o voo
+     * pousava lá, o `moveEnd` disparava, e a órbita reposicionava a câmera no
+     * centro do prédio um segundo depois. O usuário via a câmera fugir sozinha
+     * do que ele acabou de abrir.
+     *
+     * `lookAtTransform(matriz)` só troca o REFERENCIAL: a câmera fica
+     * exatamente onde está, e o arraste passa a girar em torno da origem desse
+     * referencial. É o que se quer — orbitar sem mexer no enquadramento.
+     */
+    v.camera.lookAtTransform(Transforms.eastNorthUpToFixedFrame(esfera.center));
     requestRender();
   }
 
@@ -4867,10 +4875,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useEffect(() => {
     if (!readyRef.current) return;
     const b = buildingsRef.current.find((x) => x.id === selectedId);
-    if (b) showPoiMarkers(b);
+    // Sem cidade, sem POIs: eles marcam o que existe EM VOLTA, e sem o chão a
+    // que se referem viram pinos boiando no vazio.
+    if (b && cidade) showPoiMarkers(b);
     else clearPoiMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poiChave, selectedId, buildings.length, pronto]);
+  }, [poiChave, selectedId, buildings.length, pronto, cidade]);
 
   // Sol: hora e elevação vêm da barra solar.
   useEffect(() => {

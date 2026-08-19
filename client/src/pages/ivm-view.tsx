@@ -83,31 +83,14 @@ export default function IvmViewPage() {
    * maquete — com o espelho de vendas, as sombras e a simulação solar
    * intactos.
    *
-   * É por isso que não se desmonta a cena: o produto é o prédio. Tirar a cena
-   * inteira tirava justamente o que o cliente veio ver.
-   *
-   * A escolha fica no navegador: quem precisou desligar num tablet não precisa
-   * repetir a cada visita.
+   * NÃO é lembrada entre visitas, de propósito. A altura do terreno sob o
+   * empreendimento é medida CONTRA a fotogrametria: recarregar com ela já
+   * desligada deixava o prédio sem referência de solo e ele nascia despencado,
+   * como se viesse do infinito. Começar sempre com a cidade garante a medição;
+   * desligar depois é seguro, porque a altura já foi resolvida.
    */
-  const CHAVE_CIDADE = "ivm-cidade-3d";
-  const [cidade3D, setCidade3D] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("ivm-cidade-3d") !== "off";
-    } catch {
-      return true;
-    }
-  });
-  function alternarCidade3D() {
-    setCidade3D((v) => {
-      const novo = !v;
-      try {
-        localStorage.setItem(CHAVE_CIDADE, novo ? "on" : "off");
-      } catch {
-        /* navegação privada: vale só para esta sessão */
-      }
-      return novo;
-    });
-  }
+  const [cidade3D, setCidade3D] = useState(true);
+  const alternarCidade3D = () => setCidade3D((v) => !v);
 
   const sceneRef = useRef<Scene3DHandle>(null);
 
@@ -503,9 +486,13 @@ export default function IvmViewPage() {
               },
             };
           })()}
-          vias={project?.data.config.entorno?.vias ?? null}
+          /* Vias, superfícies e POIs acompanham a cidade: os três existem
+             para situar o empreendimento NO ENTORNO, e sem a fotogrametria
+             perdem o chão a que se referem — viram linhas e pinos boiando no
+             vazio, pior que ausentes, porque parecem defeito. */
+          vias={cidade3D ? (project?.data.config.entorno?.vias ?? null) : null}
           corVia={project?.data.config.entorno?.corVia}
-          superficies={project?.data.config.entorno?.superficies ?? null}
+          superficies={cidade3D ? (project?.data.config.entorno?.superficies ?? null) : null}
           onCameraMove={setHeading}
         />
       )}
