@@ -597,6 +597,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
   const cidadeRef = useRef(cidade);
   cidadeRef.current = cidade;
+  /** Vigília que devolve a câmera à órbita quando o voo termina. */
+  const reatarRef = useRef<number | null>(null);
   const orbitarRef = useRef(orbitar);
   orbitarRef.current = orbitar;
   const noturnoRef = useRef(noturno);
@@ -3999,10 +4001,52 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * `setView` passam a interpretar as coordenadas NO REFERENCIAL DO ALVO, e o
    * destino sai completamente errado.
    */
+  /**
+   * Depois que o CAMINHO termina, a câmera volta ao estado de órbita.
+   *
+   * Mudar de câmera e orbitar são coisas diferentes — e é essa distinção que
+   * faltava. Todo voo precisa SOLTAR o referencial antes de partir: com ele
+   * posto, `flyTo` leria as coordenadas no referencial do alvo e pousaria em
+   * outro lugar. Mas soltar era só metade do trabalho; ninguém reatava ao
+   * chegar, e a órbita ia embora no primeiro botão.
+   *
+   * Por que vigiar a câmera em vez de usar o `complete` do voo: são nove
+   * chamadas de voo espalhadas, algumas já com `complete` próprio. E por que
+   * não o `moveEnd` do Cesium: a cena roda com `requestRenderMode` e para de
+   * desenhar assim que o voo acaba — `moveEnd` é disparado DURANTE um quadro,
+   * então sem quadro depois da parada o evento pode nunca vir. Foi isso que
+   * fez a primeira tentativa falhar.
+   *
+   * A vigília pede um quadro por vez (o voo já precisa deles), detecta a
+   * câmera parada por cinco quadros seguidos e reata. Teto de 8s para nunca
+   * virar laço eterno.
+   */
+  function agendarReatarOrbita() {
+    if (!orbitarRef.current) return;
+    if (reatarRef.current != null) cancelAnimationFrame(reatarRef.current);
+    const inicio = performance.now();
+    const ultima = new Cartesian3();
+    let parado = 0;
+    const passo = () => {
+      const v = viewerRef.current;
+      if (!v || v.isDestroyed() || !orbitarRef.current) return;
+      v.scene.requestRender();
+      const mexeu = Cartesian3.distance(v.camera.positionWC, ultima) > 0.05;
+      Cartesian3.clone(v.camera.positionWC, ultima);
+      parado = mexeu ? 0 : parado + 1;
+      if (parado >= 5) { aplicarOrbita(); reatarRef.current = null; return; }
+      if (performance.now() - inicio > 8000) { reatarRef.current = null; return; }
+      reatarRef.current = requestAnimationFrame(passo);
+    };
+    reatarRef.current = requestAnimationFrame(passo);
+  }
+
   function soltarOrbita() {
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     v.camera.lookAtTransform(Matrix4.IDENTITY);
+    // Soltar é sempre para um voo: já deixa marcada a volta.
+    agendarReatarOrbita();
   }
 
   /**
@@ -5013,17 +5057,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
     aplicarOrbita();
 
-    // Reata ao fim de cada voo — mas só enquanto o modo valer. O `orbitarRef`
-    // é lido no momento do evento, não no da montagem.
-    const aoParar = () => {
-      if (!orbitarRef.current) return;
-      const cam = viewerRef.current?.camera;
-      if (!cam || !Matrix4.equals(cam.transform, Matrix4.IDENTITY)) return;
-      aplicarOrbita();
-    };
-    v.camera.moveEnd.addEventListener(aoParar);
+    // Quem devolve a câmera à órbita depois de cada voo é `agendarReatarOrbita`,
+    // chamada por `soltarOrbita`. Aqui só se liga e desliga o modo.
     return () => {
-      if (!v.isDestroyed()) v.camera.moveEnd.removeEventListener(aoParar);
+      if (reatarRef.current != null) cancelAnimationFrame(reatarRef.current);
+      reatarRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orbitar, pronto]);
