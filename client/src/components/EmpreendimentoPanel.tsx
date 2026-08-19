@@ -47,6 +47,29 @@ import {
   ClipboardList,
 } from "lucide-react";
 
+/**
+ * Orientação do aparelho — não é o mesmo que "é celular".
+ *
+ * Retrato e paisagem têm gargalos OPOSTOS. Em pé, sobra largura e falta
+ * altura: uma coluna de cinco abas empilhadas come metade da tela e a leitura
+ * fica espremida. Deitado, sobra largura e falta altura ainda mais — mas aí o
+ * 3D é que precisa da tela, porque é a hora em que se mostra a maquete para
+ * alguém.
+ *
+ * Por isso o painel não tem um layout "de celular": tem um de cada orientação.
+ */
+function useRetrato() {
+  const [retrato, setRetrato] = useState(true);
+  useEffect(() => {
+    const mq = window.matchMedia("(orientation: portrait)");
+    const ver = () => setRetrato(mq.matches);
+    ver();
+    mq.addEventListener("change", ver);
+    return () => mq.removeEventListener("change", ver);
+  }, []);
+  return retrato;
+}
+
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
@@ -271,6 +294,7 @@ function EmpreendimentoDetail({
   onFechar,
   trilho,
   cidadeVisivel,
+  gavetaHorizontal = false,
 }: {
   emp: Empreendimento;
   onBack: () => void;
@@ -294,6 +318,14 @@ function EmpreendimentoDetail({
   trilho: boolean;
   /** A fotogrametria está visível? Sem ela, o entorno só é lido no mapa. */
   cidadeVisivel: boolean;
+  /**
+   * Abas em LINHA em vez de coluna.
+   *
+   * Vale no celular em retrato, onde a altura é o recurso escasso: cinco abas
+   * empilhadas comeriam a folha inteira e sobraria uma fresta para o conteúdo.
+   * Em linha elas ocupam uma faixa e o resto é leitura.
+   */
+  gavetaHorizontal?: boolean;
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -680,7 +712,7 @@ function EmpreendimentoDetail({
               com texto, seta e contador — um formulário de navegação sobre a
               cena 3D, que é o que o visitante veio ver. */}
           {vista === "menu" && (
-            <div className="v-in v-gaveta pointer-events-auto">
+            <div className={`v-in v-gaveta pointer-events-auto ${gavetaHorizontal ? "v-gaveta-h" : ""}`}>
               {([
                 {
                   /* Primeira da fila: é a apresentação do empreendimento, e
@@ -1180,6 +1212,7 @@ export default function EmpreendimentoPanel({
   // Projeto de empreendimento único: sem lista, sem botão "Voltar".
   const single = empreendimentos.length === 1;
   const isMobile = useIsMobile();
+  const retrato = useRetrato();
   const [mobileExpanded, setMobileExpanded] = useState(false);
 
   /**
@@ -1200,12 +1233,27 @@ export default function EmpreendimentoPanel({
 
   if (isMobile) {
     return (
+      /*
+        CELULAR — dois layouts, um por orientação.
+
+        RETRATO: folha inferior. O painel ocupa a parte de baixo e deixa o
+        terço superior para a cena. Cobrir a tela inteira, como antes, escondia
+        o produto justamente onde a tela é menor: o cliente rolava texto sem
+        nunca ver o prédio. Aqui ele vê os dois ao mesmo tempo.
+
+        PAISAGEM: coluna à esquerda. Deitado, a altura é o recurso escasso —
+        uma folha inferior sobraria com 150px de conteúdo. E é a orientação em
+        que alguém vira o aparelho para MOSTRAR a maquete, então o 3D fica com
+        a maior parte e o painel encosta na lateral.
+      */
       <div
         data-testid="panel-empreendimentos"
-        className={`absolute inset-y-0 left-0 z-30 flex w-full flex-col glassmorphism transition-transform duration-300 ease-out ${
-          isOpen ? "translate-x-0" : "-translate-x-full"
+        className={`absolute z-30 flex flex-col glassmorphism transition-transform duration-300 ease-out ${
+          retrato
+            ? `inset-x-0 bottom-0 h-[64dvh] rounded-t-[var(--v-r-lg)] ${isOpen ? "translate-y-0" : "translate-y-full"}`
+            : `inset-y-0 left-0 w-[min(64vw,380px)] ${isOpen ? "translate-x-0" : "-translate-x-full"}`
         }`}
-        style={{ height: "100dvh", maxHeight: "100dvh" }}
+        style={retrato ? undefined : { height: "100dvh", maxHeight: "100dvh" }}
       >
         {!selectedEmp ? (
           <>
@@ -1258,6 +1306,7 @@ export default function EmpreendimentoPanel({
             onFechar={onToggle}
             trilho={false}
             cidadeVisivel={cidadeVisivel}
+            gavetaHorizontal={retrato}
           />
         )}
       </div>

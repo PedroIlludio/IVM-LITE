@@ -534,6 +534,37 @@
   outline-offset: 2px;
 }
 
+/*
+  ABAS EM LINHA — celular em retrato.
+
+  Em pé, a altura é o que falta: cinco abas empilhadas comem a folha inteira e
+  sobra uma fresta para ler. Em linha elas viram uma faixa de navegação, como a
+  barra de abas de um aplicativo, e todo o resto da folha é conteúdo.
+
+  Rola na horizontal quando não couberem: melhor deslizar cinco abas legíveis
+  do que espremer todas até o rótulo virar reticências.
+*/
+.vitrine .v-gaveta-h {
+  flex-direction: row;
+  gap: 6px;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.vitrine .v-gaveta-h::-webkit-scrollbar { display: none; }
+.vitrine .v-gaveta-h .v-gaveta-item {
+  flex: 0 0 auto;
+  width: 88px;
+  min-height: 80px;
+  padding: 10px 6px;
+}
+.vitrine .v-gaveta-h .v-gaveta-rotulo {
+  font-size: 10.5px;
+  line-height: 1.2;
+}
+
 .vitrine .v-gaveta-rotulo {
   /* Duas ou três linhas cabem: o nome inteiro vale mais que reticências,
      porque é ele que diz o destino. */

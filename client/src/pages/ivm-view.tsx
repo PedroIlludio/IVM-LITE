@@ -92,6 +92,24 @@ export default function IvmViewPage() {
   const [cidade3D, setCidade3D] = useState(true);
   const alternarCidade3D = () => setCidade3D((v) => !v);
 
+  /**
+   * Celular em pé, com o painel aberto.
+   *
+   * Nesse arranjo o painel é uma FOLHA INFERIOR: ele ocupa a parte de baixo da
+   * tela, onde a barra solar também vive. Os dois no mesmo lugar significa um
+   * por cima do outro — e quem perde é a barra, que fica inalcançável atrás da
+   * folha. Como a leitura é o que se está fazendo ali, a barra sai de cena
+   * enquanto a folha está aberta.
+   */
+  const [folhaEmbaixo, setFolhaEmbaixo] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px) and (orientation: portrait)");
+    const ver = () => setFolhaEmbaixo(mq.matches);
+    ver();
+    mq.addEventListener("change", ver);
+    return () => mq.removeEventListener("change", ver);
+  }, []);
+
   const sceneRef = useRef<Scene3DHandle>(null);
 
   /**
@@ -771,7 +789,7 @@ export default function IvmViewPage() {
         </button>
       )}
 
-      {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && (
+      {!(folhaEmbaixo && panelOpen) && !tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && (
         <SolarBar
           timeMinutes={timeMinutes}
           onTimeChange={(v) => {
