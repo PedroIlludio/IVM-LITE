@@ -397,6 +397,15 @@ function linhaDaAlca(opts: PolylineGraphics.ConstructorOptions): PolylineGraphic
   return opts;
 }
 
+/**
+ * Fundo do modo estúdio (entorno escondido).
+ *
+ * Cinza claro levemente frio: é o fundo de render de apresentação de maquete —
+ * claro o bastante para a silhueta escura do prédio se destacar, neutro o
+ * bastante para não disputar com a fachada nem sugerir hora do dia.
+ */
+const FUNDO_ESTUDIO = "#d6d8da";
+
 const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   {
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
@@ -414,6 +423,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const skyBoxRef = useRef<Viewer["scene"]["skyBox"] | null>(null);
   const nightStageRef = useRef<PostProcessStage | null>(null);
   const nightAmountRef = useRef(0);
   const tilesetRef = useRef<Cesium3DTileset | null>(null);
@@ -4942,9 +4952,35 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * controles continuam vivos.
    */
   useEffect(() => {
+    const v = viewerRef.current;
     const ts = tilesetRef.current;
-    if (!ts) return;
-    ts.show = cidade;
+    if (!v || v.isDestroyed()) return;
+    if (ts) ts.show = cidade;
+
+    /**
+     * Sem cidade, a cena vira ESTÚDIO.
+     *
+     * Só esconder a fotogrametria deixava o prédio sobre o espaço sideral — o
+     * fundo padrão do Cesium é o céu estrelado, que existe para quem olha a
+     * Terra de fora. Um prédio recortado contra estrelas não lê como maquete,
+     * lê como erro.
+     *
+     * Céu, atmosfera e estrelas saem; entra um cinza claro chapado, que é o
+     * fundo de render de apresentação: neutro, sem direção, sem horizonte
+     * competindo com a silhueta. O prédio passa a ser a única coisa na tela
+     * com forma — que é o ponto de esconder o entorno.
+     */
+    // `SkyBox` não expõe `show` nos tipos do Cesium; guardamos a instância e
+    // trocamos por `undefined`, que é o caminho suportado para tirar o céu.
+    if (v.scene.skyBox) skyBoxRef.current = v.scene.skyBox;
+    v.scene.skyBox = cidade ? (skyBoxRef.current ?? v.scene.skyBox) : undefined;
+    if (v.scene.skyAtmosphere) v.scene.skyAtmosphere.show = cidade;
+    if (v.scene.sun) v.scene.sun.show = cidade;
+    if (v.scene.moon) v.scene.moon.show = cidade;
+    v.scene.backgroundColor = cidade
+      ? Color.BLACK
+      : Color.fromCssColorString(FUNDO_ESTUDIO);
+
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cidade, pronto]);
