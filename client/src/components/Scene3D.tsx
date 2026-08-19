@@ -3987,6 +3987,30 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * referencial. É o que se quer — orbitar sem mexer no enquadramento.
      */
     v.camera.lookAtTransform(Transforms.eastNorthUpToFixedFrame(esfera.center));
+
+    /**
+     * Eixo travado no "cima" local — é isto que faz o giro ser de PRATO.
+     *
+     * Sem `constrainedAxis`, o Cesium gira livre em torno do referencial e a
+     * câmera ROLA junto: o horizonte inclina, o prédio parece tombar e o
+     * arraste deixa de ter um eixo previsível. Travando o eixo vertical, o
+     * arraste horizontal dá a volta em torno do edifício e o vertical sobe e
+     * desce, que é o comportamento de maquete.
+     */
+    v.camera.constrainedAxis = Cartesian3.UNIT_Z;
+
+    /**
+     * Limites de zoom pelo TAMANHO do prédio, não por número fixo.
+     *
+     * O mínimo global de 5 m e o máximo de 20 km foram calibrados para navegar
+     * a cidade. Orbitando um objeto, o que importa é o raio dele: perto demais
+     * a câmera entra dentro da fachada, longe demais o prédio vira um ponto e o
+     * giro parece não fazer nada.
+     */
+    const nav = v.scene.screenSpaceCameraController;
+    nav.minimumZoomDistance = Math.max(5, esfera.radius * 0.6);
+    nav.maximumZoomDistance = esfera.radius * 14;
+
     requestRender();
   }
 
@@ -4001,6 +4025,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     v.camera.lookAtTransform(Matrix4.IDENTITY);
+    // O eixo travado e os limites de zoom pertencem à órbita: soltos aqui, os
+    // voos programados voltam a poder ir a qualquer lugar da cena.
+    v.camera.constrainedAxis = undefined;
+    const nav = v.scene.screenSpaceCameraController;
+    nav.minimumZoomDistance = 5;
+    nav.maximumZoomDistance = 20000;
   }
 
   /**

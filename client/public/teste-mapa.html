@@ -5,103 +5,118 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Teste do mapa 2D</title>
 <!--
-  Diagnóstico ISOLADO do mapa do entorno.
+  Diagnóstico do mapa do entorno, SEM DEPENDÊNCIA NENHUMA.
 
-  Existe porque o mapa carrega no localhost e não na Vercel, e todas as causas
-  verificáveis sem rodar já foram descartadas (CSP, arquivo faltando, conteúdo
-  misto, rewrite, variável de ambiente, servidor fora do ar). O que restou só
-  se observa no aparelho — e no tablet não há console.
+  As duas versões anteriores desta página falharam por culpa dela mesma: a
+  primeira carregou o MapLibre por `<script src>` (a v6 não publica build
+  global — 404), a segunda por `import` ESM (se o módulo não resolve, o script
+  inteiro morre calado e a tela fica vazia — foi o "não dá resposta").
 
-  Esta página não usa nada do app: nem React, nem bundle, nem configuração.
-  Se o mapa desenhar AQUI e não na vitrine, o problema é do app. Se não
-  desenhar nem aqui, é do aparelho ou da rede. É o teste que separa os dois.
+  Esta não importa nada. Testa só o que decide o caso, com JavaScript puro:
 
-  Descartável: apague quando a causa estiver isolada.
+  1. o aparelho alcança o servidor de tiles?      (já provado que sim: HTTP 200)
+  2. o aparelho concede contexto WebGL?           ← a hipótese viva
+  3. quantos contextos simultâneos ele aguenta?   ← o Cesium já ocupa um
+
+  Se o item 3 devolver 1, está explicado: a vitrine tem a cena 3D e o mapa
+  disputando o único contexto do aparelho, e quem chega depois não monta.
 -->
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.css">
 <style>
-  body { margin:0; font:14px/1.5 system-ui, sans-serif; background:#f5f5f5; }
-  #topo { padding:12px 16px; background:#fff; border-bottom:1px solid #ddd; }
-  #passos { margin:0; padding:0 16px 12px; list-style:none; font:12px/1.7 ui-monospace, monospace; }
-  #passos li.ok   { color:#15803d; }
-  #passos li.erro { color:#b91c1c; }
-  #mapa { position:absolute; inset:auto 0 0 0; top:190px; }
+  body { margin:0; padding:16px; font:14px/1.6 system-ui, sans-serif; background:#f5f5f5; }
+  h1 { font-size:16px; margin:0 0 4px; }
+  p.sub { margin:0 0 16px; color:#666; font-size:12px; }
+  ul { margin:0; padding:0; list-style:none; font:12px/1.8 ui-monospace, monospace; }
+  li { border-bottom:1px solid #e5e5e5; padding:2px 0; }
+  li.ok   { color:#15803d; }
+  li.erro { color:#b91c1c; font-weight:600; }
+  li.tit  { margin-top:14px; font-weight:700; color:#111; border:0; }
 </style>
 </head>
 <body>
-  <div id="topo"><strong>Teste do mapa 2D</strong> — isolado do aplicativo</div>
-  <ul id="passos"></ul>
-  <div id="mapa"></div>
+  <h1>Teste do mapa 2D</h1>
+  <p class="sub">Isolado do aplicativo — sem React, sem bundle, sem CDN.</p>
+  <ul id="saida"></ul>
 
-<!--
-  ESM, não UMD: o MapLibre 6 deixou de publicar build global (`dist/` só tem
-  `.mjs`). A primeira versão desta página usava `<script src=…maplibre-gl.js>`,
-  que dá 404 — e o "MapLibre carregado: NAO" era erro DESTA página, não do
-  aparelho. O teste do servidor de tiles, esse, valeu: respondeu 200.
--->
-<script type="module">
-import maplibregl from "https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.mjs";
-const ESTILO = "https://tiles.openfreemap.org/styles/positron";
-const lista = document.getElementById("passos");
-const log = (txt, cls) => {
-  const li = document.createElement("li");
+<script>
+/* Sem `type="module"`: script clássico não depende de resolução de import e
+   não morre calado. Qualquer erro é capturado e escrito na tela. */
+var saida = document.getElementById("saida");
+function log(txt, cls) {
+  var li = document.createElement("li");
   li.textContent = txt;
   if (cls) li.className = cls;
-  lista.appendChild(li);
+  saida.appendChild(li);
+}
+window.onerror = function (msg, arq, lin) {
+  log("ERRO JS: " + msg + " (" + arq + ":" + lin + ")", "erro");
 };
 
+log("AMBIENTE", "tit");
 log("origem: " + location.origin);
 log("protocolo: " + location.protocol);
-log("MapLibre carregado: sim (ESM)", "ok");
-// WebGL direto, sem depender do MapLibre: é o suspeito principal agora que a
-// rede está descartada — a cena 3D já segura um contexto na vitrine, e alguns
-// tablets não dão o segundo.
+log("navegador: " + navigator.userAgent.slice(0, 90));
+log("nucleos: " + (navigator.hardwareConcurrency || "?") +
+    " | memoria: " + (navigator.deviceMemory || "?") + " GB");
+log("tela: " + screen.width + "x" + screen.height + " @" + (window.devicePixelRatio || 1) + "x");
+
+/* --- 1. WebGL existe? ---------------------------------------------------- */
+log("WEBGL", "tit");
+var gl = null;
 try {
-  const c = document.createElement("canvas");
-  const gl = c.getContext("webgl2") || c.getContext("webgl");
-  log("WebGL: " + (gl ? "disponivel (" + (gl.getParameter(gl.VERSION) || "?") + ")" : "INDISPONIVEL"), gl ? "ok" : "erro");
+  var c = document.createElement("canvas");
+  gl = c.getContext("webgl2") || c.getContext("webgl") || c.getContext("experimental-webgl");
   if (gl) {
-    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    log("contexto: OK (" + gl.getParameter(gl.VERSION) + ")", "ok");
+    var dbg = gl.getExtension("WEBGL_debug_renderer_info");
     if (dbg) log("GPU: " + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+    log("textura maxima: " + gl.getParameter(gl.MAX_TEXTURE_SIZE) + "px");
+  } else {
+    log("contexto: INDISPONIVEL — nenhum mapa 3D ou 2D roda aqui", "erro");
   }
-} catch (e) { log("WebGL falhou: " + e.message, "erro"); }
-
-// 1) O servidor de tiles responde DESTE aparelho?
-log("buscando o estilo...");
-fetch(ESTILO, { cache: "no-store" })
-  .then((r) => {
-    log("estilo: HTTP " + r.status, r.ok ? "ok" : "erro");
-    return r.json();
-  })
-  .then((j) => {
-    log("estilo lido: " + (j.layers ? j.layers.length + " camadas" : "sem camadas"), "ok");
-    montar();
-  })
-  .catch((e) => {
-    log("estilo FALHOU: " + e.message, "erro");
-    log("=> o aparelho nao alcanca tiles.openfreemap.org (rede/bloqueio)", "erro");
-  });
-
-// 2) O MapLibre consegue montar?
-function montar() {
-  try {
-    const mapa = new maplibregl.Map({
-      container: "mapa",
-      style: ESTILO,
-      center: [-49.0629, -16.3267],
-      zoom: 13,
-    });
-    log("instancia criada; aguardando 'load'...");
-    const limite = setTimeout(() => log("=> 20s sem 'load': o mapa nao monta neste aparelho", "erro"), 20000);
-    mapa.on("load", () => { clearTimeout(limite); log("MAPA CARREGOU", "ok"); });
-    mapa.on("error", (e) => {
-      const m = (e && e.error && e.error.message) || "erro desconhecido";
-      log("erro do MapLibre: " + m, "erro");
-    });
-  } catch (e) {
-    log("falha ao criar o mapa: " + e.message, "erro");
-  }
+} catch (e) {
+  log("WebGL falhou: " + e.message, "erro");
 }
+
+/* --- 2. Quantos contextos ao mesmo tempo? -------------------------------- */
+/* É o teste que importa: na vitrine o Cesium segura um, e o MapLibre precisa
+   de outro. Se o limite for baixo, o segundo simplesmente não nasce. */
+log("CONTEXTOS SIMULTANEOS", "tit");
+try {
+  var vivos = [];
+  for (var i = 0; i < 16; i++) {
+    var cv = document.createElement("canvas");
+    cv.width = cv.height = 32;
+    var ctx = cv.getContext("webgl2") || cv.getContext("webgl");
+    if (!ctx) break;
+    vivos.push(ctx);
+  }
+  log("conseguiu abrir: " + vivos.length + " contexto(s)", vivos.length >= 2 ? "ok" : "erro");
+  if (vivos.length < 2) {
+    log("=> CAUSA PROVAVEL: a cena 3D ocupa o unico contexto e o mapa nao monta", "erro");
+  }
+} catch (e) {
+  log("falhou ao medir: " + e.message, "erro");
+}
+
+/* --- 3. O servidor de tiles responde? ------------------------------------ */
+log("SERVIDOR DE TILES", "tit");
+log("consultando tiles.openfreemap.org ...");
+fetch("https://tiles.openfreemap.org/styles/positron", { cache: "no-store" })
+  .then(function (r) { log("estilo: HTTP " + r.status, r.ok ? "ok" : "erro"); return r.json(); })
+  .then(function (j) {
+    log("camadas no estilo: " + (j.layers ? j.layers.length : 0), "ok");
+    var url = j.sources && j.sources.openmaptiles && j.sources.openmaptiles.url;
+    if (!url) { log("estilo sem fonte de tiles", "erro"); return; }
+    log("consultando a fonte de tiles ...");
+    return fetch(url, { cache: "no-store" }).then(function (r2) {
+      log("fonte: HTTP " + r2.status, r2.ok ? "ok" : "erro");
+      return r2.json();
+    }).then(function (tj) {
+      log("tiles em: " + ((tj.tiles && tj.tiles[0]) || "?").slice(0, 70), "ok");
+      log("CONCLUSAO: a rede esta inteira; o problema e o aparelho", "ok");
+    });
+  })
+  .catch(function (e) { log("rede FALHOU: " + e.message, "erro"); });
 </script>
 </body>
 </html>
