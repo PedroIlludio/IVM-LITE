@@ -409,24 +409,13 @@ export default function BuscadorUnidades3D({
    * as três existem. O caminho de volta tem de ser um gesto só, no mesmo lugar
    * em que a ida aconteceu.
    */
-  /**
-   * Desfaz corte e isolamento — sem reenquadrar quem já está bem posicionado.
-   *
-   * O botão diz "mostrar todas as unidades": a tarefa dele é devolver o prédio
-   * inteiro à cena, não escolher um ângulo. Reenquadrar sempre jogava fora o
-   * ponto de vista que o visitante construiu girando a maquete, e era um dos
-   * lugares em que a câmera "voltava para o padrão".
-   *
-   * Quem está longe ou com o prédio fora da tela continua sendo reenquadrado —
-   * aí o enquadramento é ajuda, não interrupção.
-   */
   function mostrarTodas() {
     setPopup(null);
     setModo("volume");
     onNivel?.(null);
     onSelecionar?.(null);
     sceneRef.current?.cutAtFloor(null);
-    if (!sceneRef.current?.predioEnquadrado()) sceneRef.current?.frameBuilding();
+    sceneRef.current?.frameBuilding();
   }
 
   function alternarFavorito(id: string) {

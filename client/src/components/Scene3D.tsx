@@ -3988,28 +3988,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      */
     v.camera.lookAtTransform(Transforms.eastNorthUpToFixedFrame(esfera.center));
 
-    /**
-     * Eixo travado no "cima" local — é isto que faz o giro ser de PRATO.
-     *
-     * Sem `constrainedAxis`, o Cesium gira livre em torno do referencial e a
-     * câmera ROLA junto: o horizonte inclina, o prédio parece tombar e o
-     * arraste deixa de ter um eixo previsível. Travando o eixo vertical, o
-     * arraste horizontal dá a volta em torno do edifício e o vertical sobe e
-     * desce, que é o comportamento de maquete.
-     */
-    v.camera.constrainedAxis = Cartesian3.UNIT_Z;
-
-    /**
-     * Limites de zoom pelo TAMANHO do prédio, não por número fixo.
-     *
-     * O mínimo global de 5 m e o máximo de 20 km foram calibrados para navegar
-     * a cidade. Orbitando um objeto, o que importa é o raio dele: perto demais
-     * a câmera entra dentro da fachada, longe demais o prédio vira um ponto e o
-     * giro parece não fazer nada.
-     */
-    const nav = v.scene.screenSpaceCameraController;
-    nav.minimumZoomDistance = Math.max(5, esfera.radius * 0.6);
-    nav.maximumZoomDistance = esfera.radius * 14;
 
     requestRender();
   }
@@ -4025,12 +4003,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     v.camera.lookAtTransform(Matrix4.IDENTITY);
-    // O eixo travado e os limites de zoom pertencem à órbita: soltos aqui, os
-    // voos programados voltam a poder ir a qualquer lugar da cena.
-    v.camera.constrainedAxis = undefined;
-    const nav = v.scene.screenSpaceCameraController;
-    nav.minimumZoomDistance = 5;
-    nav.maximumZoomDistance = 20000;
   }
 
   /**
@@ -4075,9 +4047,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           CesiumMath.toRadians(-32),
           esfera.radius * 1.9,
         ),
-        // Pousou no prédio: a órbita volta a valer, e o arraste roda em torno
-        // dele em vez de girar a Terra.
-        complete: () => aplicarOrbita(),
       });
       return;
     }
@@ -5020,47 +4989,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     applySun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solarUtc, solarAltitude, pronto]);
-
-  /**
-   * Liga/desliga a órbita quando o modo muda ou a cena fica pronta.
-   */
-  useEffect(() => {
-    const v = viewerRef.current;
-    if (!pronto || !v || v.isDestroyed()) return;
-    if (!orbitar) {
-      soltarOrbita();
-      return;
-    }
-    aplicarOrbita();
-
-    /**
-     * Reata a órbita ao FIM de cada movimento de câmera.
-     *
-     * Não basta ligá-la uma vez: todo voo programado precisa soltar o
-     * referencial antes de partir (senão `flyTo` lê as coordenadas no
-     * referencial do alvo e vai parar em outro lugar), e quem solta não sabe
-     * quando o voo acaba. Ligar no `moveEnd` cobre todos os caminhos de uma
-     * vez — inclusive o da câmera salva do projeto, que era por onde a vitrine
-     * abria e o motivo de a órbita nunca valer na prática.
-     *
-     * Reatar é barato e invisível: `aplicarOrbita` preserva ângulo e distância
-     * atuais, então quando o referencial já está posto não há salto nenhum.
-     */
-    const aoParar = () => {
-      if (!orbitarRef.current) return;
-      const cam = viewerRef.current?.camera;
-      if (!cam) return;
-      // Já orbitando? Não mexe — reaplicar a cada parada do arraste brigaria
-      // com o próprio gesto do usuário.
-      if (!Matrix4.equals(cam.transform, Matrix4.IDENTITY)) return;
-      aplicarOrbita();
-    };
-    v.camera.moveEnd.addEventListener(aoParar);
-    return () => {
-      if (!v.isDestroyed()) v.camera.moveEnd.removeEventListener(aoParar);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orbitar, pronto]);
 
   /**
    * Fotogrametria ligada/desligada.
