@@ -462,6 +462,15 @@ export default function IvmViewPage() {
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
           cidade={cidade3D}
+          /*
+            Órbita SÓ na cena externa.
+
+            Com pavimento aberto, unidade escolhida ou corte ativo, a câmera
+            está olhando de dentro — e girar em torno do centro do prédio ali é
+            o oposto do que a vista pede. Foi por valer em todos os casos que a
+            vista do andar e a vista principal quebraram.
+          */
+          orbitar={!pavMode && !nivelAberto && !unidadeSelId}
           noturno={noturno}
           realceNoturno={ambiente?.realceNoturno}
           /* Na vitrine o recorte vale SEMPRE: não há edição a proteger. */

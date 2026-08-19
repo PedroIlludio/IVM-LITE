@@ -4991,6 +4991,44 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   }, [solarUtc, solarAltitude, pronto]);
 
   /**
+   * Órbita: liga com o modo, e SÓ enquanto ele valer.
+   *
+   * A primeira versão reatava a órbita ao fim de qualquer voo, em qualquer
+   * situação. O efeito era o oposto do pretendido: a câmera pousava na vista
+   * do andar, o `moveEnd` disparava, e o arraste passava a girar em torno do
+   * centro do prédio em vez de olhar em volta do pavimento. As vistas de andar
+   * e a principal ficaram inutilizáveis.
+   *
+   * Agora quem decide é a página, que sabe o que está aberto: `orbitar` só é
+   * verdadeiro na cena EXTERNA — sem pavimento aberto, sem unidade escolhida,
+   * sem corte. Nas demais o referencial fica solto e a navegação é a padrão do
+   * Cesium, que é o que aquelas vistas sempre esperaram.
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!pronto || !v || v.isDestroyed()) return;
+    if (!orbitar) {
+      soltarOrbita();
+      return;
+    }
+    aplicarOrbita();
+
+    // Reata ao fim de cada voo — mas só enquanto o modo valer. O `orbitarRef`
+    // é lido no momento do evento, não no da montagem.
+    const aoParar = () => {
+      if (!orbitarRef.current) return;
+      const cam = viewerRef.current?.camera;
+      if (!cam || !Matrix4.equals(cam.transform, Matrix4.IDENTITY)) return;
+      aplicarOrbita();
+    };
+    v.camera.moveEnd.addEventListener(aoParar);
+    return () => {
+      if (!v.isDestroyed()) v.camera.moveEnd.removeEventListener(aoParar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbitar, pronto]);
+
+  /**
    * Fotogrametria ligada/desligada.
    *
    * `show = false` para o tileset inteiro: o Cesium para de pedir, decodificar
