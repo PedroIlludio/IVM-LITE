@@ -33,8 +33,14 @@
   <ul id="passos"></ul>
   <div id="mapa"></div>
 
-<script src="https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.js"></script>
-<script>
+<!--
+  ESM, não UMD: o MapLibre 6 deixou de publicar build global (`dist/` só tem
+  `.mjs`). A primeira versão desta página usava `<script src=…maplibre-gl.js>`,
+  que dá 404 — e o "MapLibre carregado: NAO" era erro DESTA página, não do
+  aparelho. O teste do servidor de tiles, esse, valeu: respondeu 200.
+-->
+<script type="module">
+import maplibregl from "https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.mjs";
 const ESTILO = "https://tiles.openfreemap.org/styles/positron";
 const lista = document.getElementById("passos");
 const log = (txt, cls) => {
@@ -46,8 +52,19 @@ const log = (txt, cls) => {
 
 log("origem: " + location.origin);
 log("protocolo: " + location.protocol);
-log("MapLibre carregado: " + (typeof maplibregl !== "undefined" ? "sim" : "NAO"), typeof maplibregl !== "undefined" ? "ok" : "erro");
-log("WebGL disponivel: " + (typeof maplibregl !== "undefined" && maplibregl.supported && maplibregl.supported() ? "sim" : "verificando..."));
+log("MapLibre carregado: sim (ESM)", "ok");
+// WebGL direto, sem depender do MapLibre: é o suspeito principal agora que a
+// rede está descartada — a cena 3D já segura um contexto na vitrine, e alguns
+// tablets não dão o segundo.
+try {
+  const c = document.createElement("canvas");
+  const gl = c.getContext("webgl2") || c.getContext("webgl");
+  log("WebGL: " + (gl ? "disponivel (" + (gl.getParameter(gl.VERSION) || "?") + ")" : "INDISPONIVEL"), gl ? "ok" : "erro");
+  if (gl) {
+    const dbg = gl.getExtension("WEBGL_debug_renderer_info");
+    if (dbg) log("GPU: " + gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL));
+  }
+} catch (e) { log("WebGL falhou: " + e.message, "erro"); }
 
 // 1) O servidor de tiles responde DESTE aparelho?
 log("buscando o estilo...");

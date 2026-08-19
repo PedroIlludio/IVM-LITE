@@ -87,10 +87,9 @@ interface EmpreendimentoPanelProps {
   /**
    * A fotogrametria está visível na cena?
    *
-   * Escondida, a categoria Entorno some da gaveta: os pontos de interesse não
-   * são desenhados sem a cidade, então o destino levaria a uma tela que não
-   * mostra nada. Categoria que promete e não entrega é pior do que categoria
-   * ausente.
+   * Escondida, o Entorno CONTINUA na gaveta — o que sai é apenas a leitura em
+   * 3D, que desenha os pontos sobre a fotogrametria. A leitura no mapa tem
+   * servidor de tiles próprio e não depende dela em nada.
    */
   cidadeVisivel?: boolean;
 }
@@ -293,7 +292,7 @@ function EmpreendimentoDetail({
   onFechar: () => void;
   /** O painel está encolhido na faixa de ícones (só no desktop). */
   trilho: boolean;
-  /** A fotogrametria está visível? Sem ela não há entorno a mostrar. */
+  /** A fotogrametria está visível? Sem ela, o entorno só é lido no mapa. */
   cidadeVisivel: boolean;
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
@@ -370,15 +369,22 @@ function EmpreendimentoDetail({
   }, [vista, modoEntorno]);
 
   /**
-   * Esconder a cidade com o Entorno aberto devolve o visitante ao trilho.
+   * Sem cidade, o entorno é lido no MAPA.
    *
-   * Sem isso ele ficaria olhando uma lista de pontos que a cena não desenha
-   * mais, com o botão de voltar como única pista de que algo mudou.
+   * As duas leituras não dependem da mesma coisa: a 3D desenha os pontos sobre
+   * a fotogrametria e voa a câmera até eles — escondida a cidade, ela não tem
+   * onde acontecer. A do mapa é um MapLibre próprio, com tiles próprios, e
+   * continua inteira.
+   *
+   * Então esconder a cidade não tira o entorno do visitante: tira uma das duas
+   * formas de vê-lo, e o leva à que sobrou.
    */
   useEffect(() => {
-    if (!cidadeVisivel && vista === "entorno") onVista("menu");
+    if (!cidadeVisivel && vista === "entorno" && modoEntorno !== "mapa") {
+      setModoEntorno("mapa");
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cidadeVisivel, vista]);
+  }, [cidadeVisivel, vista, modoEntorno]);
 
   // Enquadramento do entorno: dispara na ENTRADA da seção, não a cada render
   // dela. Sem a checagem, qualquer mudança no painel puxaria a câmera de volta
@@ -546,7 +552,9 @@ function EmpreendimentoDetail({
         </div>
       )}
 
-      <ScrollArea className="flex-1 bg-[var(--v-bg)]" ref={detailRef}>
+      {/* O fundo creme é da LEITURA (categoria aberta). No trilho ele seria
+          uma faixa opaca cobrindo a cena para não mostrar nada. */}
+      <ScrollArea className={`flex-1 ${trilho ? "" : "bg-[var(--v-bg)]"}`} ref={detailRef}>
         <div className="px-4 py-4 space-y-3">
           {/* ===== FICHA TÉCNICA =====
               Capa, endereço, sobre, números duros, pavimentos e destaques: a
@@ -672,7 +680,7 @@ function EmpreendimentoDetail({
               com texto, seta e contador — um formulário de navegação sobre a
               cena 3D, que é o que o visitante veio ver. */}
           {vista === "menu" && (
-            <div className="v-in v-gaveta">
+            <div className="v-in v-gaveta pointer-events-auto">
               {([
                 {
                   /* Primeira da fila: é a apresentação do empreendimento, e
@@ -718,9 +726,7 @@ function EmpreendimentoDetail({
                 {
                   id: "entorno", rotulo: "Entorno",
                   icone: <MapPin className="w-6 h-6" />,
-                  // Sem fotogrametria os pontos não são desenhados: a categoria
-                  // levaria a uma tela que não mostra nada.
-                  tem: cidadeVisivel && (emp.pontosDeInteresse ?? []).length > 0,
+                  tem: (emp.pontosDeInteresse ?? []).length > 0,
                   n: (emp.pontosDeInteresse ?? []).length || undefined,
                 },
               ] as { id: string; rotulo: string; icone: React.ReactNode; tem: boolean; n?: number; abrir?: () => void }[])
@@ -873,13 +879,20 @@ function EmpreendimentoDetail({
             rota real, traçada da portaria até o ponto escolhido.
           */}
           <div className="v-seg">
-            {([["3d", "3D"], ["mapa", "Mapa"]] as const).map(([m, l]) => (
-              <button key={m} onClick={() => setModoEntorno(m)}
-                data-on={modoEntorno === m ? "1" : undefined}
-                data-testid={`entorno-${m}`}>
-                {l}
-              </button>
-            ))}
+            {([["3d", "3D"], ["mapa", "Mapa"]] as const).map(([m, l]) => {
+              // O 3D depende da fotogrametria; o mapa, não.
+              const indisponivel = m === "3d" && !cidadeVisivel;
+              return (
+                <button key={m} onClick={() => setModoEntorno(m)}
+                  disabled={indisponivel}
+                  title={indisponivel ? "Mostre o entorno na cena para ver em 3D" : undefined}
+                  data-on={modoEntorno === m ? "1" : undefined}
+                  data-testid={`entorno-${m}`}
+                  className={indisponivel ? "opacity-40" : undefined}>
+                  {l}
+                </button>
+              );
+            })}
           </div>
 
           {modoEntorno === "mapa" && (
@@ -1262,9 +1275,15 @@ export default function EmpreendimentoPanel({
   return (
     <div
       data-testid="panel-empreendimentos"
-      className={`absolute top-0 left-0 bottom-0 z-30 flex flex-col glassmorphism transition-[transform,width] duration-300 ease-out ${
+      /*
+        No TRILHO o painel não tem casco: nem vidro, nem sombra, nem borda.
+        As abas flutuam direto sobre a cena 3D — que é o que o visitante veio
+        ver, e que uma faixa opaca de altura inteira escondia sem necessidade,
+        já que o conteúdo ali ocupa cinco caixas no meio da tela.
+      */
+      className={`absolute top-0 left-0 bottom-0 z-30 flex flex-col transition-[transform,width] duration-300 ease-out ${
         isOpen ? "translate-x-0" : "-translate-x-full"
-      } ${noTrilho ? "v-painel-trilho" : "w-[460px] max-w-[94vw]"}`}
+      } ${noTrilho ? "v-painel-trilho pointer-events-none" : "glassmorphism w-[460px] max-w-[94vw]"}`}
       /* dvh, nao vh: no tablet o 100vh conta a area atras das barras do
          navegador e o rodape do painel some por baixo delas. */
       style={{ maxHeight: "100dvh" }}

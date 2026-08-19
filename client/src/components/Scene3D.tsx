@@ -9,6 +9,7 @@ import {
   JulianDate,
   HeadingPitchRoll,
   HeadingPitchRange,
+  Intersect,
   HeightReference,
   BoundingSphere,
   Transforms,
@@ -115,6 +116,14 @@ export interface Scene3DHandle {
   ) => void;
   /** Enquadra o prédio selecionado (visão externa). */
   frameBuilding: () => void;
+  /**
+   * O empreendimento já está enquadrado na tela?
+   *
+   * Serve para NÃO mexer na câmera quando não precisa. Os botões da vitrine
+   * voavam para o enquadramento gravado no editor toda vez, e isso jogava fora
+   * o ponto de vista que o visitante acabou de construir girando a maquete.
+   */
+  predioEnquadrado: () => boolean;
   /** Enquadra uma unidade do espelho 3D (pelo id da caixa). */
   frameUnit: (
     unitId: string,
@@ -1419,6 +1428,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
       if (b) flyToBuilding(b);
     },
+    predioEnquadrado: () => predioEnquadrado(),
     frameUnit: (unitId, cam, duration) => frameUnit(unitId, cam, duration),
     modelLocalFromLatLng: (buildingId, lat, lng) => modelLocalFromLatLng(buildingId, lat, lng),
     captureImage: (maxW = 240, quality = 0.6) => captureImage(maxW, quality),
@@ -2813,9 +2823,21 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!node.model) return;
     node.model.modelMatrix = modelMatrix(b, node.groundHeight);
     node.model.scale = b.scale;
+    /**
+     * Silhueta: só no EDITOR.
+     *
+     * Ela marca qual prédio está selecionado — pergunta que só existe onde há
+     * vários e se escolhe um para mexer. Na vitrine o empreendimento é
+     * selecionado assim que o projeto carrega, e nunca é deselecionado: o
+     * resultado era um contorno turquesa permanente em volta do GLB inteiro,
+     * marcando uma seleção que o visitante não fez e não pode desfazer.
+     *
+     * Pior que inútil: é uma linha de 2px na cor da ferramenta por cima da
+     * fachada que se está vendendo.
+     */
     const isSel = b.id === selectedRef.current;
     node.model.silhouetteColor = Color.fromCssColorString(BRAND_TURQUOISE);
-    node.model.silhouetteSize = isSel ? 2 : 0;
+    node.model.silhouetteSize = isSel && editRef.current ? 2 : 0;
   }
 
   // ==== GIZMO DE MANIPULAÇÃO (modo edição) ===================================
@@ -3979,6 +4001,30 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     v.camera.lookAtTransform(Matrix4.IDENTITY);
+  }
+
+  /**
+   * O prédio está visível e a uma distância de leitura?
+   *
+   * Duas condições, e as duas importam: dentro do tronco de visão (senão está
+   * fora da tela) E a menos de seis raios da esfera dele (senão está na tela,
+   * mas do tamanho de um grão). Só quando as duas valem é que o enquadramento
+   * atual serve e o voo pode ser dispensado.
+   */
+  function predioEnquadrado(): boolean {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return false;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (!b) return false;
+    const esfera = esferaDoPredio(b);
+    if (!esfera) return false;
+    const cam = v.camera;
+    const visivel = cam.frustum
+      .computeCullingVolume(cam.positionWC, cam.directionWC, cam.upWC)
+      .computeVisibility(esfera) !== Intersect.OUTSIDE;
+    const perto = Cartesian3.distance(cam.positionWC, esfera.center) < esfera.radius * 6;
+    return visivel && perto;
   }
 
   function flyToBuilding(b: Building3D) {

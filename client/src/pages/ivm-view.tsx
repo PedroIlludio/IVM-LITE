@@ -277,10 +277,17 @@ export default function IvmViewPage() {
     pararTour();
     setModoEntorno("3d");
     setUnidadeSelId(unidadeId ?? null);
-    // Antes de trocar de vista: a torre já aparece enquadrada quando a lista
-    // abre, em vez de a câmera deslizar por baixo do painel depois.
+    /**
+     * Enquadra a torre só se ela NÃO estiver enquadrada.
+     *
+     * O enquadramento gravado no editor existe para quem chega de longe — a
+     * lista abrindo com a câmera perdida no bairro não ajuda ninguém. Mas
+     * aplicá-lo sempre jogava fora o ponto de vista que o visitante acabou de
+     * construir girando a maquete: ele posicionava o prédio como queria, clicava
+     * num botão, e a câmera saltava para o ângulo de outra pessoa.
+     */
     const cam = project?.data.config.cameraUnidades;
-    if (cam) sceneRef.current?.flyToCamera(cam, 1.4);
+    if (cam && !sceneRef.current?.predioEnquadrado()) sceneRef.current?.flyToCamera(cam, 1.4);
     setBuscaMode(true);
     setPanelOpen(false);
   }
@@ -558,11 +565,11 @@ export default function IvmViewPage() {
             // Nível anterior fora: sair e voltar da vista de pavimentos deixava
             // a planta do último andar deitada no chão do prédio inteiro.
             setNivelAberto(null);
-            // Enquadramento das unidades antes de trocar de vista: a torre já
-            // aparece posicionada quando a lista abre, em vez de a câmera
-            // deslizar por baixo do painel depois.
+            // Mesma regra de `abrirUnidades`: só enquadra quem chega de longe.
             const cam = project?.data.config.cameraUnidades;
-            if (cam) sceneRef.current?.flyToCamera(cam, 1.4);
+            if (cam && !sceneRef.current?.predioEnquadrado()) {
+              sceneRef.current?.flyToCamera(cam, 1.4);
+            }
             setPavMode(true);
           }}
           onSelectUnit={(id) => {
