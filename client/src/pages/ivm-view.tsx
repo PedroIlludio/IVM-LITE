@@ -545,9 +545,13 @@ export default function IvmViewPage() {
           onToggle={() => setPanelOpen((o) => !o)}
           onFlyToPoi={(lat, lng, poi) => {
             pararTour();
-            // Enquadramento escolhido no editor tem prioridade sobre o genérico.
-            if (poi?.camera) sceneRef.current?.flyToCamera(poi.camera, 1.6);
-            else sceneRef.current?.flyToPoi(lat, lng);
+            /*
+              O enquadramento salvo vai junto, mas quem decide usá-lo é a cena:
+              ela mede se a coordenada gravada ainda descreve este ponto. Antes
+              a página o aplicava direto, e um enquadramento desatualizado
+              levava o visitante para longe do que ele clicou.
+            */
+            sceneRef.current?.flyToPoi(lat, lng, poi?.camera);
           }}
           onVerUnidades={() => abrirUnidades()}
           onOpenPavimentos={() => {
@@ -581,6 +585,8 @@ export default function IvmViewPage() {
               sceneRef.current?.flyToCamera(cam, 1.6);
             },
           }}
+          /* Sem cidade não há entorno a mostrar: a categoria some da gaveta. */
+          cidadeVisivel={cidade3D}
         />
       )}
 

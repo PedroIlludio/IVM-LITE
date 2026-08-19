@@ -95,7 +95,8 @@ export interface TowerOutline {
 export interface Scene3DHandle {
   getCurrentCamera: () => CameraView | null;
   flyToCamera: (cam: CameraView, duration?: number) => void;
-  flyToPoi: (lat: number, lng: number) => void;
+  /** Voa até um POI. `cam` (enquadramento salvo) é usado só se for plausível. */
+  flyToPoi: (lat: number, lng: number, cam?: CameraView) => void;
   flyHome: () => void;
   /** Corta o modelo do empreendimento selecionado (null = limpa). */
   cutAtFloor: (corte: CorteDef | number | null) => void;
@@ -585,6 +586,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   /** Impede um carregamento tardio do GLB de sequestrar a câmera do usuário. */
   const cameraInteragidaRef = useRef(false);
   // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
+  const cidadeRef = useRef(cidade);
+  cidadeRef.current = cidade;
   const orbitarRef = useRef(orbitar);
   orbitarRef.current = orbitar;
   const noturnoRef = useRef(noturno);
@@ -1405,7 +1408,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       };
     },
     flyToCamera: (cam, duration = 1.5) => flyToCamera(cam, duration),
-    flyToPoi: (lat, lng) => flyToPoi(lat, lng),
+    flyToPoi: (lat, lng, cam) => flyToPoi(lat, lng, cam),
     flyHome: () => flyHome(),
     cutAtFloor: (modelZ) => cutAtFloor(modelZ),
     viewFromFloor: (camH, heading, duration) => viewFromFloor(camH, heading, duration),
@@ -1867,7 +1870,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     for (const node of Array.from(nodesRef.current.values())) {
       const m = node.model;
       if (!m) continue;
-      if (noturnoRef.current) {
+      // O realce claro existe para o prédio não virar silhueta contra a
+      // cidade escurecida. No estúdio não há cidade escurecida — o modelo fica
+      // com a cor dele.
+      if (noturnoRef.current && cidadeRef.current) {
         m.color = Color.fromCssColorString("#cfe3f0");
         m.colorBlendMode = ColorBlendMode.MIX;
         m.colorBlendAmount = Math.max(0, Math.min(1, realceRef.current));
@@ -3581,7 +3587,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // `daylight` vai de 0 (sol 6° abaixo do horizonte) a 1 (12° acima): é a
     // faixa em que a cena passa de noite para dia cheio.
     const daylight = Math.max(0, Math.min(1, (solarAltitude + 6) / 18));
-    nightAmountRef.current = noturnoRef.current ? 1 : 1 - daylight;
+    /**
+     * Sem cidade, sem gradação noturna.
+     *
+     * O passe existe para corrigir a fotogrametria do Google, que traz a luz
+     * de meio-dia ASSADA na textura e continua parecendo dia por mais que se
+     * apague a luz da cena. No modo estúdio essa textura não está lá: o que
+     * sobra é o GLB, iluminado pelo sol de verdade. Aplicar o grade nele só o
+     * escurece e o tinge de azul sem motivo — e a noite ali se faz com o
+     * FUNDO, não recolorindo o produto.
+     */
+    nightAmountRef.current = !cidadeRef.current
+      ? 0
+      : (noturnoRef.current ? 1 : 1 - daylight);
 
     /**
      * Gradação noturna, em pós-processamento.
@@ -3801,9 +3819,37 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     });
   }
 
-  function flyToPoi(lat: number, lng: number) {
+  /**
+   * Voa até um ponto de interesse.
+   *
+   * `cam` é o enquadramento gravado no editor para AQUELE ponto — e ele é
+   * absoluto (lng/lat/altura/azimute), não relativo ao alvo. Isso o torna
+   * frágil: um ponto movido de lugar depois, um enquadramento salvo com a
+   * câmera em outro canto, um projeto duplicado — em qualquer desses casos a
+   * coordenada gravada não descreve mais o ponto, e clicar leva o visitante
+   * para longe do que ele pediu.
+   *
+   * A regra é a mesma que o prédio já usava em `cameraAindaServe`: enquadramento
+   * salvo tem prioridade ENQUANTO for plausível. Longe demais do alvo, ele é
+   * descartado em favor do enquadramento genérico, que é calculado a partir do
+   * próprio ponto e por isso nunca erra o destino.
+   */
+  function flyToPoi(lat: number, lng: number, cam?: CameraView) {
     const v = viewerRef.current;
     if (!v) return;
+
+    if (cam) {
+      const distancia = Cartesian3.distance(
+        Cartesian3.fromDegrees(cam.lng, cam.lat),
+        Cartesian3.fromDegrees(lng, lat),
+      );
+      // 800 m: um enquadramento de POI é de aproximação; acima disso ele não
+      // está mostrando o ponto, está mostrando outra coisa.
+      if (Number.isFinite(distancia) && distancia < 800) {
+        flyToCamera(cam, 1.6);
+        return;
+      }
+    }
     const id = selectedRef.current;
     const gh = (id ? nodesRef.current.get(id)?.groundHeight : undefined) ?? FALLBACK_GROUND_HEIGHT;
     // `flyToBoundingSphere` centraliza o ponto de forma confiável, o que
@@ -4992,26 +5038,16 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (v.scene.skyAtmosphere) v.scene.skyAtmosphere.show = cidade;
     if (v.scene.sun) v.scene.sun.show = cidade;
     if (v.scene.moon) v.scene.moon.show = cidade;
-    v.scene.backgroundColor = cidade
+    // No estúdio o dia é cinza claro e a noite é preta: é o fundo que faz a
+    // hora, já que não há céu nem cidade para escurecer.
+    v.scene.backgroundColor = cidade || noturno
       ? Color.BLACK
       : Color.fromCssColorString(FUNDO_ESTUDIO);
 
-    /**
-     * Sombras desligadas no estúdio.
-     *
-     * A sombra do empreendimento é projetada NO ENTORNO — na rua, no vizinho,
-     * no terreno. Sem a fotogrametria não há superfície onde ela pouse: ela cai
-     * no vazio e não aparece, mas o mapa de sombra continua sendo calculado a
-     * cada quadro. Custo integral, resultado nenhum.
-     *
-     * Com a cidade de volta ela volta junto, porque aí a simulação solar
-     * recupera o sentido — é o argumento de venda da cena.
-     */
-    v.shadowMap.enabled = cidade;
 
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cidade, pronto]);
+  }, [cidade, noturno, pronto]);
 
   /**
    * Modo noturno. Reaproveita `applySun`, que já decide luz e realce a partir
@@ -5022,7 +5058,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!readyRef.current) return;
     applySun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noturno, realceNoturno, pronto]);
+    // `cidade` entra aqui porque o grade noturno depende dela: escondida a
+    // fotogrametria, não há o que corrigir e o passe é desligado.
+  }, [noturno, realceNoturno, cidade, pronto]);
 
   // Espelho de vendas em 3D.
   useEffect(() => {

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teste do mapa 2D</title>
+<!--
+  Diagnóstico ISOLADO do mapa do entorno.
+
+  Existe porque o mapa carrega no localhost e não na Vercel, e todas as causas
+  verificáveis sem rodar já foram descartadas (CSP, arquivo faltando, conteúdo
+  misto, rewrite, variável de ambiente, servidor fora do ar). O que restou só
+  se observa no aparelho — e no tablet não há console.
+
+  Esta página não usa nada do app: nem React, nem bundle, nem configuração.
+  Se o mapa desenhar AQUI e não na vitrine, o problema é do app. Se não
+  desenhar nem aqui, é do aparelho ou da rede. É o teste que separa os dois.
+
+  Descartável: apague quando a causa estiver isolada.
+-->
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.css">
+<style>
+  body { margin:0; font:14px/1.5 system-ui, sans-serif; background:#f5f5f5; }
+  #topo { padding:12px 16px; background:#fff; border-bottom:1px solid #ddd; }
+  #passos { margin:0; padding:0 16px 12px; list-style:none; font:12px/1.7 ui-monospace, monospace; }
+  #passos li.ok   { color:#15803d; }
+  #passos li.erro { color:#b91c1c; }
+  #mapa { position:absolute; inset:auto 0 0 0; top:190px; }
+</style>
+</head>
+<body>
+  <div id="topo"><strong>Teste do mapa 2D</strong> — isolado do aplicativo</div>
+  <ul id="passos"></ul>
+  <div id="mapa"></div>
+
+<script src="https://unpkg.com/maplibre-gl@6.2.0/dist/maplibre-gl.js"></script>
+<script>
+const ESTILO = "https://tiles.openfreemap.org/styles/positron";
+const lista = document.getElementById("passos");
+const log = (txt, cls) => {
+  const li = document.createElement("li");
+  li.textContent = txt;
+  if (cls) li.className = cls;
+  lista.appendChild(li);
+};
+
+log("origem: " + location.origin);
+log("protocolo: " + location.protocol);
+log("MapLibre carregado: " + (typeof maplibregl !== "undefined" ? "sim" : "NAO"), typeof maplibregl !== "undefined" ? "ok" : "erro");
+log("WebGL disponivel: " + (typeof maplibregl !== "undefined" && maplibregl.supported && maplibregl.supported() ? "sim" : "verificando..."));
+
+// 1) O servidor de tiles responde DESTE aparelho?
+log("buscando o estilo...");
+fetch(ESTILO, { cache: "no-store" })
+  .then((r) => {
+    log("estilo: HTTP " + r.status, r.ok ? "ok" : "erro");
+    return r.json();
+  })
+  .then((j) => {
+    log("estilo lido: " + (j.layers ? j.layers.length + " camadas" : "sem camadas"), "ok");
+    montar();
+  })
+  .catch((e) => {
+    log("estilo FALHOU: " + e.message, "erro");
+    log("=> o aparelho nao alcanca tiles.openfreemap.org (rede/bloqueio)", "erro");
+  });
+
+// 2) O MapLibre consegue montar?
+function montar() {
+  try {
+    const mapa = new maplibregl.Map({
+      container: "mapa",
+      style: ESTILO,
+      center: [-49.0629, -16.3267],
+      zoom: 13,
+    });
+    log("instancia criada; aguardando 'load'...");
+    const limite = setTimeout(() => log("=> 20s sem 'load': o mapa nao monta neste aparelho", "erro"), 20000);
+    mapa.on("load", () => { clearTimeout(limite); log("MAPA CARREGOU", "ok"); });
+    mapa.on("error", (e) => {
+      const m = (e && e.error && e.error.message) || "erro desconhecido";
+      log("erro do MapLibre: " + m, "erro");
+    });
+  } catch (e) {
+    log("falha ao criar o mapa: " + e.message, "erro");
+  }
+}
+</script>
+</body>
+</html>

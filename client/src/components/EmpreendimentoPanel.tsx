@@ -84,6 +84,15 @@ interface EmpreendimentoPanelProps {
   plantas?: { area: string; url: string }[];
   /** Controle do entorno; sem ele o painel não oferece o modo mapa. */
   entorno?: ControleEntorno;
+  /**
+   * A fotogrametria está visível na cena?
+   *
+   * Escondida, a categoria Entorno some da gaveta: os pontos de interesse não
+   * são desenhados sem a cidade, então o destino levaria a uma tela que não
+   * mostra nada. Categoria que promete e não entrega é pior do que categoria
+   * ausente.
+   */
+  cidadeVisivel?: boolean;
 }
 
 /** Controle do entorno, que mora na pagina porque o mapa ocupa o viewport. */
@@ -262,6 +271,7 @@ function EmpreendimentoDetail({
   onVista,
   onFechar,
   trilho,
+  cidadeVisivel,
 }: {
   emp: Empreendimento;
   onBack: () => void;
@@ -283,6 +293,8 @@ function EmpreendimentoDetail({
   onFechar: () => void;
   /** O painel está encolhido na faixa de ícones (só no desktop). */
   trilho: boolean;
+  /** A fotogrametria está visível? Sem ela não há entorno a mostrar. */
+  cidadeVisivel: boolean;
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -356,6 +368,17 @@ function EmpreendimentoDetail({
     setModoEntorno("3d");
     setPoiSelId(null);
   }, [vista, modoEntorno]);
+
+  /**
+   * Esconder a cidade com o Entorno aberto devolve o visitante ao trilho.
+   *
+   * Sem isso ele ficaria olhando uma lista de pontos que a cena não desenha
+   * mais, com o botão de voltar como única pista de que algo mudou.
+   */
+  useEffect(() => {
+    if (!cidadeVisivel && vista === "entorno") onVista("menu");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cidadeVisivel, vista]);
 
   // Enquadramento do entorno: dispara na ENTRADA da seção, não a cada render
   // dela. Sem a checagem, qualquer mudança no painel puxaria a câmera de volta
@@ -655,12 +678,12 @@ function EmpreendimentoDetail({
                   /* Primeira da fila: é a apresentação do empreendimento, e
                      quem abre o painel ainda não sabe o que está vendo. */
                   id: "ficha", rotulo: "Ficha técnica",
-                  icone: <ClipboardList className="w-5 h-5" />,
+                  icone: <ClipboardList className="w-6 h-6" />,
                   tem: temFicha, n: undefined,
                 },
                 {
                   id: "unidades", rotulo: "Unidades e pavimentos",
-                  icone: <Building2 className="w-5 h-5" />,
+                  icone: <Building2 className="w-6 h-6" />,
                   tem: totalUnid > 0 || !!onOpenPavimentos, n: totalUnid || undefined,
                   /**
                    * Vai direto para a experiência 3D, como o botão "Buscar
@@ -676,26 +699,28 @@ function EmpreendimentoDetail({
                 },
                 {
                   id: "galeria", rotulo: "Galeria e mídia",
-                  icone: <Images className="w-5 h-5" />,
+                  icone: <Images className="w-6 h-6" />,
                   tem: galeria.length > 0 || videos.length > 0 || plantasImgs.length > 0,
                   n: galeria.length + videos.length + plantasImgs.length || undefined,
                   abrir: () => openMedia("imagens"),
                 },
                 {
                   id: "tour", rotulo: "Tour virtual 360°",
-                  icone: <Orbit className="w-5 h-5" />,
+                  icone: <Orbit className="w-6 h-6" />,
                   tem: !!emp.tourVirtualUrl, n: undefined,
                   abrir: () => setTourOpen(true),
                 },
                 {
                   id: "lazer", rotulo: "Áreas comuns e lazer",
-                  icone: <Trees className="w-5 h-5" />,
+                  icone: <Trees className="w-6 h-6" />,
                   tem: lazer.length > 0, n: lazer.length || undefined,
                 },
                 {
                   id: "entorno", rotulo: "Entorno",
-                  icone: <MapPin className="w-5 h-5" />,
-                  tem: (emp.pontosDeInteresse ?? []).length > 0,
+                  icone: <MapPin className="w-6 h-6" />,
+                  // Sem fotogrametria os pontos não são desenhados: a categoria
+                  // levaria a uma tela que não mostra nada.
+                  tem: cidadeVisivel && (emp.pontosDeInteresse ?? []).length > 0,
                   n: (emp.pontosDeInteresse ?? []).length || undefined,
                 },
               ] as { id: string; rotulo: string; icone: React.ReactNode; tem: boolean; n?: number; abrir?: () => void }[])
@@ -713,8 +738,14 @@ function EmpreendimentoDetail({
                     className="v-gaveta-item"
                   >
                     {c.icone}
-                    <span className="v-gaveta-rotulo">{c.rotulo}</span>
-                    {c.n != null && <span className="v-gaveta-n">{c.n}</span>}
+                    <span className="v-gaveta-rotulo">
+                      {c.rotulo}
+                      {/* O contador entra NA MESMA linha do nome, entre
+                          parênteses: numa aba estreita ele como elemento
+                          próprio criaria uma terceira linha e desalinharia as
+                          abas entre si. */}
+                      {c.n != null && <span className="v-gaveta-n"> ({c.n})</span>}
+                    </span>
                   </button>
                 ))}
             </div>
@@ -1130,6 +1161,7 @@ export default function EmpreendimentoPanel({
   logoUrl,
   plantas,
   entorno,
+  cidadeVisivel = true,
 }: EmpreendimentoPanelProps) {
   const selectedEmp = empreendimentos.find((e) => e.id === selectedId);
   // Projeto de empreendimento único: sem lista, sem botão "Voltar".
@@ -1212,6 +1244,7 @@ export default function EmpreendimentoPanel({
             onVista={setVista}
             onFechar={onToggle}
             trilho={false}
+            cidadeVisivel={cidadeVisivel}
           />
         )}
       </div>
@@ -1308,6 +1341,7 @@ export default function EmpreendimentoPanel({
           onVista={setVista}
           onFechar={onToggle}
           trilho={noTrilho}
+          cidadeVisivel={cidadeVisivel}
         />
       )}
     </div>

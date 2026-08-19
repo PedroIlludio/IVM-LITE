@@ -462,111 +462,83 @@
 
 /* --- Gaveta de categorias --------------------------------------------------
 
-   O painel só mostra conteúdo quando uma categoria é escolhida. Em repouso
-   ele é o TRILHO: uma faixa estreita com os ícones na cor da marca sobre a
-   cena 3D, que é o que o visitante veio ver. O hover abre a faixa e revela
-   os nomes; escolher uma categoria abre o painel inteiro.
+   O painel em repouso é o TRILHO: uma coluna estreita de abas sobre a cena 3D,
+   que é o que o visitante veio ver. Escolher uma categoria abre o painel
+   inteiro.
 
-   Quem se abre é o PAINEL, não cada ícone: passar o mouse revela os cinco
-   nomes de uma vez. Um a um obrigaria a varrer a coluna com o ponteiro para
-   descobrir o que existe ali — que é o que o menu deveria responder de
-   imediato.
+   Cada aba traz ÍCONE EM CIMA E NOME EMBAIXO, sempre visíveis. A versão
+   anterior mostrava só ícones e revelava os nomes no hover — o que exige um
+   ponteiro. A vitrine roda em tablet no plantão de vendas, onde hover não
+   existe: ali eram cinco desenhos mudos e nenhuma forma de descobrir o que
+   faziam sem tocar em cada um. Rótulo permanente custa 40px de largura e
+   resolve isso para todo mundo, com ou sem mouse.
    -------------------------------------------------------------------------- */
-.vitrine .v-painel-trilho { width: 84px; }
-.vitrine .v-painel-trilho:hover,
-.vitrine .v-painel-trilho:focus-within { width: 300px; }
+.vitrine .v-painel-trilho { width: 116px; }
 
-.vitrine .v-gaveta { display: flex; flex-direction: column; gap: 6px; }
+/*
+  As abas flutuam: sem caixa em volta.
+
+  Havia um cartão branco agrupando as cinco, e ele criava uma segunda moldura
+  dentro de um painel que já é uma superfície — duas bordas para separar a mesma
+  coisa. Sem ele cada aba pousa direto sobre o painel e a coluna respira.
+*/
+.vitrine .v-gaveta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /*
+    Centradas na vertical.
+
+    No topo, a coluna deixava dois terços da altura vazios e o olho começava
+    num canto. No meio ela fica na linha natural do olhar e à distância do
+    polegar em qualquer tamanho de tela — e é a única coisa nesse painel, então
+    não disputa espaço com nada.
+  */
+  justify-content: center;
+  min-height: calc(100dvh - 2rem);
+}
 
 .vitrine .v-gaveta-item {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  gap: 8px;
   width: 100%;
-  height: 52px;
-  padding: 0 16px;
-  border-radius: var(--v-r-sm);
-  background: var(--v-surface-2);
+  min-height: 96px;
+  padding: 14px 8px;
+  border-radius: var(--v-r);
+  background: var(--v-surface);
+  box-shadow: var(--v-sh-1);
   color: var(--v-accent);
-  overflow: hidden;
-  white-space: nowrap;
-  text-align: left;
-  transition: background-color 0.18s ease;
+  text-align: center;
+  transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
 }
-.vitrine .v-gaveta-item > :first-child { flex: none; }
-.vitrine .v-gaveta-item:hover { background: var(--v-accent-soft); }
+.vitrine .v-gaveta-item:hover {
+  box-shadow: var(--v-sh-2);
+  transform: translateY(-1px);
+}
+.vitrine .v-gaveta-item:active { transform: scale(0.97); }
+.vitrine .v-gaveta-item:focus-visible {
+  outline: 2px solid var(--v-accent);
+  outline-offset: 2px;
+}
 
 .vitrine .v-gaveta-rotulo {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-size: 14.5px;
-  color: var(--v-ink);
+  /* Duas ou três linhas cabem: o nome inteiro vale mais que reticências,
+     porque é ele que diz o destino. */
+  font-size: 11.5px;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: var(--v-ink-2);
+  overflow-wrap: anywhere;
 }
 .vitrine .v-gaveta-n {
-  flex: none;
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: 10.5px;
   color: var(--v-ink-3);
 }
 
-/*
-  FECHADO, o botão é um quadrado com o ícone no meio: sem recuo lateral, sem
-  vão do rótulo, nada de uma linha larga com o texto cortado fora da vista.
-  ABERTO, ele recupera o recuo e o nome cresce ao lado do ícone.
-
-  A abertura responde ao hover E ao foco de teclado: quem navega por Tab passa
-  pelos mesmos botões e precisa ler o mesmo rótulo que o mouse revela.
-*/
-.vitrine .v-painel-trilho .v-gaveta-item {
-  justify-content: center;
-  padding: 0;
-  gap: 0;
-  transition: padding 0.26s cubic-bezier(0.22, 0.61, 0.36, 1), background-color 0.18s ease;
-}
-.vitrine .v-painel-trilho .v-gaveta-rotulo,
-.vitrine .v-painel-trilho .v-gaveta-n {
-  flex: 0 1 0;
-  width: 0;
-  opacity: 0;
-  transition: opacity 0.16s ease;
-}
-
-.vitrine .v-painel-trilho:hover .v-gaveta-item,
-.vitrine .v-painel-trilho:focus-within .v-gaveta-item {
-  justify-content: flex-start;
-  padding: 0 16px;
-  gap: 12px;
-}
-.vitrine .v-painel-trilho:hover .v-gaveta-rotulo,
-.vitrine .v-painel-trilho:focus-within .v-gaveta-rotulo { flex: 1; width: auto; opacity: 1; }
-.vitrine .v-painel-trilho:hover .v-gaveta-n,
-.vitrine .v-painel-trilho:focus-within .v-gaveta-n { flex: none; width: auto; opacity: 1; }
-
-/*
-  Sem ponteiro (tablet, telas de toque) não existe hover: o trilho nasce
-  aberto. Cinco ícones sem nome, num aparelho onde o único gesto disponível é
-  o toque, seriam cinco adivinhações.
-*/
-@media (hover: none) {
-  .vitrine .v-painel-trilho { width: 300px; }
-  .vitrine .v-painel-trilho .v-gaveta-item {
-    justify-content: flex-start;
-    padding: 0 16px;
-    gap: 12px;
-  }
-  .vitrine .v-painel-trilho .v-gaveta-rotulo { flex: 1; width: auto; opacity: 1; }
-  .vitrine .v-painel-trilho .v-gaveta-n { flex: none; width: auto; opacity: 1; }
-}
-
-/* Quem pediu menos movimento recebe a abertura sem a animação de largura. */
-@media (prefers-reduced-motion: reduce) {
-  .vitrine .v-painel-trilho,
-  .vitrine .v-painel-trilho .v-gaveta-item,
-  .vitrine .v-painel-trilho .v-gaveta-rotulo,
-  .vitrine .v-painel-trilho .v-gaveta-n { transition: none; }
-}
 
 /* Barra de rolagem discreta, na tinta clara. */
 .vitrine .v-scroll::-webkit-scrollbar { width: 10px; }
