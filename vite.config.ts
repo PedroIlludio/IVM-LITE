@@ -1,13 +1,58 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
+import { readFile } from "fs/promises";
+import { createRequire } from "module";
 import react from "@vitejs/plugin-react";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import cesium from "vite-plugin-cesium";
 
+
+/**
+ * Emite o worker do MapLibre junto do bundle.
+ *
+ * O MapLibre resolve o worker EM TEMPO DE EXECUÇÃO:
+ *
+ *   const url = new URL("./maplibre-gl-worker.mjs", import.meta.url).href
+ *
+ * Como a URL é montada em runtime, o Rollup não tem o que analisar e não emite
+ * arquivo nenhum. Em produção, `import.meta.url` passa a ser o chunk
+ * empacotado, a URL vira `/assets/maplibre-gl-worker.mjs` — e esse arquivo não
+ * existe. O MapLibre cria então um Worker apontando para o nada: ele nunca
+ * responde, o evento `load` nunca dispara e o mapa carrega para sempre SEM
+ * ERRO NENHUM, porque do ponto de vista do navegador nada falhou.
+ *
+ * É o mesmo defeito que `optimizeDeps.exclude` resolve no dev-server — mas
+ * `optimizeDeps` é pré-bundle de DESENVOLVIMENTO e não tem efeito no `vite
+ * build`. O dev funcionava e a produção não, exatamente por isso.
+ *
+ * A correção é copiar os dois arquivos (o worker e o módulo compartilhado que
+ * ele importa) para dentro de `assets/`, com o nome exato que a URL espera —
+ * sem hash, porque o nome está escrito no código do MapLibre.
+ */
+function maplibreWorker(): Plugin {
+  const arquivos = ["maplibre-gl-worker.mjs", "maplibre-gl-shared.mjs"];
+  return {
+    name: "maplibre-worker-asset",
+    apply: "build",
+    async generateBundle() {
+      const require = createRequire(import.meta.url);
+      const base = path.dirname(require.resolve("maplibre-gl/dist/maplibre-gl.mjs"));
+      for (const nome of arquivos) {
+        this.emitFile({
+          type: "asset",
+          fileName: `assets/${nome}`,
+          source: await readFile(path.join(base, nome), "utf-8"),
+        });
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     react(),
     cesium(),
+    maplibreWorker(),
     runtimeErrorOverlay(),
     ...(process.env.NODE_ENV !== "production" &&
     process.env.REPL_ID !== undefined
