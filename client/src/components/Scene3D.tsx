@@ -4955,7 +4955,22 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     const ts = tilesetRef.current;
     if (!v || v.isDestroyed()) return;
-    if (ts) ts.show = cidade;
+    if (ts) {
+      ts.show = cidade;
+      /**
+       * Esconder não é liberar.
+       *
+       * `show = false` garante que o tileset não é DESENHADO, mas os tiles já
+       * baixados continuam ocupando memória de GPU — o alívio seria só de
+       * pixels, e o aparelho fraco continuaria carregando o peso. `trimLoadedTiles`
+       * é o caminho documentado para descarregar de fato: ele solta tudo que
+       * não foi selecionado no último quadro.
+       *
+       * Ao religar, os tiles voltam a ser pedidos — custa alguns segundos de
+       * recarga, e é um preço justo por um botão que realmente alivia.
+       */
+      if (!cidade) ts.trimLoadedTiles();
+    }
 
     /**
      * Sem cidade, a cena vira ESTÚDIO.
@@ -4980,6 +4995,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     v.scene.backgroundColor = cidade
       ? Color.BLACK
       : Color.fromCssColorString(FUNDO_ESTUDIO);
+
+    /**
+     * Sombras desligadas no estúdio.
+     *
+     * A sombra do empreendimento é projetada NO ENTORNO — na rua, no vizinho,
+     * no terreno. Sem a fotogrametria não há superfície onde ela pouse: ela cai
+     * no vazio e não aparece, mas o mapa de sombra continua sendo calculado a
+     * cada quadro. Custo integral, resultado nenhum.
+     *
+     * Com a cidade de volta ela volta junto, porque aí a simulação solar
+     * recupera o sentido — é o argumento de venda da cena.
+     */
+    v.shadowMap.enabled = cidade;
 
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
