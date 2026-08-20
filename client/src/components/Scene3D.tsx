@@ -820,6 +820,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     local: boolean;
     /** O alvo é o mini mapa: o patch vai para `onMapaTransform`. */
     mapa: boolean;
+    /**
+     * O pivô foi movido À MÃO (Alt+meio) neste arraste.
+     *
+     * Separado de `pivot`, que agora também é preenchido sozinho quando o
+     * alvo nasce com pivô deslocado: só o gesto deliberado merece ser
+     * anunciado na barra de informação. Avisar "em torno do pivô" o tempo todo
+     * transformaria a mensagem em ruído de fundo.
+     */
+    pivotMovido: boolean;
     /** b.scale no início do arraste (mundo → modelo). */
     escala: number;
     axisO: Cartesian3; // origem do eixo/plano fixada no início do arraste
@@ -2149,6 +2158,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       (gltf as unknown as { id: unknown }).id = "mapa-base";
       v.scene.primitives.add(gltf);
       mapaModelRef.current = gltf;
+      /**
+       * O pivô só encontra o centro da geometria com o modelo PRONTO — antes
+       * disso `computeGframeMapa` cai na origem do arquivo. Sem este reajuste
+       * as alças ficariam plantadas lá até a próxima mudança qualquer.
+       */
+      if (gltf.ready) { updateGframe(); }
+      else {
+        const parar = gltf.readyEvent.addEventListener(() => {
+          parar();
+          updateGframe();
+          requestRender();
+        });
+      }
       requestRender();
     } catch (err) {
       // Falhar aqui não pode derrubar a cena: sem mini mapa o modo sem cidade
@@ -3236,11 +3258,40 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    */
   function computeGframeMapa(cfg: MapaBase) {
     const m = matrizMapaBase(cfg);
-    const origin = Matrix4.getTranslation(m, new Cartesian3());
-    const { east, north, up } = eixosDaMatriz(Transforms.eastNorthUpToFixedFrame(origin));
+    /**
+     * Onde a rotação ACONTECE: a origem da transformação, que é a origem do
+     * arquivo. Girar o heading gira em torno dela, e não há como mudar isso —
+     * é a conta que o `headingPitchRollToFixedFrame` faz.
+     */
+    const origemTransform = Matrix4.getTranslation(m, new Cartesian3());
+    const { east, north, up } = eixosDaMatriz(
+      Transforms.eastNorthUpToFixedFrame(origemTransform),
+    );
     const obj = eixosDaMatriz(m);
+
+    /**
+     * Onde a rotação PARECE acontecer: o centro do que está desenhado.
+     *
+     * Um terreno exportado da Unreal costuma sair com as coordenadas de mundo
+     * preservadas — a origem do arquivo fica onde era o zero da cena original,
+     * a centenas de metros da quadra modelada. Com o pivô ali, girar não
+     * girava o terreno: mandava ele descrever um arco enorme e sair de vista,
+     * que foi exatamente o relato de "roda do eixo de criação".
+     *
+     * O centro da esfera envolvente é onde a geometria está de fato. Pôr o
+     * pivô nele não muda a matemática da rotação — o `recentrar` do arraste já
+     * compensa o deslocamento, corrigindo os offsets para o ponto sob as alças
+     * ficar parado. A mesma máquina que o Alt+meio usa, agora ligada por
+     * padrão para o mini mapa.
+     */
+    const modelo = mapaModelRef.current;
+    // `ready` não é zelo redundante: o getter `boundingSphere` LANÇA enquanto o
+    // GLB não terminou de carregar, e `?.` não protege contra getter que lança.
+    const centro = modelo?.ready ? modelo.boundingSphere.center : undefined;
+
     return {
-      origin: pivotRef.current ?? origin, origemNatural: origin,
+      origin: pivotRef.current ?? centro ?? origemTransform,
+      origemNatural: origemTransform,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
       L: 60, local: false, escala: cfg.scale || 1,
@@ -4914,9 +4965,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       startValue = alvo ? 1 : (mapa ?? b)?.scale ?? 1;
     }
 
-    // Deslocamento do pivô em relação ao centro real. Vazio quando o pivô não
-    // foi reposicionado — o caso em que girar não move o alvo de lugar.
-    const pivot = pivotRef.current
+    /**
+     * Deslocamento do pivô em relação ao ponto onde a rotação acontece.
+     *
+     * A condição era "o usuário moveu o pivô com Alt+meio". Isso deixava de
+     * fora o caso em que as duas coisas já nascem separadas — o mini mapa, cujo
+     * pivô fica no centro da geometria enquanto a matriz gira em torno da
+     * origem do arquivo. Sem compensação, girar arremessava o terreno.
+     *
+     * Comparar os dois pontos cobre os dois casos com uma regra só. Vazio
+     * quando coincidem, que é o caso em que girar não move o alvo de lugar.
+     */
+    const deslocado = !Cartesian3.equalsEpsilon(g.origin, g.origemNatural, 0, 1e-6);
+    const pivot = deslocado
       ? Cartesian3.subtract(g.origin, g.origemNatural, new Cartesian3())
       : undefined;
     const fonteGlobal = mapa ?? b;
@@ -4931,6 +4992,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       kind,
       local: !!alvo,
       mapa: !!mapa,
+      pivotMovido: !!pivotRef.current,
       escala: (alvo ? b?.scale : fonteGlobal?.scale) || 1,
       axisO: g.origin.clone(),
       axisD,
@@ -5096,7 +5158,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           : { [campo]: deg });
       }
       onGizmoInfoRef.current?.(
-        `${ANEL_ROTULO[kind]}  ${deg.toFixed(2)}°${drag.pivot ? "  · em torno do pivô" : ""}${
+        `${ANEL_ROTULO[kind]}  ${deg.toFixed(2)}°${drag.pivotMovido ? "  · em torno do pivô" : ""}${
           ctrl ? "  · encaixe 15°" : ""
         }`,
       );
