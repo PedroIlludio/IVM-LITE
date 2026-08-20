@@ -153,6 +153,70 @@ interface CreatedViewer {
   /** Perfil efetivamente aplicado (para a interface poder exibi-lo). */
 }
 
+// --- Fotogrametria: timeout e retry -----------------------------------------
+
+/** Tentativas de baixar a raiz da fotogrametria antes de desistir. */
+const TILESET_TENTATIVAS = 3;
+/** Teto de espera POR tentativa. */
+const TILESET_TIMEOUT_MS = 15000;
+
+/**
+ * Baixa a raiz da fotogrametria do Google com prazo e nova tentativa.
+ *
+ * `createGooglePhotorealistic3DTileset` é um `fetch` só, do `root.json` em
+ * `tile.googleapis.com`, e o `fetch` do navegador NÃO tem prazo: numa conexão
+ * instável — 4G de plantão de vendas, wi-fi de estande — ele fica pendente
+ * indefinidamente. Sem isto a promise nunca resolvia nem rejeitava, e a vitrine
+ * ficava girando para sempre; o único caminho de volta era o F5, que num tablet
+ * na mão do cliente ninguém dá.
+ *
+ * Pendente para sempre é o pior dos estados: não vira erro, então nada na tela
+ * podia dizer o que houve. Com prazo, a falha passa a existir — e o que existe
+ * pode ser tentado de novo e contado ao visitante.
+ */
+async function carregarTilesetDoGoogle(): Promise<Cesium3DTileset> {
+  let ultimoErro: unknown;
+
+  for (let tentativa = 1; tentativa <= TILESET_TENTATIVAS; tentativa++) {
+    let expirar: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        createGooglePhotorealistic3DTileset({ onlyUsingWithGoogleGeocoder: true }),
+        new Promise<never>((_, rejeitar) => {
+          expirar = setTimeout(
+            () => rejeitar(new Error(
+              `A fotogrametria do Google não respondeu em ${TILESET_TIMEOUT_MS / 1000}s.`,
+            )),
+            TILESET_TIMEOUT_MS,
+          );
+        }),
+      ]);
+    } catch (e) {
+      ultimoErro = e;
+      /**
+       * Credencial recusada não melhora insistindo — só atrasa em 45s a única
+       * mensagem que resolve o problema (chave, billing, restrição de domínio).
+       * Repetir serve para rede; para 403 é teimosia.
+       */
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/(?:401|403|api.?key|billing|forbidden|unauthorized)/i.test(msg)) throw e;
+      // Espera crescente: se a rede caiu, voltar no mesmo instante encontra a
+      // mesma rede caída.
+      if (tentativa < TILESET_TENTATIVAS) {
+        await new Promise((r) => setTimeout(r, tentativa * 2000));
+      }
+    } finally {
+      clearTimeout(expirar);
+    }
+  }
+
+  throw new Error(
+    `A fotogrametria do Google não respondeu depois de ${TILESET_TENTATIVAS} tentativas — `
+    + "a conexão parece instável.",
+    { cause: ultimoErro },
+  );
+}
+
 /**
  * Cria o Viewer do Cesium com a fotogrametria fotorrealista do Google, já com
  * todas as correções descobertas: WebGL degradado blindado, throttle de
@@ -310,9 +374,20 @@ export async function createVision3DViewer(
   // apenas 1 prédio por vez, ao selecionar.
   RequestScheduler.throttleRequests = false;
 
-  const tileset = await createGooglePhotorealistic3DTileset({
-    onlyUsingWithGoogleGeocoder: true,
-  });
+  let tileset: Cesium3DTileset;
+  try {
+    tileset = await carregarTilesetDoGoogle();
+  } catch (e) {
+    /**
+     * Sem isto cada tentativa frustrada deixa um Viewer e um contexto WebGL
+     * órfãos. Antes não importava — falhar era o fim da linha. Agora que existe
+     * "Tentar de novo", eles se acumulariam até o navegador derrubar o contexto
+     * mais antigo (o limite costuma ser 8 a 16) e a cena parar de desenhar por
+     * um motivo que nada na tela explicaria.
+     */
+    if (!viewer.isDestroyed()) viewer.destroy();
+    throw e;
+  }
   // A fotogrametria já traz iluminação/sombras na textura. Fazê-la participar
   // novamente do shadow map duplica milhares de comandos e, com clipping
   // polygons, ativa um bug do Cesium em que o sampler ainda não tem `_target`.

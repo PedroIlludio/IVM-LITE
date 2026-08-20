@@ -5,7 +5,7 @@ import {
   Building2, Video, MapPin, Images, Palette, Plus, Trash2, Move, Crosshair,
   Grid3x3, RefreshCw, Play, Square, Star, ChevronUp, ChevronDown, ChevronRight, Scissors,
   Home, Sun, Eye, RotateCw, Maximize, Undo2, Redo2, Copy, Search, History, X,
-  Lock, LockOpen, Moon, SunMedium,
+  Lock, LockOpen, Moon, SunMedium, Map as MapIcon,
 } from "lucide-react";
 import Scene3D, {
   type Scene3DHandle, type TowerOutline, type GizmoModo, type GizmoLocal, type GizmoLocalPatch,
@@ -14,7 +14,7 @@ import SolarBar from "@/components/SolarBar";
 import MapaEntorno from "@/components/MapaEntorno";
 import {
   getProjectById, updateProject, uploadAsset, projectToBuilding3D, genId,
-  parseLocationInput, POI_CATEGORIES, projectPavCfg, projectAmbiente,
+  parseLocationInput, POI_CATEGORIES, projectPavCfg, projectAmbiente, projectMapaBase,
   projectPath, slugReservado, slugify, MODO_LOCAL, CONTATO_MENSAGEM_PADRAO,
   type IvmProject, type ProjectConfig, type EditablePoi, type NamedView, type Branding,
   type CrmConfig, type AmbienteCfg, type ProjectData, type ContatoCfg,
@@ -452,6 +452,7 @@ export default function IvmEditorPage() {
 
   const sceneRef = useRef<Scene3DHandle>(null);
   const glbRef = useRef<HTMLInputElement>(null);
+  const mapaGlbRef = useRef<HTMLInputElement>(null);
   const galRef = useRef<HTMLInputElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
   const symbolRef = useRef<HTMLInputElement>(null);
@@ -519,6 +520,7 @@ export default function IvmEditorPage() {
 
   const building = useMemo(() => (project ? projectToBuilding3D(project.data) : null), [project]);
   const buildings = useMemo(() => (building ? [building] : []), [building]);
+  const mapaBase = useMemo(() => (project ? projectMapaBase(project.data) : null), [project]);
   const tz = project?.data.config.tzOffset ?? -3;
 
   const utcDate = useMemo(() => {
@@ -983,6 +985,19 @@ export default function IvmEditorPage() {
    */
   const [previewNoturno, setPreviewNoturno] = useState(false);
 
+  /**
+   * Preview do modo SEM cidade 3D (estúdio).
+   *
+   * Mesma lógica do preview noturno: o mini mapa só é desenhado com a
+   * fotogrametria desligada, e o editor sempre a manteve ligada. Sem este
+   * interruptor, calibrar o mini mapa seria salvar às cegas e conferir na
+   * vitrine publicada — exatamente o que o preview noturno existe para evitar.
+   *
+   * Bônus de calibração: sem a fotogrametria por cima, dá para ver se o
+   * terreno do mini mapa encontra a base do prédio ou se atravessa por dentro.
+   */
+  const [previewEstudio, setPreviewEstudio] = useState(false);
+
   /** Liga/desliga o preview e leva o relógio junto — como faz a vitrine. */
   function alternarPreviewNoturno() {
     if (!ambiente) return;
@@ -997,6 +1012,11 @@ export default function IvmEditorPage() {
    */
   useEffect(() => {
     if (tab !== "ambiente") setPreviewNoturno(false);
+  }, [tab]);
+
+  /** Mesmo motivo: o interruptor do estúdio mora na aba "modelo". */
+  useEffect(() => {
+    if (tab !== "modelo") setPreviewEstudio(false);
   }, [tab]);
 
 
@@ -2086,6 +2106,9 @@ export default function IvmEditorPage() {
           /* Preview do noturno: é o que dá resposta ao slider de realce. */
           noturno={previewNoturno}
           realceNoturno={ambiente?.realceNoturno}
+          /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
+          cidade={!previewEstudio}
+          mapaBase={mapaBase}
           selectedId={emp.id}
           editMode
           onReady={() => { setReady(true); setCenaErro(null); }}
@@ -3102,6 +3125,77 @@ export default function IvmEditorPage() {
                     }} />
                 </div>
               </div>
+            </Section>
+          )}
+
+          {tab === "modelo" && (
+            <Section title="Mini mapa (sem cidade 3D)" aberta={false}>
+              <p className="text-[10px] leading-relaxed text-white/35">
+                GLB de terreno/quadra que entra no lugar da fotogrametria quando a
+                cidade 3D é desligada. Sem ele, esse modo deixa o prédio sobre um
+                fundo liso. Opcional — vazio, nada muda.
+              </p>
+              {/* O preview vem ANTES do resto, como no modo noturno: com a
+                  cidade ligada o mini mapa não é desenhado, e mexer nos sliders
+                  abaixo não mudaria um pixel na tela. */}
+              <button
+                onClick={() => setPreviewEstudio((v) => !v)}
+                className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors ${
+                  previewEstudio
+                    ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
+                    : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
+                }`}>
+                {previewEstudio
+                  ? <><Globe className="h-3.5 w-3.5" /> Voltar à cidade 3D</>
+                  : <><MapIcon className="h-3.5 w-3.5" /> Pré-visualizar sem a cidade</>}
+              </button>
+              {!previewEstudio && (
+                <p className="text-[10px] leading-relaxed text-white/30">
+                  Ligue o preview para ver o mini mapa e o efeito dos ajustes abaixo.
+                </p>
+              )}
+              <div>
+                <label className="mb-0.5 block text-[11px] text-white/50">Asset (GLB)</label>
+                <div className="flex gap-1.5">
+                  <input type="text" value={c.mapaUrl ?? ""} placeholder="/models/terreno.glb ou URL"
+                    onChange={(e) => setConfig({ mapaUrl: e.target.value })}
+                    className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
+                  <button onClick={() => mapaGlbRef.current?.click()} className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20">
+                    <Upload className="h-3 w-3" />
+                  </button>
+                  <input ref={mapaGlbRef} type="file" accept=".glb" className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = ""; // permite reenviar o mesmo arquivo
+                      if (!f || !conferirPesoGlb(f)) return;
+                      const u = await upload(f);
+                      // Subir o mini mapa já liga o preview: quem acabou de
+                      // enviar quer ver onde ele caiu, e com a cidade ligada
+                      // não veria nada acontecer.
+                      if (u) { setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                    }} />
+                </div>
+              </div>
+              {c.mapaUrl && (
+                <>
+                  {/* Transformação PRÓPRIA, separada da do prédio: os dois GLBs
+                      quase nunca vêm no mesmo referencial. Ver `MapaBase`. */}
+                  <Slider label="Rotação" v={c.mapaHeading ?? 0} min={0} max={360} step={1} suffix="°"
+                    onChange={(x) => setConfig({ mapaHeading: x })} />
+                  <Num label="Escala" v={c.mapaScale ?? 1} onChange={(x) => setConfig({ mapaScale: x })} />
+                  <Slider label="Altura base" v={c.mapaHeightOffset ?? 0} min={-80} max={150} step={0.5} suffix="m"
+                    onChange={(x) => setConfig({ mapaHeightOffset: x })} />
+                  <Slider label="Mover L↔O" v={c.mapaOffsetEast ?? 0} min={-400} max={400} step={1} suffix="m"
+                    onChange={(x) => setConfig({ mapaOffsetEast: x })} />
+                  <Slider label="Mover N↔S" v={c.mapaOffsetNorth ?? 0} min={-400} max={400} step={1} suffix="m"
+                    onChange={(x) => setConfig({ mapaOffsetNorth: x })} />
+                  <button
+                    onClick={() => setConfig({ mapaUrl: "" })}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md bg-white/5 px-3 py-1.5 text-[11px] text-white/50 hover:bg-red-500/15 hover:text-red-300">
+                    <Trash2 className="h-3 w-3" /> Remover o mini mapa
+                  </button>
+                </>
+              )}
             </Section>
           )}
 

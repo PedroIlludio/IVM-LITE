@@ -1,7 +1,7 @@
 import { getSupabase } from "./supabase";
 import type { Empreendimento, Incorporadora, ItemLista, Tipologia, Unidade, UnidadeStatus } from "@shared/schema";
 import type { CameraView } from "./placements";
-import type { Building3D } from "./vision3d-config";
+import type { Building3D, MapaBase } from "./vision3d-config";
 import type { TorreDef } from "./unidades";
 import { DEFAULT_PAV_CFG, type PavimentosCfg, type NivelDef } from "./pavimentos";
 import { parseArea, tipologiaDaUnidade, tipologiasDe } from "./tipologias";
@@ -237,6 +237,19 @@ export interface ProjectConfig {
    */
   travado?: boolean;
   modelUrl?: string;
+  /**
+   * Mini mapa (GLB) que compõe a cena quando a cidade 3D está desligada.
+   *
+   * Guardado à parte do `modelUrl` e com transformação própria: ver `MapaBase`
+   * em `vision3d-config`. Vazio é o estado normal — sem ele o modo sem cidade
+   * segue funcionando como sempre funcionou, com o prédio sobre o fundo liso.
+   */
+  mapaUrl?: string;
+  mapaHeading?: number;
+  mapaScale?: number;
+  mapaHeightOffset?: number;
+  mapaOffsetEast?: number;
+  mapaOffsetNorth?: number;
   heading: number;
   pitch: number;
   roll: number;
@@ -895,6 +908,30 @@ export function projectToBuilding3D(data: ProjectData): Building3D {
     lat: c.lat ?? emp.lat,
     lng: c.lng ?? emp.lng,
     camera: c.camera,
+  };
+}
+
+/**
+ * Mini mapa do projeto, ou `null` se não houver.
+ *
+ * A âncora é a MESMA do empreendimento (`c.lat ?? emp.lat`), e não uma
+ * coordenada própria: o mini mapa existe para receber este prédio. Se a
+ * implantação for movida, o terreno vai junto — separá-los daria duas verdades
+ * sobre onde o empreendimento fica.
+ */
+export function projectMapaBase(data: ProjectData): MapaBase | null {
+  const c = { ...CONFIG_DEFAULTS, ...data.config };
+  if (!c.mapaUrl) return null;
+  const emp = data.empreendimento;
+  return {
+    url: c.mapaUrl,
+    heading: c.mapaHeading ?? 0,
+    scale: c.mapaScale ?? 1,
+    heightOffset: c.mapaHeightOffset ?? 0,
+    offsetEast: c.mapaOffsetEast ?? 0,
+    offsetNorth: c.mapaOffsetNorth ?? 0,
+    lat: c.lat ?? emp.lat,
+    lng: c.lng ?? emp.lng,
   };
 }
 

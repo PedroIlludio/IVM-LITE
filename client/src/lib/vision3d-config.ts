@@ -78,6 +78,38 @@ export interface Building3D extends Building3DConfig {
   camera?: CameraView;
 }
 
+/**
+ * Mini mapa: o GLB de terreno/entorno que compõe a cena SEM fotogrametria.
+ *
+ * Desligar a cidade 3D deixa o prédio flutuando sobre um cinza chapado. Isso é
+ * leitura de maquete e serve ao aparelho fraco, mas custa toda a informação de
+ * implantação: para onde a fachada olha, o que faz esquina, como o terreno cai.
+ * O mini mapa devolve isso por um caminho barato — uma quadra modelada à mão
+ * pesa uma fração do que o streaming do Google consome, e não depende de rede
+ * nem de chave de API.
+ *
+ * Por que transformação própria e não a do prédio: são dois GLBs de origens
+ * diferentes, quase nunca exportados no mesmo referencial. Amarrar os dois na
+ * mesma matriz obrigaria a reexportar um deles para encaixar no outro.
+ *
+ * Sem `pitch`/`roll`: uma base de implantação se assenta no plano do terreno.
+ * Se ela precisa ser inclinada, o que está errado é o eixo da exportação — e
+ * corrigir isso com sliders esconde o problema em vez de resolvê-lo.
+ */
+export interface MapaBase {
+  url: string;
+  /** Rotação em torno do eixo vertical, em graus (0 = norte). */
+  heading: number;
+  scale: number;
+  /** Altura da base em metros, relativa ao solo medido sob o empreendimento. */
+  heightOffset: number;
+  offsetEast: number;
+  offsetNorth: number;
+  /** Âncora geográfica — a mesma do empreendimento. */
+  lat: number;
+  lng: number;
+}
+
 /** Só as chaves numéricas de transform que o placement pode sobrepor. */
 const TRANSFORM_KEYS = [
   "heading",

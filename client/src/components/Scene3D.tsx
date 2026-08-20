@@ -59,7 +59,7 @@ import {
 import {
   METROS_POR_LADRILHO, texturaDe, COR_SUPERFICIE,
 } from "@/lib/texturas-superficie";
-import type { Building3D } from "@/lib/vision3d-config";
+import type { Building3D, MapaBase } from "@/lib/vision3d-config";
 import type { CameraView } from "@/lib/placements";
 import type { UnitBox } from "@/lib/unidades3d";
 
@@ -162,15 +162,24 @@ interface Scene3DProps {
   selectedId: string | null;
   editMode?: boolean;
   onSelect?: (id: string | null) => void;
+  /**
+   * A cena está apresentável: viewer montado, voo de abertura concluído e a
+   * fotogrametria da vista inicial carregada (ver `aguardarFotogrametria`).
+   *
+   * Não confundir com "o viewer existe": isso acontece muito antes, e a cena
+   * interna já opera a partir dali (o `readyRef` é que libera os efeitos de
+   * sincronia e o download do GLB). Este aviso é para a TELA — é ele que
+   * decide a hora de tirar a capa de carregamento.
+   */
   onReady?: () => void;
   /**
    * Há um GLB baixando agora.
    *
-   * `onReady` avisa que o VIEWER existe — o que acontece em milissegundos,
-   * muito antes de o modelo estar na cena. Quem só escutava `onReady` tirava a
-   * tela de carregamento cedo demais e o prédio surgia do nada, segundos
-   * depois, sobre uma cena já entregue como pronta. Este aviso cobre justamente
-   * a janela entre uma coisa e outra.
+   * O download do modelo corre em paralelo com o streaming da fotogrametria e
+   * pode terminar depois dela. Quem só escutava `onReady` tirava a tela de
+   * carregamento cedo demais e o prédio surgia do nada, segundos depois, sobre
+   * uma cena já entregue como pronta. Este aviso cobre a janela entre uma
+   * coisa e outra.
    */
   onModelLoading?: (carregando: boolean) => void;
   onError?: (msg: string) => void;
@@ -232,6 +241,14 @@ interface Scene3DProps {
    * de longe o item mais caro da cena, e o que trava tablet.
    */
   cidade?: boolean;
+  /**
+   * GLB de terreno/entorno que entra no lugar da fotogrametria.
+   *
+   * Só é desenhado com `cidade` DESLIGADA. Os dois juntos ocupariam o mesmo
+   * chão, disputando profundidade pixel a pixel — e a razão de existir do mini
+   * mapa é justamente não precisar do streaming do Google.
+   */
+  mapaBase?: MapaBase | null;
   /**
    * Navegação em ÓRBITA em torno do empreendimento.
    *
@@ -416,12 +433,66 @@ function linhaDaAlca(opts: PolylineGraphics.ConstructorOptions): PolylineGraphic
  */
 const FUNDO_ESTUDIO = "#d6d8da";
 
+// --- Espera da fotogrametria --------------------------------------------------
+
+/**
+ * Não entregar a cena antes disto: o voo de abertura dura 1,6s a 2s e só
+ * quando ele acaba é que os tiles pedidos são os do enquadramento final.
+ */
+const TILES_ESPERA_MINIMA_MS = 2500;
+/**
+ * Teto duro da espera.
+ *
+ * A tela de carregamento é honesta enquanto tem fim. Numa conexão ruim a
+ * fotogrametria pode simplesmente não terminar, e aí é melhor entrar com o
+ * chão ainda carregando — dá para orbitar enquanto ele resolve — do que
+ * segurar o visitante para sempre numa tela que não explica nada.
+ */
+export const TILES_TETO_MS = 20000;
+/** Intervalo da checagem. */
+const TILES_PASSO_MS = 250;
+
+/**
+ * Segura o `onReady` até a fotogrametria da vista inicial estar na tela.
+ *
+ * `createGooglePhotorealistic3DTileset` resolve quando o `root.json` chega —
+ * o índice, não as texturas. Os tiles em si continuam streamando por vários
+ * segundos depois. Entregar a cena nesse instante fazia o visitante entrar num
+ * chão borrado que ia se resolvendo à sua frente, tile por tile: a vitrine
+ * nunca era vista pronta, era vista carregando.
+ *
+ * Por que checagem por tempo e não pelo evento `allTilesLoaded`: com
+ * `requestRenderMode` a cena para de desenhar quando nada muda, e eventos do
+ * tileset dependem do ciclo de render. O evento também dispara a cada vez que
+ * o carregamento zera — inclusive no meio do voo, para um enquadramento
+ * intermediário que não é o que o visitante vai ver. Um `setInterval` não tem
+ * nenhuma dessas armadilhas.
+ */
+function aguardarFotogrametria(
+  tileset: Cesium3DTileset,
+  cancelado: () => boolean,
+  pronto: () => void,
+) {
+  const inicio = Date.now();
+  const timer = setInterval(() => {
+    const decorrido = Date.now() - inicio;
+    // Desmontou no meio da espera (troca de rota, "Tentar de novo"): não
+    // entregar uma cena que já não existe.
+    if (cancelado()) return clearInterval(timer);
+    if (decorrido < TILES_ESPERA_MINIMA_MS) return;
+    if (!tileset.tilesLoaded && decorrido < TILES_TETO_MS) return;
+    clearInterval(timer);
+    pronto();
+  }, TILES_PASSO_MS);
+}
+
 const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   {
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
     onModelLoading, onError,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
-    cidade = true, orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
+    cidade = true, mapaBase = null,
+    orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform, corteArea = null,
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
@@ -437,6 +508,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const nightStageRef = useRef<PostProcessStage | null>(null);
   const nightAmountRef = useRef(0);
   const tilesetRef = useRef<Cesium3DTileset | null>(null);
+  /** GLB do mini mapa em cena — ver `syncMapaBase`. */
+  const mapaModelRef = useRef<Model | null>(null);
+  /**
+   * URL do mini mapa em cena OU em voo agora.
+   *
+   * Mesmo papel do `loadingUrl` do prédio: sem ela, cada re-render do editor
+   * (uma por tecla digitada) dispararia outro download do mesmo arquivo.
+   */
+  const mapaUrlRef = useRef<string | null>(null);
   /**
    * Recorte da fotogrametria. A coleção é criada UMA vez e presa ao tileset:
    * reatribuir `clippingPolygons` obrigaria o Cesium a refazer a textura de
@@ -597,6 +677,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
   const cidadeRef = useRef(cidade);
   cidadeRef.current = cidade;
+  const mapaBaseRef = useRef(mapaBase);
+  mapaBaseRef.current = mapaBase;
   /** Vigília que devolve a câmera à órbita quando o voo termina. */
   const reatarRef = useRef<number | null>(null);
   const orbitarRef = useRef(orbitar);
@@ -1730,7 +1812,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         } else {
           flyHome();
         }
-        onReady?.();
+        aguardarFotogrametria(tileset, () => destroyed, () => onReady?.());
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Falha ao carregar os 3D Tiles";
@@ -1758,6 +1840,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (v && !v.isDestroyed()) v.destroy();
       viewerRef.current = null;
       tilesetRef.current = null;
+      // Destruir o Viewer já levou o primitivo junto; aqui só se apagam as
+      // referências, para o próximo Viewer não achar que o mini mapa está em
+      // cena e pular o carregamento.
+      mapaModelRef.current = null;
+      mapaUrlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey]);
@@ -1810,6 +1897,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
       syncUnitBoxes();
       syncTowerOutline();
+      // Pelo mesmo motivo: o mini mapa se assenta na cota medida
+      // (`alturaDoSoloBase`), e com a URL inalterada isto só reposiciona.
+      void syncMapaBase();
       /**
        * Reenquadra quando a cota corrigiu MUITO — e a câmera vai junto.
        *
@@ -1860,6 +1950,113 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       CesiumMath.toRadians(b.roll),
     );
     return Transforms.headingPitchRollToFixedFrame(origin, hpr);
+  }
+
+  // --- Mini mapa (cena sem fotogrametria) --------------------------------------
+
+  /**
+   * Altura do solo sob o empreendimento, medida contra a fotogrametria.
+   *
+   * O mini mapa se assenta NELA, e não em zero: é assim que ele encontra o
+   * prédio, que já está posicionado a partir da mesma referência. Com o chão do
+   * mini mapa em zero absoluto, o prédio nasceria enterrado ou pairando —
+   * dezenas de metros de erro em terreno de planalto.
+   */
+  function alturaDoSoloBase(): number {
+    const nodes = nodesRef.current;
+    const sel = selectedRef.current;
+    const node = (sel ? nodes.get(sel) : undefined) ?? nodes.values().next().value;
+    return node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
+  }
+
+  function matrizMapaBase(cfg: MapaBase): Matrix4 {
+    const mPorLat = 111320;
+    const mPorLng = 111320 * Math.cos(CesiumMath.toRadians(cfg.lat));
+    const origem = Cartesian3.fromDegrees(
+      cfg.lng + cfg.offsetEast / mPorLng,
+      cfg.lat + cfg.offsetNorth / mPorLat,
+      alturaDoSoloBase() + cfg.heightOffset,
+    );
+    const hpr = new HeadingPitchRoll(CesiumMath.toRadians(cfg.heading), 0, 0);
+    return Transforms.headingPitchRollToFixedFrame(origem, hpr);
+  }
+
+  /** Tira o mini mapa da cena e devolve a memória de GPU. */
+  function descartarMapaBase() {
+    const v = viewerRef.current;
+    const m = mapaModelRef.current;
+    // `primitives.remove` já destrói o primitivo; destruir de novo lança.
+    if (m && v && !v.isDestroyed()) v.scene.primitives.remove(m);
+    mapaModelRef.current = null;
+    mapaUrlRef.current = null;
+  }
+
+  /**
+   * Põe (ou tira) o mini mapa conforme a configuração e o modo da cena.
+   *
+   * Reposicionar não recarrega: enquanto a URL for a mesma, mexer nos sliders
+   * do editor só troca a matriz. Recarregar um GLB de terreno a cada arraste de
+   * slider tornaria a calibração impraticável.
+   */
+  async function syncMapaBase() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    const cfg = mapaBaseRef.current;
+
+    // Com a cidade ligada o mini mapa não entra: ver a doc da prop `mapaBase`.
+    if (!cfg?.url || cidadeRef.current) {
+      descartarMapaBase();
+      requestRender();
+      return;
+    }
+
+    if (mapaUrlRef.current === cfg.url) {
+      const m = mapaModelRef.current;
+      if (m) {
+        m.modelMatrix = matrizMapaBase(cfg);
+        m.scale = cfg.scale;
+        requestRender();
+      }
+      return;
+    }
+
+    descartarMapaBase();
+    const url = cfg.url;
+    mapaUrlRef.current = url;
+    try {
+      const gltf = await Model.fromGltfAsync({
+        url,
+        modelMatrix: matrizMapaBase(cfg),
+        scale: cfg.scale,
+        // O mini mapa é o CHÃO da cena: precisa receber a sombra do prédio,
+        // senão o edifício fica pousado sem peso. Projetar também é útil —
+        // relevo e vegetação modelados ganham volume.
+        shadows: ShadowMode.ENABLED,
+        incrementallyLoadTextures: false,
+      });
+      // Desmontou, trocaram o arquivo ou desligaram o mini mapa no meio do
+      // download: o que chegou já não é o pedido.
+      if (!viewerRef.current || v.isDestroyed() || mapaUrlRef.current !== url) {
+        gltf.destroy();
+        return;
+      }
+      // Mesmo motivo do GLB do prédio: o mapa de ambiente dinâmico gera render
+      // contínuo, e a cena roda sob demanda.
+      const em = (gltf as unknown as { environmentMapManager?: { enabled: boolean } }).environmentMapManager;
+      if (em) em.enabled = false;
+      // Sem realce de cor, ao contrário do prédio: o realce existe para
+      // levantar vidro escuro de fachada. Aplicado ao terreno, lavaria as
+      // texturas de asfalto e vegetação que dão a leitura de implantação.
+      (gltf as unknown as { id: unknown }).id = "mapa-base";
+      v.scene.primitives.add(gltf);
+      mapaModelRef.current = gltf;
+      requestRender();
+    } catch (err) {
+      // Falhar aqui não pode derrubar a cena: sem mini mapa o modo sem cidade
+      // volta a ser o que sempre foi — o prédio sobre o fundo liso.
+      mapaUrlRef.current = null;
+      console.warn("[Scene3D] mini mapa não carregou:", err);
+    }
   }
 
   // --- Espelho de vendas em 3D ------------------------------------------------
@@ -5128,6 +5325,23 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cidade, noturno, pronto]);
+
+  /**
+   * Mini mapa: entra e sai com o modo da cena, e acompanha os sliders.
+   *
+   * A dependência é a chave achatada, não o objeto: `mapaBase` é remontado a
+   * cada render do editor, e um objeto novo com os mesmos valores dispararia o
+   * efeito a cada tecla digitada.
+   */
+  const mapaChave = mapaBase
+    ? [mapaBase.url, mapaBase.heading, mapaBase.scale, mapaBase.heightOffset,
+       mapaBase.offsetEast, mapaBase.offsetNorth, mapaBase.lat, mapaBase.lng].join("|")
+    : "";
+  useEffect(() => {
+    if (!pronto) return;
+    void syncMapaBase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapaChave, cidade, pronto]);
 
   /**
    * Modo noturno. Reaproveita `applySun`, que já decide luz e realce a partir

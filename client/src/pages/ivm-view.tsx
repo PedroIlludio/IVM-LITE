@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3 } from "lucide-react";
-import Scene3D, { type Scene3DHandle } from "@/components/Scene3D";
+import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw } from "lucide-react";
+import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D";
 import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
 import PavimentosView from "@/components/PavimentosView";
@@ -13,6 +13,7 @@ import {
   getProjectBySlug,
   projectAmbiente,
   projectPavCfg,
+  projectMapaBase,
   projectToBuilding3D,
   projectTorres,
   type IvmProject,
@@ -81,7 +82,8 @@ export default function IvmViewPage() {
    * empreendimento: são milhares de triângulos e texturas chegando pela rede a
    * cada movimento de câmera. Desligá-la deixa o prédio FLUTUANDO — leitura de
    * maquete — com o espelho de vendas, as sombras e a simulação solar
-   * intactos.
+   * intactos. Se o projeto tiver mini mapa (`mapaBase`), ele entra no lugar da
+   * fotogrametria e o prédio ganha terreno de volta, sem o custo do streaming.
    *
    * NÃO é lembrada entre visitas, de propósito. A altura do terreno sob o
    * empreendimento é medida CONTRA a fotogrametria: recarregar com ela já
@@ -209,6 +211,7 @@ export default function IvmViewPage() {
   }, [project]);
 
   const building = useMemo(() => (project ? projectToBuilding3D(project.data) : null), [project]);
+  const mapaBase = useMemo(() => (project ? projectMapaBase(project.data) : null), [project]);
   const buildings = useMemo(() => (building ? [building] : []), [building]);
   const emps = useMemo(
     () => (project ? [project.data.empreendimento] : []),
@@ -404,6 +407,24 @@ export default function IvmViewPage() {
     return () => clearInterval(t);
   }, [carregando]);
 
+  /**
+   * Remonta a cena do zero.
+   *
+   * O `key` no `Scene3D` é o que faz o React destruir o componente e criar
+   * outro: a limpeza do efeito destrói o Viewer e o contexto WebGL, e o novo
+   * refaz o pedido da fotogrametria. Recarregar a PÁGINA também funcionaria,
+   * mas jogaria fora o projeto que já chegou do banco e a marca já aplicada —
+   * o visitante veria a tela piscar do zero para consertar algo que não é dele.
+   */
+  const [tentativaCena, setTentativaCena] = useState(0);
+  const recarregarCena = () => {
+    setTilesError(null);
+    setReady(false);
+    setModeloPronto(false);
+    setSegundosCarregando(0);
+    setTentativaCena((n) => n + 1);
+  };
+
   const etapaCarregamento = !project
     ? "Abrindo o empreendimento..."
     : !ready
@@ -464,6 +485,8 @@ export default function IvmViewPage() {
 
       {apiKey && building && (
         <Scene3D
+          /* Ver `recarregarCena`: trocar a chave é o que remonta a cena. */
+          key={tentativaCena}
           ref={sceneRef}
           apiKey={apiKey}
           buildings={buildings}
@@ -480,6 +503,8 @@ export default function IvmViewPage() {
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
           cidade={cidade3D}
+          /* Composição do modo sem fotogrametria — só é desenhado ali. */
+          mapaBase={mapaBase}
           /*
             Órbita SÓ na cena externa.
 
@@ -737,7 +762,9 @@ export default function IvmViewPage() {
             className="v-icon-btn"
             data-on={cidade3D ? undefined : "1"}
             title={cidade3D
-              ? "Esconder o entorno (deixa o prédio isolado e a cena mais leve)"
+              ? (mapaBase
+                  ? "Trocar a fotogrametria pelo mini mapa (cena mais leve)"
+                  : "Esconder o entorno (deixa o prédio isolado e a cena mais leve)")
               : "Mostrar o entorno"}
           >
             <Layers3 className="h-4 w-4" />
@@ -847,7 +874,12 @@ export default function IvmViewPage() {
               Vive na tela, e não no console, porque a vitrine roda em tablet no
               plantão de vendas — lá não há F12.
             */}
-            {segundosCarregando >= 15 && (
+            {/*
+              O limiar fica ACIMA do teto de espera da fotogrametria: dentro
+              dele, "parado" ainda é carregamento normal, e acusar falha ali
+              mandava investigar uma cena que estava só streamando.
+            */}
+            {segundosCarregando >= TILES_TETO_MS / 1000 + 5 && (
               <div className="mt-8 space-y-2 text-left">
                 <p className="v-eyebrow text-[var(--v-ink-3)]">
                   Parado há {segundosCarregando}s. O que falta:
@@ -861,25 +893,49 @@ export default function IvmViewPage() {
                   {
                     ok: ready,
                     label: "Cena 3D",
-                    dica: "a fotogrametria do Google não montou — confira GOOGLE_MAPS_API_KEY, se a Map Tiles API está ativa e se a restrição de domínio inclui este site",
+                    dica: "a fotogrametria do Google não chegou — quase sempre é a conexão; se persistir, confira GOOGLE_MAPS_API_KEY, se a Map Tiles API está ativa e se a restrição de domínio inclui este site",
                   },
                   {
                     ok: !temModelo || modeloPronto,
+                    /**
+                     * O GLB só é PEDIDO depois que a cena monta (o `reconcile`
+                     * do Scene3D começa com `if (!readyRef.current) return`).
+                     * Enquanto `ready` for falso este item não falhou: ele nem
+                     * começou. Marcá-lo de vermelho mandava investigar o bucket
+                     * do Supabase — que estava certo o tempo todo — enquanto o
+                     * problema real estava na linha de cima.
+                     */
+                    esperando: !ready,
                     label: "Modelo 3D",
                     dica: "o GLB não baixou — se a URL for do Supabase, o bucket ivm-assets precisa estar público",
                   },
-                ] as { ok: boolean; label: string; dica: string }[]).map((c) => (
-                  <p key={c.label} className={`text-[11px] leading-relaxed ${
-                    c.ok ? "text-[var(--v-ink-3)]" : "text-amber-300"}`}>
-                    {c.ok ? "✓" : "✕"} <span className="font-semibold">{c.label}</span>
-                    {!c.ok && <> — {c.dica}</>}
-                  </p>
-                ))}
-                {temModelo && !modeloPronto && (
+                ] as { ok: boolean; esperando?: boolean; label: string; dica: string }[]).map((c) => {
+                  const emEspera = !c.ok && c.esperando;
+                  return (
+                    <p key={c.label} className={`text-[11px] leading-relaxed ${
+                      c.ok || emEspera ? "text-[var(--v-ink-3)]" : "text-amber-300"}`}>
+                      {c.ok ? "✓" : emEspera ? "·" : "✕"}{" "}
+                      <span className="font-semibold">{c.label}</span>
+                      {emEspera
+                        ? <> — na fila, ainda não foi pedido</>
+                        : !c.ok && <> — {c.dica}</>}
+                    </p>
+                  );
+                })}
+                {/* A URL só interessa quando o download realmente começou:
+                    antes disso ela é uma pista falsa. */}
+                {ready && temModelo && !modeloPronto && (
                   <p className="break-all text-[10px] text-[var(--v-ink-3)]">
                     modelo: {project?.data.config.modelUrl}
                   </p>
                 )}
+
+                {/* Num tablet de plantão não há F12 nem vontade de dar F5 na
+                    frente do cliente. O caminho de volta precisa estar na tela. */}
+                <button onClick={recarregarCena} className="v-pill mt-4">
+                  <RotateCw className="h-4 w-4" />
+                  <span>Tentar de novo</span>
+                </button>
               </div>
             )}
           </div>
@@ -908,6 +964,10 @@ export default function IvmViewPage() {
           <div className="v-panel max-w-md p-8 text-center">
             <h2 className="mb-2 font-semibold text-white">Erro ao carregar o 3D</h2>
             <p className="text-sm text-[var(--v-ink-2)]">{tilesError}</p>
+            <button onClick={recarregarCena} className="v-pill mx-auto mt-5">
+              <RotateCw className="h-4 w-4" />
+              <span>Tentar de novo</span>
+            </button>
           </div>
         </div>
       )}
