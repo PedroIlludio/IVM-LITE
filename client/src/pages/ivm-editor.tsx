@@ -1010,6 +1010,16 @@ export default function IvmEditorPage() {
    */
   const [editandoMapa, setEditandoMapa] = useState(false);
 
+  /**
+   * O mini mapa foi retirado da cena por quebrar o render.
+   *
+   * Precisa ser dito, e no lugar onde se resolve: o arquivo continua salvo no
+   * projeto e some da tela sem explicação nenhuma. Quem subiu há dez segundos
+   * conclui que o upload falhou e tenta de novo — o mesmo arquivo, o mesmo
+   * resultado.
+   */
+  const [mapaErro, setMapaErro] = useState<string | null>(null);
+
   /** Liga/desliga o preview e leva o relógio junto — como faz a vitrine. */
   function alternarPreviewNoturno() {
     if (!ambiente) return;
@@ -2140,6 +2150,7 @@ export default function IvmEditorPage() {
           sombras={ambiente?.sombras}
           mapaBase={mapaBase}
           gizmoMapa={pivoNoMapa}
+          onMapaErro={setMapaErro}
           /* Traduz o vocabulário comum do pivô para os campos do mini mapa.
              Rede de segurança igual à do empreendimento: travado, descarta. */
           onMapaTransform={(patch) => {
@@ -3217,10 +3228,30 @@ export default function IvmEditorPage() {
                       // Subir o mini mapa já liga o preview: quem acabou de
                       // enviar quer ver onde ele caiu, e com a cidade ligada
                       // não veria nada acontecer.
-                      if (u) { setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
                     }} />
                 </div>
               </div>
+              {mapaErro && (
+                <div className="space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                  <p className="text-[11px] font-semibold text-amber-300">
+                    O mini mapa saiu da cena — o GLB quebrou o render.
+                  </p>
+                  <p className="text-[10px] leading-relaxed text-white/60">
+                    Quase sempre é <b>material com textura numa malha sem UV</b>: o
+                    Cesium gera o shader esperando a coordenada de textura, ela não
+                    existe, e a compilação falha. Reexporte com o UV desdobrado, ou
+                    troque as texturas por cor sólida no terreno.
+                  </p>
+                  <p className="break-all font-mono text-[9px] leading-relaxed text-white/35">
+                    {mapaErro}
+                  </p>
+                  <button onClick={() => setMapaErro(null)}
+                    className="text-[10px] text-white/45 underline hover:text-white/80">
+                    Dispensar
+                  </button>
+                </div>
+              )}
               {c.mapaUrl && (
                 <>
                   {/* Pivô e cadeado, como no empreendimento. O par de botões

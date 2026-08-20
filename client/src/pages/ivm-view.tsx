@@ -246,6 +246,18 @@ export default function IvmViewPage() {
 
   // --- Ambiente ---------------------------------------------------------------
   const ambiente = useMemo(() => (project ? projectAmbiente(project.data) : null), [project]);
+
+  /**
+   * A cena projeta sombras no modo em que está AGORA? (ver `AmbienteCfg.sombras`)
+   *
+   * A mesma regra que o `Scene3D` aplica ao shadow map, repetida aqui porque
+   * ela decide também o que a INTERFACE mostra: sem sombra, a barra solar move
+   * um sol que não deixa marca nenhuma na tela. O visitante arrasta das 6h às
+   * 18h, nada acontece, e o controle passa a parecer quebrado — pior que
+   * ausente.
+   */
+  const sombrasAtivas = ambiente?.sombras !== "nunca"
+    && !(ambiente?.sombras === "com-cidade" && !cidade3D);
   const [noturno, setNoturno] = useState(false);
   const [heading, setHeading] = useState(0);
   const [capturando, setCapturando] = useState(false);
@@ -817,7 +829,7 @@ export default function IvmViewPage() {
         </button>
       )}
 
-      {!(folhaEmbaixo && panelOpen) && !tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && (
+      {!(folhaEmbaixo && panelOpen) && !tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && sombrasAtivas && (
         <SolarBar
           timeMinutes={timeMinutes}
           onTimeChange={(v) => {

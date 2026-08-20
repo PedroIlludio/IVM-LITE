@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Plus, Trash2, Upload } from "lucide-react";
+import { ChevronDown, ChevronRight, ChevronUp, Globe2, Plus, Trash2, Upload } from "lucide-react";
 import { genId } from "@/lib/ivm-store";
 import type { ItemLista } from "@shared/schema";
 
@@ -302,10 +302,13 @@ export function ListaRica({ itens, onItens, onEnviarFoto, vazio, exemplo }: {
                 placeholder={exemplo}
                 className="min-w-0 flex-1 bg-transparent px-1 py-0.5 text-[11px] text-white outline-none placeholder:text-[var(--ed-dim)]"
               />
+              {it.panoramaUrl && (
+                <Globe2 className="h-3 w-3 shrink-0 text-teal-300" aria-label="Tem foto 360" />
+              )}
               <button onClick={() => setAbertoId(aberto ? null : it.id)}
-                title={aberto ? "Fechar" : "Foto e descrição"}
+                title={aberto ? "Fechar" : "Foto, foto 360 e descrição"}
                 className={`shrink-0 rounded-[3px] p-1 transition-colors ${
-                  aberto || it.descricao || it.imagemUrl ? "text-white" : "text-white/30 hover:text-white/80"
+                  aberto || it.descricao || it.imagemUrl || it.panoramaUrl ? "text-white" : "text-white/30 hover:text-white/80"
                 }`}>
                 <ChevronRight className={`h-3 w-3 transition-transform ${aberto ? "rotate-90" : ""}`} />
               </button>
@@ -345,6 +348,28 @@ export function ListaRica({ itens, onItens, onEnviarFoto, vazio, exemplo }: {
                   {it.imagemUrl && (
                     <button onClick={() => patch(it.id, { imagemUrl: undefined })}
                       title="Remover a foto"
+                      className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-red-500/15 hover:text-red-300">
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+                {/* Foto 360 num botão SEPARADO, e não numa opção do mesmo
+                    envio: as duas convivem no item (ver `panoramaUrl`), e um
+                    seletor faria parecer que subir uma apaga a outra. */}
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => onEnviarFoto(it.id, (url) => patch(it.id, { panoramaUrl: url }))}
+                    title="Foto equirretangular (proporção 2:1) — o visitante entra e olha em volta"
+                    className={`flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-[3px] border py-1 text-[10px] transition-colors ${
+                      it.panoramaUrl
+                        ? "border-teal-400/40 bg-teal-500/10 text-teal-300 hover:bg-teal-500/20"
+                        : "border-[var(--ed-line)] text-white/70 hover:border-white/25 hover:text-white"
+                    }`}>
+                    <Globe2 className="h-3 w-3" /> {it.panoramaUrl ? "Trocar foto 360" : "Enviar foto 360"}
+                  </button>
+                  {it.panoramaUrl && (
+                    <button onClick={() => patch(it.id, { panoramaUrl: undefined })}
+                      title="Remover a foto 360"
                       className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-red-500/15 hover:text-red-300">
                       <Trash2 className="h-3 w-3" />
                     </button>

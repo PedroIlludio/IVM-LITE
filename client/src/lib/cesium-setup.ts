@@ -254,6 +254,20 @@ export async function createVision3DViewer(
     selectionIndicator: false,
     infoBox: false,
     shadows: q.sombras,
+    /**
+     * O painel vermelho do Cesium não fala com o visitante.
+     *
+     * Quando um shader falha, o Cesium abre uma caixa com stack trace de
+     * `Cesium.js` minificado e PARA de renderizar — numa vitrine de plantão de
+     * vendas isso é a tela morrendo com um texto de depuração por cima. Pior,
+     * a caixa não diz o que fazer nem oferece saída.
+     *
+     * Desligado aqui, o erro chega em `scene.renderError`, e o `Scene3D` decide:
+     * se o culpado for um GLB de terceiros (o mini mapa), ele sai de cena e a
+     * vitrine continua; se não, vira a tela de erro da própria vitrine, que tem
+     * linguagem de gente e um botão de tentar de novo.
+     */
+    showRenderLoopErrors: false,
     // PERFORMANCE: só renderiza quando algo muda (câmera, tiles novos, sol,
     // seleção). Sem isto o Cesium redesenha 60x/s a mesma cena — o que travava
     // a navegação nesta máquina (WebGL degradado/remoto). As mutações chamam

@@ -352,6 +352,14 @@ interface Scene3DProps {
   gizmoMapa?: boolean;
   /** Arraste do pivô do mini mapa, no mesmo vocabulário do empreendimento. */
   onMapaTransform?: (patch: MapaPatch) => void;
+  /**
+   * O mini mapa foi retirado da cena por ter quebrado o render.
+   *
+   * Não é o mesmo que `onError`: aquele é a cena inteira falhando e vira tela
+   * de erro. Aqui a vitrine segue viva sem o terreno, e o aviso existe para
+   * quem ACABOU de subir o arquivo no editor saber por que ele sumiu.
+   */
+  onMapaErro?: (msg: string) => void;
 }
 
 /**
@@ -528,7 +536,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     cidade = true, mapaBase = null, sombras = "sempre",
     orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
-    gizmoMapa = false, onMapaTransform, corteArea = null,
+    gizmoMapa = false, onMapaTransform, onMapaErro, corteArea = null,
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
@@ -545,6 +553,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const tilesetRef = useRef<Cesium3DTileset | null>(null);
   /** GLB do mini mapa em cena — ver `syncMapaBase`. */
   const mapaModelRef = useRef<Model | null>(null);
+  /**
+   * URL do mini mapa que DERRUBOU o render.
+   *
+   * Sem esta memória a recuperação vira um laço: o efeito volta a pedir o
+   * mesmo arquivo, ele quebra o render de novo, e a cena passa a piscar entre
+   * carregar e falhar. Zerada quando o editor aponta para outro arquivo — um
+   * upload novo merece uma tentativa nova.
+   */
+  const mapaBloqueadoRef = useRef<string | null>(null);
   /**
    * URL do mini mapa em cena OU em voo agora.
    *
@@ -744,6 +761,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   gizmoMapaRef.current = gizmoMapa;
   const onMapaTransformRef = useRef(onMapaTransform);
   onMapaTransformRef.current = onMapaTransform;
+  const onMapaErroRef = useRef(onMapaErro);
+  onMapaErroRef.current = onMapaErro;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
   /**
    * Frame ao vivo do gizmo, lido pelas CallbackProperty.
    *
@@ -1639,6 +1660,34 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         readyRef.current = true;
         setPronto(true);
 
+        /**
+         * Um GLB de terceiros não pode derrubar a vitrine.
+         *
+         * Shader que não compila só falha na hora de DESENHAR — o download deu
+         * certo, `fromGltfAsync` resolveu, e o `catch` do carregamento nunca
+         * viu nada. O erro aparece no meio do laço de render, e o Cesium reage
+         * parando tudo: a cena inteira morre por causa de um arquivo de apoio.
+         *
+         * O mini mapa é o suspeito natural — é o último arquivo externo a
+         * entrar em cena e o único que não passou por calibração. Tirá-lo e
+         * retomar devolve a vitrine ao estado anterior (prédio sobre o fundo
+         * liso), que é uma experiência inteira, e não uma tela de erro.
+         */
+        viewer.scene.renderError.addEventListener((_cena: unknown, erro: unknown) => {
+          const msg = erro instanceof Error ? erro.message : String(erro);
+          const urlDoMapa = mapaUrlRef.current;
+          if (mapaModelRef.current && urlDoMapa) {
+            mapaBloqueadoRef.current = urlDoMapa;
+            descartarMapaBase();
+            onMapaErroRef.current?.(msg);
+            // Sem isto o laço fica parado mesmo com o culpado fora de cena.
+            viewer.useDefaultRenderLoop = true;
+            requestRender();
+            return;
+          }
+          onErrorRef.current?.(msg);
+        });
+
         // Clique: seleciona empreendimento OU reposiciona (modo edição).
         handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
         const aoClicar = (ev: ScreenSpaceEventHandler.PositionedEvent) => {
@@ -2055,6 +2104,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       return;
     }
 
+    // Arquivo que já quebrou o render não volta sozinho — ver `mapaBloqueadoRef`.
+    if (mapaBloqueadoRef.current === cfg.url) return;
+
     if (mapaUrlRef.current === cfg.url) {
       const m = mapaModelRef.current;
       if (m) {
@@ -2067,6 +2119,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     descartarMapaBase();
     const url = cfg.url;
+    // Outro arquivo, outra chance: o bloqueio é por URL, não permanente.
+    mapaBloqueadoRef.current = null;
     mapaUrlRef.current = url;
     try {
       const gltf = await Model.fromGltfAsync({

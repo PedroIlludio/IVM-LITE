@@ -4,6 +4,7 @@ import type { Empreendimento, ItemLista, PontoDeInteresse } from "@shared/schema
 import { normalizarLista } from "@/lib/ivm-store";
 import MediaGallery, { type MediaTab } from "@/components/MediaGallery";
 import TourVirtual from "@/components/TourVirtual";
+import Panorama360 from "@/components/Panorama360";
 import {
   loadUnidades, contarStatus, porPavimento, torreLabel, STATUS_META, STATUS_CLARO,
   type Unidade, type TorreDef,
@@ -14,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   MapPin,
+  Globe2,
   Building2,
   Layers,
   Ruler,
@@ -329,6 +331,13 @@ function EmpreendimentoDetail({
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  /**
+   * Foto 360 aberta. Separado do lightbox porque não é a mesma coisa: o
+   * lightbox é uma imagem ampliada, isto é um ambiente em que se entra — tela
+   * cheia, sem moldura e sem o clique-no-fundo-para-fechar, que num arraste
+   * que termina fora do canvas fecharia o visualizador no meio do gesto.
+   */
+  const [panorama, setPanorama] = useState<{ url: string; titulo: string } | null>(null);
   const galeria = emp.galeria ?? [];
   const videos = emp.videos ?? [];
   // Uma lista só, vinda de quem sabe (a página) ou derivada aqui.
@@ -688,6 +697,10 @@ function EmpreendimentoDetail({
                   <ItemDaLista
                     key={h.id}
                     item={h}
+                    /* Destaques e lazer compartilham o mesmo editor de lista,
+                       então quem sobe um 360 num destaque espera vê-lo aqui.
+                       Sem esta linha o botão do editor virava uma armadilha. */
+                    onPanorama={setPanorama}
                     icon={<Star className="w-3 h-3 text-[var(--v-accent)]/50 flex-shrink-0" />}
                     onZoom={setLightboxImage}
                   />
@@ -895,6 +908,7 @@ function EmpreendimentoDetail({
                       item={a}
                       icon={<CheckCircle2 className="w-3 h-3 text-[var(--v-accent)]/40 flex-shrink-0" />}
                       onZoom={setLightboxImage}
+                      onPanorama={setPanorama}
                     />
                   ))}
                 </div>
@@ -1054,6 +1068,25 @@ function EmpreendimentoDetail({
         document.body
       )}
 
+      {panorama && createPortal(
+        <div className="fixed inset-0 z-[9999] bg-black">
+          <Panorama360 url={panorama.url} titulo={panorama.titulo} />
+          {/* O título fica FORA do canvas: dentro dele ele giraria junto com a
+              cena, e um rótulo que se move com o olhar não é um rótulo. */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-gradient-to-b from-black/70 to-transparent p-4">
+            <span className="text-[13px] font-semibold text-white drop-shadow">{panorama.titulo}</span>
+          </div>
+          <button
+            data-testid="btn-close-panorama"
+            className="absolute right-4 top-4 rounded-full bg-[var(--v-surface-3)] p-2 text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-line-2)] hover:text-[var(--v-ink)]"
+            onClick={() => setPanorama(null)}
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>,
+        document.body
+      )}
+
       <MediaGallery
         imagens={galeria}
         ordemCategorias={emp.categoriasGaleria}
@@ -1113,14 +1146,16 @@ function InfoCard({
  * com elas, ganha miniatura clicável e o texto de apoio — que é o que a lista
  * rica passou a permitir.
  */
-function ItemDaLista({ item, icon, onZoom }: {
+function ItemDaLista({ item, icon, onZoom, onPanorama }: {
   item: ItemLista;
   icon: React.ReactNode;
   onZoom: (url: string) => void;
+  onPanorama?: (p: { url: string; titulo: string }) => void;
 }) {
+  const tem360 = !!item.panoramaUrl && !!onPanorama;
   // Item sem nada além do nome continua sendo uma LINHA. Um cartão de 80px de
   // altura para exibir uma palavra é moldura sem quadro.
-  if (!item.imagemUrl && !item.descricao) {
+  if (!item.imagemUrl && !item.descricao && !tem360) {
     return (
       <div className="flex items-center gap-2 py-1.5">
         {icon}
@@ -1145,10 +1180,19 @@ function ItemDaLista({ item, icon, onZoom }: {
      */
     <div
       className={`v-card group flex items-stretch gap-3 overflow-hidden p-0 transition-all ${
-        temFoto ? "cursor-zoom-in hover:-translate-y-px" : ""
+        tem360 ? "cursor-pointer hover:-translate-y-px" : temFoto ? "cursor-zoom-in hover:-translate-y-px" : ""
       }`}
-      onClick={temFoto ? () => onZoom(item.imagemUrl as string) : undefined}
-      title={temFoto ? "Ampliar" : undefined}
+      /**
+       * Com foto 360, o clique ENTRA no ambiente em vez de ampliar a foto
+       * plana. É a leitura mais rica das duas, e quem quiser só a imagem já a
+       * está vendo na miniatura.
+       */
+      onClick={
+        tem360
+          ? () => onPanorama?.({ url: item.panoramaUrl as string, titulo: item.titulo })
+          : temFoto ? () => onZoom(item.imagemUrl as string) : undefined
+      }
+      title={tem360 ? "Ver em 360°" : temFoto ? "Ampliar" : undefined}
     >
       {temFoto ? (
         <div className="relative w-[88px] shrink-0 overflow-hidden bg-[var(--v-surface-3)]">
@@ -1158,10 +1202,11 @@ function ItemDaLista({ item, icon, onZoom }: {
             loading="lazy"
             className="h-full min-h-[72px] w-full object-cover transition-transform duration-300 group-hover:scale-[1.06]"
           />
+          {tem360 && <Selo360 />}
         </div>
       ) : (
-        <span className="flex w-[88px] shrink-0 items-center justify-center bg-[var(--v-surface-2)]">
-          {icon}
+        <span className="relative flex w-[88px] shrink-0 items-center justify-center bg-[var(--v-surface-2)]">
+          {tem360 ? <Globe2 className="h-4 w-4 text-[var(--v-accent)]" /> : icon}
         </span>
       )}
       <div className="min-w-0 flex-1 py-2.5 pr-3">
@@ -1176,6 +1221,15 @@ function ItemDaLista({ item, icon, onZoom }: {
         )}
       </div>
     </div>
+  );
+}
+
+/** Marca a miniatura que abre um ambiente 360. */
+function Selo360() {
+  return (
+    <span className="absolute bottom-1 right-1 flex items-center gap-0.5 rounded-full bg-black/65 px-1.5 py-0.5 text-[9px] font-semibold text-white backdrop-blur-sm">
+      <Globe2 className="h-2.5 w-2.5" /> 360°
+    </span>
   );
 }
 

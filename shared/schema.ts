@@ -220,6 +220,18 @@ export interface ItemLista {
   titulo: string;
   descricao?: string;
   imagemUrl?: string;
+  /**
+   * Foto 360 equirretangular do ambiente (proporção 2:1).
+   *
+   * Independente da `imagemUrl`, e não uma substituta: a foto normal é o que
+   * se vê na LISTA — enquadrada, escolhida para vender de relance —, enquanto a
+   * equirretangular é ilegível como miniatura (o horizonte curvo, os cantos
+   * esticados). Uma serve para percorrer, a outra para entrar.
+   *
+   * Ter as duas também dá saída ao aparelho sem WebGL: a lista continua
+   * completa e só o botão de 360 não aparece.
+   */
+  panoramaUrl?: string;
 }
 
 /** Texto de um item, aceitando o formato antigo. */
