@@ -3163,7 +3163,8 @@ export default function IvmEditorPage() {
                   </div>
                   <p className="text-[10px] leading-relaxed text-white/35">
                     Arraste a alça no modelo. <b>Ctrl</b> encaixa em passos redondos
-                    (1 m, 15°, 0,05) e <b>Shift</b> dá ajuste fino.
+                    (1 m, 15°, 0,05) e <b>Shift</b> dá ajuste fino — pode ser
+                    apertado e solto <i>no meio</i> do arraste, sem o modelo saltar.
                   </p>
                   <p className="text-[10px] leading-relaxed text-white/25">
                     <b>Alt + botão do meio</b> reposiciona o pivô no ponto clicado —

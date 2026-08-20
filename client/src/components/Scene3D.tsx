@@ -798,6 +798,23 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     eastObj: Cartesian3;
     northObj: Cartesian3;
     upObj: Cartesian3;
+    /**
+     * Eixos do frame com o HEADING aplicado e mais nada.
+     *
+     * Existem porque as três rotações do empreendimento não giram em torno das
+     * colunas da matriz final — giram em torno dos eixos dos fatores que as
+     * produzem. Em `Rz(−heading)·Ry(−pitch)·Rx(roll)`:
+     *
+     * - `heading` gira em torno do vertical do ENU (nunca da coluna 2);
+     * - `pitch` gira em torno do NORTE JÁ GIRADO pelo heading (`hNorth`);
+     * - `roll` gira em torno da coluna 0, que já é `eastObj`.
+     *
+     * Com o prédio aprumado (pitch e roll em zero) tudo isto coincide com as
+     * colunas, que foi por que passou despercebido. Basta inclinar o modelo
+     * para o anel passar a girar em torno de um eixo diferente do que desenha.
+     */
+    hEast: Cartesian3;
+    hNorth: Cartesian3;
     L: number;
     /** Alvo local (eixos do modelo) em vez do empreendimento (eixos ENU). */
     local: boolean;
@@ -820,6 +837,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     local: boolean;
     /** O alvo é o mini mapa: o patch vai para `onMapaTransform`. */
     mapa: boolean;
+    /**
+     * O Shift estava pressionado no último quadro.
+     *
+     * Guardado para detectar a TROCA de modo: ver `rebasear` em `gizmoMove`.
+     */
+    shiftAtivo: boolean;
     /**
      * O pivô foi movido À MÃO (Alt+meio) neste arraste.
      *
@@ -3223,10 +3246,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * diferentes.
      */
     const obj = eixosDaMatriz(modelMatrix(b, node.groundHeight));
+    // Frame só com o heading: dele saem os eixos reais de pitch e roll.
+    const h = eixosDaMatriz(Transforms.headingPitchRollToFixedFrame(
+      origin, new HeadingPitchRoll(CesiumMath.toRadians(b.heading), 0, 0),
+    ));
     return {
       origin: pivotRef.current ?? origin, origemNatural: origin,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      hEast: h.east, hNorth: h.north,
       L, local: false, escala: b.scale,
     };
   }
@@ -3268,6 +3296,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       Transforms.eastNorthUpToFixedFrame(origemTransform),
     );
     const obj = eixosDaMatriz(m);
+    const h = eixosDaMatriz(Transforms.headingPitchRollToFixedFrame(
+      origemTransform, new HeadingPitchRoll(CesiumMath.toRadians(cfg.heading), 0, 0),
+    ));
 
     /**
      * Onde a rotação PARECE acontecer: o centro do que está desenhado.
@@ -3294,6 +3325,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       origemNatural: origemTransform,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      hEast: h.east, hNorth: h.north,
       L: 60, local: false, escala: cfg.scale || 1,
     };
   }
@@ -3334,6 +3366,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       origin: pivotRef.current ?? position, origemNatural: position,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      // O alvo local gira nos eixos da própria peça; não há heading separado a
+      // desfazer. Preenchidos com os mesmos eixos para o frame ter um formato só.
+      hEast: obj.east, hNorth: obj.north,
       L, local: true, escala: b.scale,
     };
   }
@@ -3424,10 +3459,16 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const eY = g.northObj;
     const eZ = g.upObj;
     if (kind === "rot") {
-      return g.local ? { n: eZ, u1: eX, u2: eY } : { n: eZ, u1: eY, u2: eX };
+      // Heading gira em torno do VERTICAL DO ENU. Usar a coluna 2 (`upObj`)
+      // funcionava só com o modelo aprumado; inclinado, o anel azul mostrava
+      // um eixo e escrevia noutro. `u1`/`u2` na ordem norte→leste porque
+      // heading é bússola: cresce no sentido horário.
+      return g.local ? { n: eZ, u1: eX, u2: eY } : { n: g.up, u1: g.north, u2: g.east };
     }
+    // Roll gira em torno da coluna 0 da matriz final — `eastObj` já é ela.
     if (kind === "rotX") return { n: eX, u1: eY, u2: eZ };
-    return g.local ? { n: eY, u1: eZ, u2: eX } : { n: eY, u1: eX, u2: eZ };
+    // Pitch gira em torno do norte JÁ GIRADO pelo heading, não da coluna 1.
+    return g.local ? { n: eY, u1: eZ, u2: eX } : { n: g.hNorth, u1: g.hEast, u2: g.up };
   }
 
   /** Campo que cada anel edita, conforme o alvo. */
@@ -4992,6 +5033,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       kind,
       local: !!alvo,
       mapa: !!mapa,
+      shiftAtivo: modRef.current.shift,
       pivotMovido: !!pivotRef.current,
       escala: (alvo ? b?.scale : fonteGlobal?.scale) || 1,
       axisO: g.origin.clone(),
@@ -5053,6 +5095,40 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const p = ctrl ? encaixe : livre;
       return Math.round(valor / p) * p;
     };
+
+    /**
+     * Quanto o Shift reduz a velocidade do arraste de MOVER.
+     *
+     * Era 0,25, o mesmo de girar e escalar, e não bastava. O gizmo acompanha o
+     * cursor no mundo, então quantos metros vale um pixel depende da distância
+     * da câmera — e para ver um empreendimento de 300 m inteiro ela precisa
+     * recuar tanto que cada pixel passa a valer quase meio metro. A 0,25 ainda
+     * eram ~10 cm por pixel: não dá para encostar uma torre na divisa.
+     *
+     * Girar e escalar ficam em 0,25: um grau e um centésimo de fator não
+     * sofrem a mesma amplificação com a distância da câmera.
+     */
+    const FINO_MOVER = 0.08;
+    const FINO = 0.25;
+
+    /**
+     * Entrar e sair do modo fino no MEIO do arraste, sem salto.
+     *
+     * O fator multiplicava o deslocamento desde o início do arraste, então
+     * apertar o Shift depois de já ter arrastado 40 m recalculava tudo a 25% e
+     * o prédio voltava 30 m de uma vez. Na prática obrigava a soltar, apertar
+     * o Shift e recomeçar — justo no gesto de ajuste fino, que é onde ninguém
+     * quer recomeçar.
+     *
+     * Rebasear é fixar o valor atual como novo ponto de partida: o alvo fica
+     * exatamente onde está e passa a andar mais devagar a partir dali.
+     */
+    const rebasear = (escalarAgora: number, valorAgora: number) => {
+      if (drag.shiftAtivo === shift) return;
+      drag.shiftAtivo = shift;
+      drag.startScalar = escalarAgora;
+      drag.startValue = valorAgora;
+    };
     const local = onGizmoLocalTransformRef.current;
     /**
      * Destino dos patches em ENU.
@@ -5094,10 +5170,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // O arraste é medido em metros do MUNDO; os campos do alvo local estão em
       // metros do MODELO. Sem dividir pela escala, um modelo a 0,5× andaria o
       // dobro do que o inspetor mostra.
-      const bruto =
-        drag.startValue +
-        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? 0.25 : 1);
-      const val = passo(bruto, 1);
+      const div = drag.local ? drag.escala : 1;
+      const mover = (f: number) => drag.startValue + ((s - drag.startScalar) / div) * f;
+      // Com o fator ANTERIOR: é o valor onde o alvo está NESTE instante, e é
+      // dele que a nova velocidade tem de partir.
+      rebasear(s, mover(drag.shiftAtivo ? FINO_MOVER : 1));
+      const val = passo(mover(shift ? FINO_MOVER : 1), 1);
       if (drag.local) {
         local?.(drag.id, { [drag.kind === "tE" ? "x" : drag.kind === "tN" ? "y" : "z"]: val });
       } else if (drag.kind === "tE") global?.(drag.id, { offsetEast: val });
@@ -5118,7 +5196,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const s = scalarOnAxis(ray, drag.axisO, drag.axisD);
       const bruto =
         drag.startValue +
-        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? 0.25 : 1);
+        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? FINO : 1);
       const val = Math.max(0.1, passo(bruto, 0.5));
       const campo = drag.kind === "sX" ? "dx" : drag.kind === "sY" ? "dy" : "dz";
       local?.(drag.id, { [campo]: val });
@@ -5130,7 +5208,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const u = Cartesian3.subtract(p, drag.axisO, new Cartesian3());
       const kind = drag.kind as AnelKind;
       const ang = Math.atan2(Cartesian3.dot(u, drag.anel.u2), Cartesian3.dot(u, drag.anel.u1));
-      const delta = CesiumMath.toDegrees(ang - drag.startScalar) * (shift ? 0.25 : 1);
+      const delta = CesiumMath.toDegrees(ang - drag.startScalar) * (shift ? FINO : 1);
       // 0,01° livre: um grau tem ~1 cm de arco a 60 m do pivô, então o degrau
       // some. O encaixe do Ctrl continua em 15°.
       let deg = passo(drag.startValue + delta, 15, 0.01);
@@ -5143,7 +5221,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // como bússola.
       if (kind !== "rot" && deg > 180) deg -= 360;
 
-      const eixoGiro = kind === "rot" ? drag.up : kind === "rotX" ? drag.east : drag.north;
+      /**
+       * O eixo da recentragem é a NORMAL DO ANEL, que é o eixo real do giro.
+       *
+       * Era `up`/`east`/`north` do ENU cru — certo só para o heading. Com o
+       * prédio girado, inclinar em torno de um pivô deslocado compensava o
+       * deslocamento na direção errada e a peça escorregava enquanto girava.
+       */
+      const eixoGiro = drag.anel.n;
       const pos2 = recentrar((pt) => {
         const q = Quaternion.fromAxisAngle(eixoGiro, giroRad);
         const m = Matrix3.fromQuaternion(q, new Matrix3());
