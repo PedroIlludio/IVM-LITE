@@ -2148,6 +2148,8 @@ export default function IvmEditorPage() {
               ...(patch.offsetNorth !== undefined && { mapaOffsetNorth: patch.offsetNorth }),
               ...(patch.heightOffset !== undefined && { mapaHeightOffset: patch.heightOffset }),
               ...(patch.heading !== undefined && { mapaHeading: patch.heading }),
+              ...(patch.pitch !== undefined && { mapaPitch: patch.pitch }),
+              ...(patch.roll !== undefined && { mapaRoll: patch.roll }),
               ...(patch.scale !== undefined && { mapaScale: patch.scale }),
             });
           }}
@@ -3257,8 +3259,9 @@ export default function IvmEditorPage() {
                   {pivoNoMapa && (
                     <p className="text-[10px] leading-relaxed text-white/30">
                       As alças usam a ferramenta escolhida acima (Mover/Girar/Escalar)
-                      e o pivô do empreendimento está escondido enquanto isso. O mini
-                      mapa gira só em torno do eixo vertical — ver a nota da escala.
+                      e o pivô do empreendimento fica escondido enquanto isso.
+                      <b>Alt + botão do meio</b> reposiciona o pivô no ponto clicado —
+                      útil para girar o terreno pela quina que encosta na calçada.
                     </p>
                   )}
                   {mapaTravado && (
@@ -3272,6 +3275,12 @@ export default function IvmEditorPage() {
                   <Slider label="Rotação" v={c.mapaHeading ?? 0} min={0} max={360} step={1} suffix="°"
                     disabled={mapaTravado}
                     onChange={(x) => setConfig({ mapaHeading: x })} />
+                  <Slider label="Inclinar" v={c.mapaPitch ?? 0} min={-180} max={180} step={1} suffix="°"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaPitch: x })} />
+                  <Slider label="Rolar" v={c.mapaRoll ?? 0} min={-180} max={180} step={1} suffix="°"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaRoll: x })} />
                   <Num label="Escala" v={c.mapaScale ?? 1} disabled={mapaTravado} onChange={(x) => setConfig({ mapaScale: x })} />
                   <Slider label="Altura base" v={c.mapaHeightOffset ?? 0} min={-80} max={150} step={0.5} suffix="m"
                     disabled={mapaTravado}

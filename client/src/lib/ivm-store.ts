@@ -246,6 +246,8 @@ export interface ProjectConfig {
    */
   mapaUrl?: string;
   mapaHeading?: number;
+  mapaPitch?: number;
+  mapaRoll?: number;
   mapaScale?: number;
   mapaHeightOffset?: number;
   mapaOffsetEast?: number;
@@ -932,6 +934,8 @@ export function projectMapaBase(data: ProjectData): MapaBase | null {
   return {
     url: c.mapaUrl,
     heading: c.mapaHeading ?? 0,
+    pitch: c.mapaPitch ?? 0,
+    roll: c.mapaRoll ?? 0,
     scale: c.mapaScale ?? 1,
     heightOffset: c.mapaHeightOffset ?? 0,
     offsetEast: c.mapaOffsetEast ?? 0,

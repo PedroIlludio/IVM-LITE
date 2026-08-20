@@ -92,14 +92,19 @@ export interface Building3D extends Building3DConfig {
  * diferentes, quase nunca exportados no mesmo referencial. Amarrar os dois na
  * mesma matriz obrigaria a reexportar um deles para encaixar no outro.
  *
- * Sem `pitch`/`roll`: uma base de implantação se assenta no plano do terreno.
- * Se ela precisa ser inclinada, o que está errado é o eixo da exportação — e
- * corrigir isso com sliders esconde o problema em vez de resolvê-lo.
+ * Tem os três eixos de rotação, como o empreendimento. A primeira versão só
+ * tinha `heading`, no argumento de que uma base de implantação se assenta no
+ * plano do terreno — e isso é verdade para o caso limpo, mas deixava sem saída
+ * o GLB que chega com o eixo trocado da exportação. Corrigir na origem continua
+ * sendo o certo; não poder corrigir aqui era uma parede.
  */
 export interface MapaBase {
   url: string;
   /** Rotação em torno do eixo vertical, em graus (0 = norte). */
   heading: number;
+  /** Inclinação frente/trás e rolagem lateral, em graus. */
+  pitch: number;
+  roll: number;
   scale: number;
   /** Altura da base em metros, relativa ao solo medido sob o empreendimento. */
   heightOffset: number;

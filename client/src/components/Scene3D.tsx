@@ -354,7 +354,10 @@ interface Scene3DProps {
  * de gravar. Sem `pitch`/`roll`: ver a doc de `MapaBase`.
  */
 export type MapaPatch = Partial<
-  Record<"offsetEast" | "offsetNorth" | "heightOffset" | "heading" | "scale", number>
+  Record<
+    "offsetEast" | "offsetNorth" | "heightOffset" | "heading" | "pitch" | "roll" | "scale",
+    number
+  >
 >;
 
 /** Ferramentas de manipulação do modelo. */
@@ -2006,7 +2009,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       cfg.lat + cfg.offsetNorth / mPorLat,
       alturaDoSoloBase() + cfg.heightOffset,
     );
-    const hpr = new HeadingPitchRoll(CesiumMath.toRadians(cfg.heading), 0, 0);
+    const hpr = new HeadingPitchRoll(
+      CesiumMath.toRadians(cfg.heading),
+      CesiumMath.toRadians(cfg.pitch),
+      CesiumMath.toRadians(cfg.roll),
+    );
     return Transforms.headingPitchRollToFixedFrame(origem, hpr);
   }
 
@@ -3328,10 +3335,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!alvo) return 0;
       return kind === "rot" ? alvo.rot : kind === "rotX" ? (alvo.rotX ?? 0) : (alvo.rotY ?? 0);
     }
-    // O mini mapa só tem giro em torno do vertical; os outros dois anéis nem
-    // chegam a ser desenhados para ele (ver `soRotZ` em `buildGizmo`).
+    // Mesmo mapeamento do empreendimento — `campoDoAnel` grava nos mesmos
+    // nomes de campo, e o editor os traduz para `mapaHeading`/`mapaPitch`/…
     const mapa = alvoMapaAtivo();
-    if (mapa) return kind === "rot" ? mapa.heading : 0;
+    if (mapa) return kind === "rot" ? mapa.heading : kind === "rotX" ? mapa.roll : mapa.pitch;
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
     if (!b) return 0;
     return kind === "rot" ? b.heading : kind === "rotX" ? b.roll : b.pitch;
@@ -3366,14 +3373,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const alvoAtual = gizmoLocalRef.current;
     const modo = alvoAtual?.somenteMover || alvoAtual?.somenteZ ? "mover" : gizmoModoRef.current;
     const soZ = !!alvoAtual?.somenteZ;
-    /**
-     * Mini mapa: um anel só, o do vertical.
-     *
-     * `MapaBase` não tem pitch nem roll — uma base de implantação se assenta no
-     * plano do terreno. Desenhar os anéis vermelho e verde ofereceria dois
-     * gestos que não têm onde ser gravados: arrastar e nada acontecer.
-     */
-    const soRotZ = !!alvoMapaAtivo();
 
     /** Seta de translação + ponta clicável (a linha sozinha é difícil de pegar). */
     const eixo = (kind: "tE" | "tN" | "tU", dir: "east" | "north" | "up", css: string) => {
@@ -3480,10 +3479,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       };
 
       anel("rot", GIZMO_COLOR.tU);   // em torno do vertical — azul, como o eixo Z
-      if (!soRotZ) {
-        anel("rotX", GIZMO_COLOR.tE);  // em torno do leste/X — vermelho
-        anel("rotY", GIZMO_COLOR.tN);  // em torno do norte/Y — verde
-      }
+      anel("rotX", GIZMO_COLOR.tE);  // em torno do leste/X — vermelho
+      anel("rotY", GIZMO_COLOR.tN);  // em torno do norte/Y — verde
 
       // Agulha da frente do modelo: mostra para onde ele está apontando.
       gizmoRef.current.push(
@@ -5454,8 +5451,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * efeito a cada tecla digitada.
    */
   const mapaChave = mapaBase
-    ? [mapaBase.url, mapaBase.heading, mapaBase.scale, mapaBase.heightOffset,
-       mapaBase.offsetEast, mapaBase.offsetNorth, mapaBase.lat, mapaBase.lng].join("|")
+    ? [mapaBase.url, mapaBase.heading, mapaBase.pitch, mapaBase.roll, mapaBase.scale,
+       mapaBase.heightOffset, mapaBase.offsetEast, mapaBase.offsetNorth,
+       mapaBase.lat, mapaBase.lng].join("|")
     : "";
   useEffect(() => {
     if (!pronto) return;
