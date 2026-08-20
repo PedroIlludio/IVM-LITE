@@ -60,6 +60,7 @@ import {
   METROS_POR_LADRILHO, texturaDe, COR_SUPERFICIE,
 } from "@/lib/texturas-superficie";
 import type { Building3D, MapaBase } from "@/lib/vision3d-config";
+import type { SombrasModo } from "@/lib/ivm-store";
 import type { CameraView } from "@/lib/placements";
 import type { UnitBox } from "@/lib/unidades3d";
 
@@ -241,6 +242,14 @@ interface Scene3DProps {
    * de longe o item mais caro da cena, e o que trava tablet.
    */
   cidade?: boolean;
+  /**
+   * Quando projetar sombras — ver `AmbienteCfg.sombras`.
+   *
+   * A regra mora AQUI, e não em quem chama, porque ela depende de `cidade`,
+   * que é prop desta cena. Fosse resolvida nas páginas, editor e vitrine
+   * teriam de manter a mesma condição em dois lugares.
+   */
+  sombras?: SombrasModo;
   /**
    * GLB de terreno/entorno que entra no lugar da fotogrametria.
    *
@@ -516,7 +525,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
     onModelLoading, onError,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
-    cidade = true, mapaBase = null,
+    cidade = true, mapaBase = null, sombras = "sempre",
     orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
     gizmoMapa = false, onMapaTransform, corteArea = null,
@@ -5442,6 +5451,23 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cidade, noturno, pronto]);
+
+  /**
+   * Sombras ligadas AGORA, pela regra do projeto e pelo modo da cena.
+   *
+   * Um interruptor só: `shadowMap.enabled`. Os primitivos continuam marcados
+   * com `ShadowMode.ENABLED` — desligar o mapa de sombras já os tira do passe,
+   * e mexer em cada primitivo obrigaria a percorrer modelo, mini mapa e cada
+   * entidade do entorno para depois ter de restaurar tudo ao religar.
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed() || !pronto) return;
+    const ligadas = sombras === "sempre" || (sombras === "com-cidade" && cidade);
+    v.shadowMap.enabled = ligadas;
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sombras, cidade, pronto]);
 
   /**
    * Mini mapa: entra e sai com o modo da cena, e acompanha os sliders.

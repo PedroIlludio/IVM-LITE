@@ -2137,6 +2137,7 @@ export default function IvmEditorPage() {
           realceNoturno={ambiente?.realceNoturno}
           /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
           cidade={!previewEstudio}
+          sombras={ambiente?.sombras}
           mapaBase={mapaBase}
           gizmoMapa={pivoNoMapa}
           /* Traduz o vocabulário comum do pivô para os campos do mini mapa.
@@ -4630,6 +4631,35 @@ export default function IvmEditorPage() {
                       material emissivo no próprio GLB.
                     </p>
                   </>
+                )}
+              </Section>
+
+              <Section title="Sombras" aberta={false}>
+                <p className="text-[10px] leading-relaxed text-white/35">
+                  Sem a fotogrametria não há terreno onde a sombra caia, e sobra o
+                  modelo sombreando a si mesmo — que costuma ler mal. Com a cidade
+                  ligada as sombras são o produto da simulação solar.
+                </p>
+                <div className="flex gap-1">
+                  {([
+                    ["sempre", "Sempre"],
+                    ["com-cidade", "Só com cidade"],
+                    ["nunca", "Nunca"],
+                  ] as const).map(([v, label]) => (
+                    <button key={v} onClick={() => setAmbiente({ sombras: v })}
+                      className={`flex-1 rounded-[3px] border py-1.5 text-[11px] transition-colors ${
+                        ambiente.sombras === v
+                          ? "border-teal-400/50 bg-teal-500/15 font-semibold text-teal-300"
+                          : "border-white/[0.08] text-white/50 hover:border-white/20 hover:text-white/85"
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {ambiente.sombras !== "sempre" && !previewEstudio && (
+                  <p className="text-[10px] leading-relaxed text-white/30">
+                    Para ver o efeito, ligue o preview sem a cidade na aba Modelo.
+                  </p>
                 )}
               </Section>
 

@@ -137,7 +137,24 @@ export interface AmbienteCfg {
   permitirScreenshot?: boolean;
   /** Barra solar visível para o visitante. */
   mostrarBarraSolar?: boolean;
+  /**
+   * Quando a cena projeta sombras.
+   *
+   * Três estados, e não um liga/desliga, porque o problema tem escopo: sem a
+   * fotogrametria não há terreno para a sombra cair, e o que sobra é o modelo
+   * sombreando a si mesmo — nas superfícies quase paralelas ao sol isso vira
+   * faixa escura serrilhada, e a leitura de maquete se perde. Com a cidade
+   * ligada as mesmas sombras são o produto: é delas que a simulação solar
+   * fala.
+   *
+   * Um interruptor único obrigaria a escolher entre um modo e outro. Este
+   * campo deixa desligar exatamente onde incomoda.
+   */
+  sombras?: SombrasModo;
 }
+
+/** Ver `AmbienteCfg.sombras`. */
+export type SombrasModo = "sempre" | "com-cidade" | "nunca";
 
 export const AMBIENTE_PADRAO: Required<AmbienteCfg> = {
   horaPadrao: 780,
@@ -148,6 +165,9 @@ export const AMBIENTE_PADRAO: Required<AmbienteCfg> = {
   mostrarBussola: true,
   permitirScreenshot: true,
   mostrarBarraSolar: true,
+  // Padrão histórico: sombras sempre. Nenhum projeto existente muda de
+  // aparência por causa deste campo.
+  sombras: "sempre",
 };
 
 /**

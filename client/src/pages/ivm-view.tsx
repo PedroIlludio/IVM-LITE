@@ -503,6 +503,7 @@ export default function IvmViewPage() {
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
           cidade={cidade3D}
+          sombras={ambiente?.sombras}
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
           /*
