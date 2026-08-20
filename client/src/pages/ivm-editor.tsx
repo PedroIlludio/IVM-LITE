@@ -998,6 +998,18 @@ export default function IvmEditorPage() {
    */
   const [previewEstudio, setPreviewEstudio] = useState(false);
 
+  /**
+   * O pivô da cena aponta para o MINI MAPA, e não para o empreendimento.
+   *
+   * Exclusivo por necessidade: dois pivôs na tela seriam dois conjuntos de
+   * alças sobrepostas, sem pista de qual move o quê — e um arraste distraído
+   * desmancharia o encaixe do prédio achando que estava mexendo no terreno.
+   *
+   * Estado de TELA, não do projeto: é o que se está fazendo agora, não uma
+   * propriedade do empreendimento. Quem persiste é o cadeado (`mapaTravado`).
+   */
+  const [editandoMapa, setEditandoMapa] = useState(false);
+
   /** Liga/desliga o preview e leva o relógio junto — como faz a vitrine. */
   function alternarPreviewNoturno() {
     if (!ambiente) return;
@@ -1016,8 +1028,14 @@ export default function IvmEditorPage() {
 
   /** Mesmo motivo: o interruptor do estúdio mora na aba "modelo". */
   useEffect(() => {
-    if (tab !== "modelo") setPreviewEstudio(false);
+    if (tab !== "modelo") { setPreviewEstudio(false); setEditandoMapa(false); }
   }, [tab]);
+
+  // Sem preview não há mini mapa desenhado, e um pivô sobre a fotogrametria
+  // moveria um objeto que ninguém está vendo.
+  useEffect(() => {
+    if (!previewEstudio) setEditandoMapa(false);
+  }, [previewEstudio]);
 
 
   /**
@@ -1885,6 +1903,17 @@ export default function IvmEditorPage() {
    */
   const travado = !!c.travado;
 
+  /** Cadeado do mini mapa — ver `mapaTravado` em `ProjectConfig`. */
+  const mapaTravado = !!c.mapaTravado;
+  /**
+   * O pivô em cena é o do mini mapa AGORA?
+   *
+   * Precisa das quatro condições: estar na aba certa, com o preview ligado
+   * (senão o objeto nem é desenhado), com GLB para mover e sem cadeado.
+   */
+  const pivoNoMapa = tab === "modelo" && previewEstudio && !!c.mapaUrl
+    && !mapaTravado && editandoMapa;
+
   /**
    * Checagens antes de publicar. Não bloqueiam nada — o editor não deve decidir
    * pelo usuário —, mas nenhum projeto vai ao ar sem que os buracos estejam
@@ -2109,6 +2138,19 @@ export default function IvmEditorPage() {
           /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
           cidade={!previewEstudio}
           mapaBase={mapaBase}
+          gizmoMapa={pivoNoMapa}
+          /* Traduz o vocabulário comum do pivô para os campos do mini mapa.
+             Rede de segurança igual à do empreendimento: travado, descarta. */
+          onMapaTransform={(patch) => {
+            if (mapaTravado) return;
+            setConfig({
+              ...(patch.offsetEast !== undefined && { mapaOffsetEast: patch.offsetEast }),
+              ...(patch.offsetNorth !== undefined && { mapaOffsetNorth: patch.offsetNorth }),
+              ...(patch.heightOffset !== undefined && { mapaHeightOffset: patch.heightOffset }),
+              ...(patch.heading !== undefined && { mapaHeading: patch.heading }),
+              ...(patch.scale !== undefined && { mapaScale: patch.scale }),
+            });
+          }}
           selectedId={emp.id}
           editMode
           onReady={() => { setReady(true); setCenaErro(null); }}
@@ -2126,7 +2168,7 @@ export default function IvmEditorPage() {
           /* O pivô do empreendimento só existe onde ele se edita: fora dessas
              duas abas as alças ficavam no meio da cena roubando o clique. E
              some de vez quando o encaixe está travado — é o ponto do cadeado. */
-          gizmoEmpreendimento={(tab === "modelo" || tab === "local") && !placing && !travado}
+          gizmoEmpreendimento={(tab === "modelo" || tab === "local") && !placing && !travado && !pivoNoMapa}
           gizmoLocal={gizmoLocal}
           onGizmoLocalTransform={onGizmoLocal}
           corteArea={corteArea}
@@ -3178,16 +3220,67 @@ export default function IvmEditorPage() {
               </div>
               {c.mapaUrl && (
                 <>
+                  {/* Pivô e cadeado, como no empreendimento. O par de botões
+                      fica junto porque um é o antídoto do outro: o cadeado
+                      existe para o encaixe acertado não ser desfeito por um
+                      arraste distraído depois. */}
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => setEditandoMapa((v) => !v)}
+                      disabled={mapaTravado || !previewEstudio}
+                      title={mapaTravado
+                        ? "Encaixe do mini mapa travado — destrave para mover"
+                        : !previewEstudio
+                          ? "Ligue o preview sem a cidade para ver o mini mapa"
+                          : "Mostra as alças de mover/girar/escalar no mini mapa (esconde o pivô do empreendimento)"}
+                      className={`flex flex-1 items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                        pivoNoMapa
+                          ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
+                          : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
+                      }`}>
+                      <Move className="h-3.5 w-3.5" />
+                      {pivoNoMapa ? "Editando na cena" : "Editar na cena"}
+                    </button>
+                    <button
+                      onClick={() => setConfig({ mapaTravado: !mapaTravado })}
+                      title={mapaTravado
+                        ? "Encaixe travado — clique para destravar"
+                        : "Travar o encaixe do mini mapa"}
+                      className={`flex items-center gap-1.5 rounded-[3px] border px-2 text-[11px] transition-colors ${
+                        mapaTravado
+                          ? "border-amber-400/40 bg-amber-400/15 text-amber-300 hover:bg-amber-400/25"
+                          : "border-white/[0.08] text-white/40 hover:border-white/25 hover:text-white/80"
+                      }`}>
+                      {mapaTravado ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                  {pivoNoMapa && (
+                    <p className="text-[10px] leading-relaxed text-white/30">
+                      As alças usam a ferramenta escolhida acima (Mover/Girar/Escalar)
+                      e o pivô do empreendimento está escondido enquanto isso. O mini
+                      mapa gira só em torno do eixo vertical — ver a nota da escala.
+                    </p>
+                  )}
+                  {mapaTravado && (
+                    <p className="text-[10px] leading-relaxed text-white/35">
+                      Encaixe travado: o pivô saiu da cena e os controles abaixo
+                      estão inertes. O mini mapa continua aparecendo normalmente.
+                    </p>
+                  )}
                   {/* Transformação PRÓPRIA, separada da do prédio: os dois GLBs
                       quase nunca vêm no mesmo referencial. Ver `MapaBase`. */}
                   <Slider label="Rotação" v={c.mapaHeading ?? 0} min={0} max={360} step={1} suffix="°"
+                    disabled={mapaTravado}
                     onChange={(x) => setConfig({ mapaHeading: x })} />
-                  <Num label="Escala" v={c.mapaScale ?? 1} onChange={(x) => setConfig({ mapaScale: x })} />
+                  <Num label="Escala" v={c.mapaScale ?? 1} disabled={mapaTravado} onChange={(x) => setConfig({ mapaScale: x })} />
                   <Slider label="Altura base" v={c.mapaHeightOffset ?? 0} min={-80} max={150} step={0.5} suffix="m"
+                    disabled={mapaTravado}
                     onChange={(x) => setConfig({ mapaHeightOffset: x })} />
                   <Slider label="Mover L↔O" v={c.mapaOffsetEast ?? 0} min={-400} max={400} step={1} suffix="m"
+                    disabled={mapaTravado}
                     onChange={(x) => setConfig({ mapaOffsetEast: x })} />
                   <Slider label="Mover N↔S" v={c.mapaOffsetNorth ?? 0} min={-400} max={400} step={1} suffix="m"
+                    disabled={mapaTravado}
                     onChange={(x) => setConfig({ mapaOffsetNorth: x })} />
                   <button
                     onClick={() => setConfig({ mapaUrl: "" })}

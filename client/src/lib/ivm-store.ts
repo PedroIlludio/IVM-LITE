@@ -250,6 +250,12 @@ export interface ProjectConfig {
   mapaHeightOffset?: number;
   mapaOffsetEast?: number;
   mapaOffsetNorth?: number;
+  /**
+   * Encaixe do mini mapa travado — o mesmo cadeado do `travado`, e pelo mesmo
+   * motivo: alinhar um terreno ao prédio é trabalho de uma vez, e depois disso
+   * o pivô só oferece risco.
+   */
+  mapaTravado?: boolean;
   heading: number;
   pitch: number;
   roll: number;

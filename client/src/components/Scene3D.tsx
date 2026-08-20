@@ -333,7 +333,29 @@ interface Scene3DProps {
   gizmoLocal?: GizmoLocal | null;
   /** Arraste do pivô local, em coordenadas do modelo. */
   onGizmoLocalTransform?: (id: string, patch: GizmoLocalPatch) => void;
+  /**
+   * Pivô do MINI MAPA em vez do empreendimento.
+   *
+   * Exclusivo por natureza: dois pivôs na tela ao mesmo tempo seriam dois
+   * conjuntos de alças sobrepostas e nenhuma pista de qual move o quê. Quem
+   * decide é o editor — ligar este desliga o `gizmoEmpreendimento`.
+   */
+  gizmoMapa?: boolean;
+  /** Arraste do pivô do mini mapa, no mesmo vocabulário do empreendimento. */
+  onMapaTransform?: (patch: MapaPatch) => void;
 }
+
+/**
+ * Patch do pivô do mini mapa.
+ *
+ * Mesmos nomes de campo do empreendimento — os dois são transformações em ENU
+ * sobre a mesma âncora, então o arraste que escreve `offsetEast` num escreve
+ * `offsetEast` no outro. Quem traduz para `mapaOffsetEast` é o editor, na hora
+ * de gravar. Sem `pitch`/`roll`: ver a doc de `MapaBase`.
+ */
+export type MapaPatch = Partial<
+  Record<"offsetEast" | "offsetNorth" | "heightOffset" | "heading" | "scale", number>
+>;
 
 /** Ferramentas de manipulação do modelo. */
 export type GizmoModo = "mover" | "girar" | "escalar";
@@ -493,7 +515,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
     cidade = true, mapaBase = null,
     orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
-    gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform, corteArea = null,
+    gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
+    gizmoMapa = false, onMapaTransform, corteArea = null,
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
@@ -705,6 +728,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   gizmoLocalRef.current = gizmoLocal;
   const onGizmoLocalTransformRef = useRef(onGizmoLocalTransform);
   onGizmoLocalTransformRef.current = onGizmoLocalTransform;
+  const gizmoMapaRef = useRef(gizmoMapa);
+  gizmoMapaRef.current = gizmoMapa;
+  const onMapaTransformRef = useRef(onMapaTransform);
+  onMapaTransformRef.current = onMapaTransform;
   /**
    * Frame ao vivo do gizmo, lido pelas CallbackProperty.
    *
@@ -758,6 +785,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     /** `sX`/`sY`/`sZ` redimensionam UM eixo; `scale` é a escala uniforme. */
     kind: "tE" | "tN" | "tU" | AnelKind | "scale" | "sX" | "sY" | "sZ";
     local: boolean;
+    /** O alvo é o mini mapa: o patch vai para `onMapaTransform`. */
+    mapa: boolean;
     /** b.scale no início do arraste (mundo → modelo). */
     escala: number;
     axisO: Cartesian3; // origem do eixo/plano fixada no início do arraste
@@ -3111,6 +3140,44 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   }
 
   /**
+   * O pivô do mini mapa está VALENDO agora?
+   *
+   * Não basta o editor pedir: sem GLB não há o que mover, e com a cidade 3D
+   * ligada o mini mapa nem é desenhado — as alças ficariam pairando sobre a
+   * fotogrametria, movendo um objeto invisível.
+   */
+  function alvoMapaAtivo(): MapaBase | null {
+    if (!gizmoMapaRef.current || cidadeRef.current) return null;
+    return mapaBaseRef.current ?? null;
+  }
+
+  /** Id do alvo quando o pivô é o do mini mapa. */
+  const MAPA_GIZMO_ID = "mapa-base";
+
+  /**
+   * Frame do pivô do mini mapa.
+   *
+   * Como o do empreendimento — ENU para as setas de mover, eixos do objeto
+   * para o resto —, e não como o local: o mini mapa não vive no espaço do
+   * modelo do prédio, ele tem transformação própria sobre a mesma âncora.
+   *
+   * O tamanho de reserva é maior que o do prédio (uma quadra é bem mais larga
+   * que uma torre), mas quem manda de fato é `alcaL()`, que mede em pixels.
+   */
+  function computeGframeMapa(cfg: MapaBase) {
+    const m = matrizMapaBase(cfg);
+    const origin = Matrix4.getTranslation(m, new Cartesian3());
+    const { east, north, up } = eixosDaMatriz(Transforms.eastNorthUpToFixedFrame(origin));
+    const obj = eixosDaMatriz(m);
+    return {
+      origin: pivotRef.current ?? origin, origemNatural: origin,
+      east, north, up,
+      eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      L: 60, local: false, escala: cfg.scale || 1,
+    };
+  }
+
+  /**
    * Frame de um alvo no espaço do modelo. A origem é o ponto (x,y,z) do modelo
    * levado ao mundo pela mesma matriz das caixas do espelho, e os eixos são os
    * do modelo — de forma que cada alça corresponda a um campo do inspetor.
@@ -3195,6 +3262,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       gframeRef.current = b && node ? computeGframeLocal(b, node, alvo) : null;
       return;
     }
+    // Antes do empreendimento: quando o editor pede o pivô do mini mapa, é
+    // ele que responde — os dois nunca aparecem juntos.
+    const mapa = alvoMapaAtivo();
+    if (mapa) { gframeRef.current = computeGframeMapa(mapa); return; }
     if (!gizmoEmpRef.current) { gframeRef.current = null; return; }
     const id = selectedRef.current;
     const b = id ? buildingsRef.current.find((x) => x.id === id) : undefined;
@@ -3257,6 +3328,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!alvo) return 0;
       return kind === "rot" ? alvo.rot : kind === "rotX" ? (alvo.rotX ?? 0) : (alvo.rotY ?? 0);
     }
+    // O mini mapa só tem giro em torno do vertical; os outros dois anéis nem
+    // chegam a ser desenhados para ele (ver `soRotZ` em `buildGizmo`).
+    const mapa = alvoMapaAtivo();
+    if (mapa) return kind === "rot" ? mapa.heading : 0;
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
     if (!b) return 0;
     return kind === "rot" ? b.heading : kind === "rotX" ? b.roll : b.pitch;
@@ -3291,6 +3366,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const alvoAtual = gizmoLocalRef.current;
     const modo = alvoAtual?.somenteMover || alvoAtual?.somenteZ ? "mover" : gizmoModoRef.current;
     const soZ = !!alvoAtual?.somenteZ;
+    /**
+     * Mini mapa: um anel só, o do vertical.
+     *
+     * `MapaBase` não tem pitch nem roll — uma base de implantação se assenta no
+     * plano do terreno. Desenhar os anéis vermelho e verde ofereceria dois
+     * gestos que não têm onde ser gravados: arrastar e nada acontecer.
+     */
+    const soRotZ = !!alvoMapaAtivo();
 
     /** Seta de translação + ponta clicável (a linha sozinha é difícil de pegar). */
     const eixo = (kind: "tE" | "tN" | "tU", dir: "east" | "north" | "up", css: string) => {
@@ -3397,8 +3480,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       };
 
       anel("rot", GIZMO_COLOR.tU);   // em torno do vertical — azul, como o eixo Z
-      anel("rotX", GIZMO_COLOR.tE);  // em torno do leste/X — vermelho
-      anel("rotY", GIZMO_COLOR.tN);  // em torno do norte/Y — verde
+      if (!soRotZ) {
+        anel("rotX", GIZMO_COLOR.tE);  // em torno do leste/X — vermelho
+        anel("rotY", GIZMO_COLOR.tN);  // em torno do norte/Y — verde
+      }
 
       // Agulha da frente do modelo: mostra para onde ele está apontando.
       gizmoRef.current.push(
@@ -3579,7 +3664,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * leem o frame por CallbackProperty, então acompanhar o movimento não exige
    * reconstruí-las.
    */
-  const alvoChave = gizmoLocal ? `local:${gizmoLocal.id}` : gizmoEmpreendimento ? "emp" : "nenhum";
+  const alvoChave = gizmoLocal
+    ? `local:${gizmoLocal.id}`
+    // A cidade entra na chave porque ela decide se o alvo do mini mapa existe:
+    // religar a fotogrametria com o pivô dele em cena tem de apagar as alças.
+    : gizmoMapa && mapaBase && !cidade
+      ? "mapa"
+      : gizmoEmpreendimento ? "emp" : "nenhum";
   useEffect(() => {
     // O pivô reposicionado é auxílio de edição, não propriedade do alvo: ao
     // trocar de alvo ele volta ao centro, como no Unreal ao reselecionar.
@@ -4698,9 +4789,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v || !editRef.current) return false;
     const g = gframeRef.current;
     const alvo = gizmoLocalRef.current;
+    // Mesma prioridade de `updateGframe`: local, depois mini mapa, depois o
+    // empreendimento. Agarrar uma alça e escrever no alvo errado seria o pior
+    // defeito possível aqui.
+    const mapa = alvo ? null : alvoMapaAtivo();
     // O alvo local manda no id: quem recebe o patch é a torre/unidade, não o
     // empreendimento selecionado.
-    const id = alvo ? alvo.id : selectedRef.current;
+    const id = alvo ? alvo.id : mapa ? MAPA_GIZMO_ID : selectedRef.current;
     if (!id || !g) return false;
     const pid = idDaEntidade(v.scene.pick(pos));
     if (typeof pid !== "string" || !pid.startsWith("gizmo:")) return false;
@@ -4714,7 +4809,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       (x) => x.id === (alvo ? alvo.buildingId : selectedRef.current),
     );
     const ray = v.camera.getPickRay(pos);
-    if (!b || !ray) return false;
+    // O mini mapa não depende de haver prédio: ele tem transformação própria.
+    if ((!b && !mapa) || !ray) return false;
 
     let startScalar = 0;
     let startValue = 0;
@@ -4724,8 +4820,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (kind === "tE" || kind === "tN" || kind === "tU") {
       axisD = kind === "tE" ? g.east : kind === "tN" ? g.north : g.up;
       startScalar = scalarOnAxis(ray, g.origin, axisD);
+      const fonte = mapa ?? b;
       if (alvo) startValue = kind === "tE" ? alvo.x : kind === "tN" ? alvo.y : alvo.z;
-      else startValue = kind === "tE" ? b.offsetEast : kind === "tN" ? b.offsetNorth : b.heightOffset;
+      else if (fonte) {
+        startValue = kind === "tE" ? fonte.offsetEast
+          : kind === "tN" ? fonte.offsetNorth : fonte.heightOffset;
+      }
     } else if (kind === "sX" || kind === "sY" || kind === "sZ") {
       // Mede como a translação — o arraste anda no eixo —, mas o valor
       // representa a MEDIDA da caixa. O eixo é o da PEÇA, o mesmo em que a
@@ -4751,7 +4851,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const u = Cartesian3.subtract(p, g.origin, new Cartesian3());
       startScalar = Cartesian3.magnitude(u);
       // No alvo local a escala redimensiona a caixa; o fator parte de 1.
-      startValue = alvo ? 1 : b.scale;
+      startValue = alvo ? 1 : (mapa ?? b)?.scale ?? 1;
     }
 
     // Deslocamento do pivô em relação ao centro real. Vazio quando o pivô não
@@ -4759,15 +4859,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const pivot = pivotRef.current
       ? Cartesian3.subtract(g.origin, g.origemNatural, new Cartesian3())
       : undefined;
+    const fonteGlobal = mapa ?? b;
     const startPos = alvo
       ? { a: alvo.x, b: alvo.y, c: alvo.z }
-      : { a: b.offsetEast, b: b.offsetNorth, c: b.heightOffset };
+      : fonteGlobal
+        ? { a: fonteGlobal.offsetEast, b: fonteGlobal.offsetNorth, c: fonteGlobal.heightOffset }
+        : undefined;
 
     dragRef.current = {
       id,
       kind,
       local: !!alvo,
-      escala: b.scale || 1,
+      mapa: !!mapa,
+      escala: (alvo ? b?.scale : fonteGlobal?.scale) || 1,
       axisO: g.origin.clone(),
       axisD,
       up: g.up.clone(),
@@ -4803,7 +4907,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   function gizmoMove(pos: Cartesian2) {
     const v = viewerRef.current;
     const drag = dragRef.current;
-    const emit = drag?.local ? onGizmoLocalTransformRef.current : onEditTransformRef.current;
+    const emit = drag?.local
+      ? onGizmoLocalTransformRef.current
+      : drag?.mapa
+        ? onMapaTransformRef.current
+        : onEditTransformRef.current;
     if (!v || !drag || !emit) return;
     const ray = v.camera.getPickRay(pos);
     if (!ray) return;
@@ -4824,7 +4932,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       return Math.round(valor / p) * p;
     };
     const local = onGizmoLocalTransformRef.current;
-    const global = onEditTransformRef.current;
+    /**
+     * Destino dos patches em ENU.
+     *
+     * O mini mapa fala o MESMO vocabulário do empreendimento (ver `MapaPatch`),
+     * então todos os ramos abaixo permanecem como estavam — o que muda é para
+     * onde o patch vai. O `id` é descartado no caminho do mini mapa: ele é um
+     * só por projeto, e inventar um identificador para ele daria a impressão de
+     * que pode haver vários.
+     */
+    const emitirMapa = onMapaTransformRef.current;
+    const global: typeof onEditTransformRef.current = drag.mapa
+      ? (_id, patch) => emitirMapa?.(patch)
+      : onEditTransformRef.current;
 
     /**
      * Recentragem em torno de um pivô deslocado.
@@ -5340,6 +5460,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useEffect(() => {
     if (!pronto) return;
     void syncMapaBase();
+    /**
+     * O pivô acompanha o mini mapa.
+     *
+     * Sem isto as alças ficavam onde o objeto estava quando foram criadas:
+     * arrastar um slider do inspetor afastava o mini mapa das próprias alças, e
+     * o pivô passava a mover a partir de um ponto que não corresponde a nada.
+     */
+    updateGframe();
+    requestRender();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapaChave, cidade, pronto]);
 
