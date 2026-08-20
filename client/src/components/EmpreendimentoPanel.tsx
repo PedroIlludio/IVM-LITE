@@ -338,6 +338,15 @@ function EmpreendimentoDetail({
    * que termina fora do canvas fecharia o visualizador no meio do gesto.
    */
   const [panorama, setPanorama] = useState<{ url: string; titulo: string } | null>(null);
+
+  // Esc fecha o panorama: agora que ele é uma janela, e não a tela inteira,
+  // é o gesto que todo mundo tenta antes de procurar o X.
+  useEffect(() => {
+    if (!panorama) return;
+    const aoTeclar = (e: KeyboardEvent) => { if (e.key === "Escape") setPanorama(null); };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [panorama]);
   const galeria = emp.galeria ?? [];
   const videos = emp.videos ?? [];
   // Uma lista só, vinda de quem sabe (a página) ou derivada aqui.
@@ -1069,20 +1078,49 @@ function EmpreendimentoDetail({
       )}
 
       {panorama && createPortal(
-        <div className="fixed inset-0 z-[9999] bg-black">
-          <Panorama360 url={panorama.url} titulo={panorama.titulo} />
-          {/* O título fica FORA do canvas: dentro dele ele giraria junto com a
-              cena, e um rótulo que se move com o olhar não é um rótulo. */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-gradient-to-b from-black/70 to-transparent p-4">
-            <span className="text-[13px] font-semibold text-white drop-shadow">{panorama.titulo}</span>
+        <div
+          data-testid="panorama-overlay"
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          /**
+           * Fecha só no clique DIRETO no fundo.
+           *
+           * Sem a checagem do alvo, um arraste que começa dentro do panorama e
+           * termina fora borbulha até aqui e fecha o visualizador no meio do
+           * gesto — e olhar em volta é exatamente arrastar até a borda.
+           */
+          onClick={(e) => { if (e.target === e.currentTarget) setPanorama(null); }}
+        >
+          {/*
+            Janela, não tela cheia: o 360 é UM item da lista de lazer, e ocupar
+            a tela inteira quebra a leitura de quem está percorrendo os
+            ambientes — some a vitrine, some onde se estava. Emoldurado, ele
+            se lê como "abri a piscina" e o caminho de volta fica visível.
+          */}
+          <div className="flex h-[min(78vh,620px)] w-[min(94vw,1040px)] flex-col overflow-hidden rounded-xl border border-[var(--v-line)] bg-[var(--v-surface)] shadow-2xl">
+            {/* O título vive na BARRA, fora do canvas: dentro dele giraria
+                junto com a cena, e um rótulo que se move com o olhar não é um
+                rótulo. */}
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--v-line)] px-4 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <Globe2 className="h-3.5 w-3.5 shrink-0 text-[var(--v-accent)]" />
+                <span className="truncate text-[13px] font-semibold text-[var(--v-ink)]">
+                  {panorama.titulo}
+                </span>
+                <span className="v-meta shrink-0">360°</span>
+              </div>
+              <button
+                data-testid="btn-close-panorama"
+                aria-label="Fechar"
+                className="shrink-0 rounded-full p-1.5 text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-line-2)] hover:text-[var(--v-ink)]"
+                onClick={() => setPanorama(null)}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 bg-black">
+              <Panorama360 url={panorama.url} titulo={panorama.titulo} />
+            </div>
           </div>
-          <button
-            data-testid="btn-close-panorama"
-            className="absolute right-4 top-4 rounded-full bg-[var(--v-surface-3)] p-2 text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-line-2)] hover:text-[var(--v-ink)]"
-            onClick={() => setPanorama(null)}
-          >
-            <X className="h-5 w-5" />
-          </button>
         </div>,
         document.body
       )}

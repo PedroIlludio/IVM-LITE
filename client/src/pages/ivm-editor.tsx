@@ -26,6 +26,7 @@ import {
   type PavimentosCfg, type NivelDef,
 } from "@/lib/pavimentos";
 import { plantasDeTipologia, plantasOrfas } from "@/lib/tipologias";
+import { sanearGlb } from "@/lib/glb-sanear";
 import {
   COR_VIA_PADRAO, LARGURA_VIA_PADRAO, comprimentoDaVia, densificarVia,
   densificarViaComCotas,
@@ -1742,6 +1743,25 @@ export default function IvmEditorPage() {
     return true;
   }
 
+  /**
+   * Envia um GLB depois de consertar o que o Cesium não perdoa.
+   *
+   * Ver `sanearGlb`: um índice de canal de UV que o exportador escreveu e a
+   * malha não tem faz o shader não compilar e a cena inteira parar. O conserto
+   * é no chunk JSON, o binário passa intacto, e o que mudou é dito em
+   * português — o silêncio aqui seria pior que o erro, porque o arquivo salvo
+   * deixaria de ser o arquivo enviado sem ninguém saber.
+   */
+  async function uploadGlb(file: File): Promise<string | null> {
+    setSaveMsg("Verificando o modelo...");
+    const { arquivo, correcoes } = await sanearGlb(file);
+    const url = await upload(arquivo);
+    if (url && correcoes.length) {
+      setSaveMsg(`Modelo corrigido no envio — ${correcoes.join("; ")}`);
+    }
+    return url;
+  }
+
   async function upload(file: File): Promise<string | null> {
     if (!project) return null;
     setSaveMsg("Enviando arquivo...");
@@ -3176,7 +3196,7 @@ export default function IvmEditorPage() {
                       const f = e.target.files?.[0];
                       e.target.value = ""; // permite reenviar o mesmo arquivo
                       if (!f || !conferirPesoGlb(f)) return;
-                      const u = await upload(f);
+                      const u = await uploadGlb(f);
                       if (u) setConfig({ modelUrl: u });
                     }} />
                 </div>
@@ -3224,7 +3244,7 @@ export default function IvmEditorPage() {
                       const f = e.target.files?.[0];
                       e.target.value = ""; // permite reenviar o mesmo arquivo
                       if (!f || !conferirPesoGlb(f)) return;
-                      const u = await upload(f);
+                      const u = await uploadGlb(f);
                       // Subir o mini mapa já liga o preview: quem acabou de
                       // enviar quer ver onde ele caiu, e com a cidade ligada
                       // não veria nada acontecer.
