@@ -1105,7 +1105,12 @@ function EmpreendimentoDetail({
             sair —, flutuando sobre a própria imagem em vez de roubar altura
             dela.
           */}
-          <div className="relative h-[min(74vh,580px)] w-[min(92vw,980px)] overflow-hidden rounded-2xl bg-black shadow-2xl">
+          {/* Mesma caixa da foto ampliada de áreas comuns (90vw × 85vh): as duas
+              coisas se abrem do mesmo lugar, com o mesmo gesto, e mudar de
+              tamanho entre uma e outra faria parecer que são recursos
+              diferentes. O 360 usa a caixa INTEIRA porque não tem tamanho
+              natural — é uma janela para dentro da esfera, não uma imagem. */}
+          <div className="relative h-[85vh] w-[90vw] overflow-hidden rounded-lg bg-black shadow-2xl">
             <Panorama360 url={panorama.url} titulo={panorama.titulo} />
             {/* O título fica FORA do canvas: dentro dele giraria junto com a
                 cena, e um rótulo que se move com o olhar não é um rótulo. */}
