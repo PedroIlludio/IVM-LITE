@@ -345,8 +345,8 @@ export default function Panorama360({ url, titulo }: { url: string; titulo?: str
       )}
       {dica && !carregando && !erro && (
         <div className="pointer-events-none absolute inset-x-0 bottom-6 flex justify-center">
-          <span className="rounded-full bg-black/55 px-3 py-1.5 text-[11px] text-white/85 backdrop-blur-sm">
-            Arraste para olhar em volta · role para aproximar
+          <span className="text-[11px] text-white/55 [text-shadow:0_1px_4px_rgba(0,0,0,0.9)]">
+            Arraste para olhar em volta
           </span>
         </div>
       )}

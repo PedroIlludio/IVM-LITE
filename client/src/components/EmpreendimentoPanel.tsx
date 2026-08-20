@@ -1096,30 +1096,30 @@ function EmpreendimentoDetail({
             ambientes — some a vitrine, some onde se estava. Emoldurado, ele
             se lê como "abri a piscina" e o caminho de volta fica visível.
           */}
-          <div className="flex h-[min(78vh,620px)] w-[min(94vw,1040px)] flex-col overflow-hidden rounded-xl border border-[var(--v-line)] bg-[var(--v-surface)] shadow-2xl">
-            {/* O título vive na BARRA, fora do canvas: dentro dele giraria
-                junto com a cena, e um rótulo que se move com o olhar não é um
-                rótulo. */}
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--v-line)] px-4 py-2.5">
-              <div className="flex min-w-0 items-center gap-2">
-                <Globe2 className="h-3.5 w-3.5 shrink-0 text-[var(--v-accent)]" />
-                <span className="truncate text-[13px] font-semibold text-[var(--v-ink)]">
-                  {panorama.titulo}
-                </span>
-                <span className="v-meta shrink-0">360°</span>
-              </div>
-              <button
-                data-testid="btn-close-panorama"
-                aria-label="Fechar"
-                className="shrink-0 rounded-full p-1.5 text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-line-2)] hover:text-[var(--v-ink)]"
-                onClick={() => setPanorama(null)}
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 bg-black">
-              <Panorama360 url={panorama.url} titulo={panorama.titulo} />
-            </div>
+          {/*
+            Sem moldura: nem barra de título, nem borda, nem selo.
+            
+            A imagem É o conteúdo, e cada elemento de interface em volta dela
+            disputa a atenção com o ambiente que se está vendendo. O que sobrou
+            são as duas coisas que precisam existir — saber onde se está e saber
+            sair —, flutuando sobre a própria imagem em vez de roubar altura
+            dela.
+          */}
+          <div className="relative h-[min(74vh,580px)] w-[min(92vw,980px)] overflow-hidden rounded-2xl bg-black shadow-2xl">
+            <Panorama360 url={panorama.url} titulo={panorama.titulo} />
+            {/* O título fica FORA do canvas: dentro dele giraria junto com a
+                cena, e um rótulo que se move com o olhar não é um rótulo. */}
+            <span className="pointer-events-none absolute left-5 top-4 text-[12px] font-medium tracking-wide text-white/80 [text-shadow:0_1px_4px_rgba(0,0,0,0.85)]">
+              {panorama.titulo}
+            </span>
+            <button
+              data-testid="btn-close-panorama"
+              aria-label="Fechar"
+              className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full text-white/60 transition-colors hover:bg-black/40 hover:text-white"
+              onClick={() => setPanorama(null)}
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>,
         document.body

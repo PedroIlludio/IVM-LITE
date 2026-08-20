@@ -616,7 +616,16 @@ export default function BuscadorUnidades3D({
           onAmpliar={(url) => setLightbox(url)}
           onVerNo3D={(como) => escolher(popup, como)}
           onMostrarTodas={mostrarTodas}
-          onClose={() => setPopup(null)}
+          /**
+           * O ✕ DESFAZ a escolha; não apenas esconde o cartão.
+           *
+           * Escolher uma unidade encadeia três coisas na cena — corte no andar,
+           * isolamento da caixa e enquadramento próprio. Fechando só o cartão,
+           * as três continuavam valendo: o visitante ficava olhando um prédio
+           * cortado, com uma unidade acesa e nenhum controle à vista para
+           * voltar. O gesto de fechar tem de desfazer o que o de abrir fez.
+           */
+          onClose={mostrarTodas}
         />
       )}
 
