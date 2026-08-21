@@ -645,6 +645,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    */
   const mapaBloqueadoRef = useRef<string | null>(null);
   /**
+   * URLs de GLB do empreendimento que derrubaram o render.
+   *
+   * Mesmo papel de `mapaBloqueadoRef`, e pela mesma razão: sem a memória, o
+   * `reconcile` recarrega o culpado no quadro seguinte e a cena entra num laço
+   * de quebrar e recarregar. Guardado por URL, some sozinho quando o editor
+   * aponta para outro arquivo.
+   */
+  const modelosBloqueadosRef = useRef<Set<string>>(new Set());
+  /**
    * URL do mini mapa em cena OU em voo agora.
    *
    * Mesmo papel do `loadingUrl` do prédio: sem ela, cada re-render do editor
@@ -1805,6 +1814,33 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
             requestRender();
             return;
           }
+          /**
+           * 2. O outro arquivo de terceiros em cena é o GLB do empreendimento.
+           *
+           * Tirá-lo dói — é o produto —, mas a alternativa é pior: sem retomar
+           * o laço, a cena fica CONGELADA. No editor isso era especialmente
+           * traiçoeiro, porque o aviso diz "o restante segue funcionando" e o
+           * viewport, apesar de aceitar cliques, não redesenhava nada. Mover o
+           * empreendimento pelo mapa parecia simplesmente não funcionar.
+           */
+          const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+            ?? buildingsRef.current[0];
+          const node = b ? nodesRef.current.get(b.id) : undefined;
+          if (b && node?.model && node.loadedUrl) {
+            modelosBloqueadosRef.current.add(node.loadedUrl);
+            if (!viewer.isDestroyed()) viewer.scene.primitives.remove(node.model);
+            node.model = undefined;
+            node.loadedUrl = undefined;
+            onModelErrorRef.current?.(msg);
+            // Volume de referência no lugar do GLB: melhor um bloco no lugar
+            // certo do que um buraco onde estava o empreendimento.
+            upsertPlaceholder(b, node);
+            viewer.useDefaultRenderLoop = true;
+            requestRender();
+            return;
+          }
+
+          // 3. Não há o que remover: a falha é da própria cena.
           onErrorRef.current?.(msg);
         });
 
@@ -4324,7 +4360,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       }
 
       upsertMarker(b, node);
-      if (b.modelUrl) {
+      // Arquivo que já derrubou o render não volta sozinho; enquanto isso o
+      // empreendimento aparece como volume, e não como ausência.
+      const bloqueado = !!b.modelUrl && modelosBloqueadosRef.current.has(b.modelUrl);
+      if (b.modelUrl && !bloqueado) {
         if (node.box) {
           v.entities.remove(node.box);
           node.box = undefined;

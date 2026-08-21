@@ -35,15 +35,15 @@ interface RefTextura {
   extensions?: { KHR_texture_transform?: { texCoord?: number } };
 }
 
+/**
+ * Material glTF.
+ *
+ * Deliberadamente frouxo: as referências de textura são procuradas por
+ * VARREDURA, não por lista de campos — ver `slotsDeTextura`.
+ */
 interface MaterialGltf {
   name?: string;
-  pbrMetallicRoughness?: {
-    baseColorTexture?: RefTextura;
-    metallicRoughnessTexture?: RefTextura;
-  };
-  normalTexture?: RefTextura;
-  occlusionTexture?: RefTextura;
-  emissiveTexture?: RefTextura;
+  [chave: string]: unknown;
 }
 
 interface PrimitivaGltf {
@@ -63,18 +63,70 @@ export interface ResultadoSaneamento {
   correcoes: string[];
 }
 
-/** As cinco referências de textura de um material, com o nome do slot. */
-function slotsDeTextura(m: MaterialGltf): [string, RefTextura][] {
-  const p = m.pbrMetallicRoughness ?? {};
-  return ([
-    ["cor base", p.baseColorTexture],
-    ["metalicidade/rugosidade", p.metallicRoughnessTexture],
-    ["normal", m.normalTexture],
-    ["oclusão", m.occlusionTexture],
-    ["emissivo", m.emissiveTexture],
-  ] as [string, RefTextura | undefined][]).filter(
-    (par): par is [string, RefTextura] => !!par[1],
-  );
+/** Nome em português dos slots conhecidos; o resto usa a chave crua. */
+const ROTULO_SLOT: Record<string, string> = {
+  baseColorTexture: "cor base",
+  metallicRoughnessTexture: "metalicidade/rugosidade",
+  normalTexture: "normal",
+  occlusionTexture: "oclusão",
+  emissiveTexture: "emissivo",
+  specularTexture: "especular",
+  specularColorTexture: "cor especular",
+  clearcoatTexture: "verniz",
+  clearcoatRoughnessTexture: "rugosidade do verniz",
+  clearcoatNormalTexture: "normal do verniz",
+  sheenColorTexture: "brilho de tecido",
+  sheenRoughnessTexture: "rugosidade do tecido",
+  transmissionTexture: "transmissão",
+  thicknessTexture: "espessura",
+  iridescenceTexture: "iridescência",
+  anisotropyTexture: "anisotropia",
+};
+
+/** Uma referência de textura encontrada, e onde ela mora (para poder sumir). */
+interface SlotTextura {
+  nome: string;
+  ref: RefTextura;
+  dono: Record<string, unknown>;
+  chave: string;
+}
+
+/**
+ * Toda referência de textura do material, INCLUSIVE dentro de `extensions`.
+ *
+ * A primeira versão listava os cinco slots do núcleo à mão, e foi por isso que
+ * um arquivo continuou quebrando depois de saneado: `KHR_materials_specular`
+ * traz a própria `specularTexture`, com o próprio `texCoord`, e ela ficou de
+ * fora da lista. Uma referência esquecida basta — o shader não compila e a
+ * cena inteira para.
+ *
+ * A regra da varredura vem da própria especificação: no glTF toda referência
+ * de textura é um objeto `{ index, texCoord? }` guardado sob uma chave
+ * terminada em "Texture". Vale para o núcleo e para toda extensão, inclusive
+ * as que ainda não existem — que é o ponto de não ter uma lista.
+ */
+function slotsDeTextura(m: MaterialGltf): SlotTextura[] {
+  const achados: SlotTextura[] = [];
+  const visitar = (obj: Record<string, unknown>) => {
+    for (const [chave, valor] of Object.entries(obj)) {
+      if (!valor || typeof valor !== "object") continue;
+      const filho = valor as Record<string, unknown>;
+      if (/texture$/i.test(chave) && typeof filho.index === "number") {
+        achados.push({
+          nome: ROTULO_SLOT[chave] ?? chave,
+          ref: filho as RefTextura,
+          dono: obj,
+          chave,
+        });
+        // Não desce: o que houver dentro (KHR_texture_transform) já é lido por
+        // `canalPedido` e escrito por `definirCanal`.
+        continue;
+      }
+      visitar(filho);
+    }
+  };
+  visitar(m as Record<string, unknown>);
+  return achados;
 }
 
 /** Índices de canal de UV presentes numa primitiva, em ordem. */
@@ -95,16 +147,6 @@ function definirCanal(t: RefTextura, canal: number) {
   t.texCoord = canal;
   const tr = t.extensions?.KHR_texture_transform;
   if (tr && tr.texCoord !== undefined) tr.texCoord = canal;
-}
-
-/** Remove a referência de textura do material, seja qual for o slot. */
-function removerSlot(m: MaterialGltf, slot: string) {
-  const p = m.pbrMetallicRoughness;
-  if (slot === "cor base" && p) delete p.baseColorTexture;
-  else if (slot === "metalicidade/rugosidade" && p) delete p.metallicRoughnessTexture;
-  else if (slot === "normal") delete m.normalTexture;
-  else if (slot === "oclusão") delete m.occlusionTexture;
-  else if (slot === "emissivo") delete m.emissiveTexture;
 }
 
 /**
@@ -137,10 +179,10 @@ function corrigirDoc(doc: DocGltf): string[] {
       if (!original) continue;
 
       const canais = canaisDaPrimitiva(pr);
-      const faltando = slotsDeTextura(original).filter(
-        ([, t]) => !canais.includes(canalPedido(t)),
+      const faltando = slotsDeTextura(original).some(
+        (slot) => !canais.includes(canalPedido(slot.ref)),
       );
-      if (!faltando.length) continue;
+      if (!faltando) continue;
 
       // Clona só quando o material é compartilhado; caso contrário mexe nele
       // mesmo, sem inchar o arquivo com cópias desnecessárias.
@@ -152,17 +194,17 @@ function corrigirDoc(doc: DocGltf): string[] {
         pr.material = materiais.length - 1;
       }
 
-      for (const [slot, ref] of slotsDeTextura(alvo)) {
-        const pedido = canalPedido(ref);
+      for (const slot of slotsDeTextura(alvo)) {
+        const pedido = canalPedido(slot.ref);
         if (canais.includes(pedido)) continue;
         if (canais.length) {
           // Um canal existe: é o que as texturas deviam usar. Com vários, o
           // mais baixo é o de material (os altos são lightmap/detalhe).
-          definirCanal(ref, canais[0]);
-          anotar(`textura de ${slot}: canal de UV ${pedido} → ${canais[0]}`);
+          definirCanal(slot.ref, canais[0]);
+          anotar(`textura de ${slot.nome}: canal de UV ${pedido} → ${canais[0]}`);
         } else {
-          removerSlot(alvo, slot);
-          anotar(`textura de ${slot} removida (a malha não tem nenhum canal de UV)`);
+          delete slot.dono[slot.chave];
+          anotar(`textura de ${slot.nome} removida (a malha não tem canal de UV)`);
         }
       }
     }
