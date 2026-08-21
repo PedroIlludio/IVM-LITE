@@ -53,6 +53,12 @@ export default function IvmViewPage() {
   const [semChave, setSemChave] = useState(false);
   const [project, setProject] = useState<IvmProject | null>(null);
   const [notFound, setNotFound] = useState(false);
+  /**
+   * Falha que deixa a cena SEM O PRODUTO — fotogrametria ou GLB.
+   *
+   * Nasceu para os 3D Tiles (daí o nome) e hoje cobre as duas: as duas levam à
+   * mesma tela e à mesma saída, o "Tentar de novo".
+   */
   const [tilesError, setTilesError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   /** O GLB terminou de carregar (ou o projeto não tem modelo a esperar). */
@@ -511,6 +517,12 @@ export default function IvmViewPage() {
           }}
           onReady={() => setReady(true)}
           onModelLoading={(carregando) => { if (!carregando) setModeloPronto(true); }}
+          /* Vitrine sem o prédio não é vitrine: é o mapa do bairro. Falhar aqui
+             vale a tela de erro — que traz o "Tentar de novo" — em vez de abrir
+             a cena e deixar o visitante procurar um empreendimento que não
+             chegou. */
+          onModelError={(msg) =>
+            setTilesError(`O modelo 3D do empreendimento não carregou. ${msg}`)}
           onError={setTilesError}
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}

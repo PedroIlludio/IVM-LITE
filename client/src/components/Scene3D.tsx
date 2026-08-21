@@ -184,6 +184,16 @@ interface Scene3DProps {
    */
   onModelLoading?: (carregando: boolean) => void;
   onError?: (msg: string) => void;
+  /**
+   * O GLB do empreendimento NÃO entrou na cena.
+   *
+   * Separado de `onModelLoading`, que só diz que a espera acabou. Os dois
+   * estavam colados: o `errorEvent` do modelo caía no mesmo `concluir()` do
+   * sucesso, então falhar era indistinguível de terminar. A vitrine tirava a
+   * capa e abria a fotogrametria sem prédio nenhum — um mapa do bairro
+   * anunciado como empreendimento.
+   */
+  onModelError?: (msg: string) => void;
   /** Clique no terreno em modo edição, com um empreendimento selecionado. */
   onEditPlace?: (id: string, lat: number, lng: number) => void;
   /** Arraste dos gizmos (modo edição): atualiza posição/rotação/escala ao vivo. */
@@ -531,7 +541,7 @@ function aguardarFotogrametria(
 const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   {
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
-    onModelLoading, onError,
+    onModelLoading, onError, onModelError,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
     cidade = true, mapaBase = null, sombras = "sempre",
     orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
@@ -765,6 +775,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   onMapaErroRef.current = onMapaErro;
   const onErrorRef = useRef(onError);
   onErrorRef.current = onError;
+  const onModelErrorRef = useRef(onModelError);
+  onModelErrorRef.current = onModelError;
   /**
    * Frame ao vivo do gizmo, lido pelas CallbackProperty.
    *
@@ -3140,25 +3152,61 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           flyToBuilding(atual);
         }
       };
+      /**
+       * Confirma que o prédio foi DESENHADO antes de dizer que acabou.
+       *
+       * `readyEvent` significa "o Cesium pode desenhar isto", não "isto está na
+       * tela": entre os dois ainda há um quadro. Quem recebe o aviso tira a
+       * capa de carregamento, e tirá-la um quadro cedo demais entrega a
+       * fotogrametria com um buraco no lugar do empreendimento.
+       *
+       * `postRender` é a confirmação de que o quadro existiu; o `requestRender`
+       * garante que ele aconteça, já que a cena só desenha sob demanda.
+       */
+      const confirmarNaTela = () => {
+        const vv = viewerRef.current;
+        if (!vv || vv.isDestroyed()) return concluir();
+        const parar = vv.scene.postRender.addEventListener(() => {
+          parar();
+          concluir();
+        });
+        requestRender();
+      };
+
+      /**
+       * O modelo não entrou na cena.
+       *
+       * Antes isto chamava `concluir()` — o mesmo caminho do sucesso — com o
+       * argumento de que um GLB corrompido não podia prender a tela de
+       * carregamento para sempre. O argumento continua valendo: a espera
+       * termina. O que mudou é que ela termina DIZENDO que terminou mal, em vez
+       * de abrir uma vitrine sem o produto e deixar o visitante concluir
+       * sozinho que o empreendimento não existe.
+       */
+      const falhar = (msg: string) => {
+        console.error(`[Scene3D] modelo de ${b.id} não entrou na cena:`, msg);
+        if (node.loadingUrl === url) node.loadingUrl = undefined;
+        marcarCarregamento(b.id, false);
+        onModelErrorRef.current?.(msg);
+      };
+
       if (gltf.ready) {
-        concluir();
+        confirmarNaTela();
       } else {
         const pronto = gltf.readyEvent.addEventListener(() => {
           pronto();
-          concluir();
-          requestRender();
+          confirmarNaTela();
         });
-        // Sem isto, um GLB corrompido deixaria a tela de carregamento presa
-        // para sempre — o erro é do modelo, não motivo para reter a cena.
-        const falhou = gltf.errorEvent.addEventListener(() => {
+        const falhou = gltf.errorEvent.addEventListener((err: unknown) => {
           falhou();
-          concluir();
+          falhar(err instanceof Error ? err.message : String(err));
         });
       }
     } catch (e) {
       console.error(`[Scene3D] falha ao carregar modelo de ${b.id}:`, e);
       node.loadingUrl = undefined;
       marcarCarregamento(b.id, false);
+      onModelErrorRef.current?.(e instanceof Error ? e.message : String(e));
     }
   }
 

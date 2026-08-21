@@ -2189,6 +2189,9 @@ export default function IvmEditorPage() {
           editMode
           onReady={() => { setReady(true); setCenaErro(null); }}
           onModelLoading={setModeloCarregando}
+          /* No editor o erro é BANNER, não tela: quem está calibrando precisa
+             do painel vivo para trocar a URL do GLB e salvar o que já fez. */
+          onModelError={(msg) => setCenaErro(`O modelo 3D não entrou na cena: ${msg}`)}
           onError={setCenaErro}
           onEditPlace={onEditPlace}
           /* Rede de segurança: sem pivô não há arraste, mas se algum caminho
