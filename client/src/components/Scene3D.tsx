@@ -194,6 +194,13 @@ interface Scene3DProps {
    * anunciado como empreendimento.
    */
   onModelError?: (msg: string) => void;
+  /**
+   * A cota do terreno sob o empreendimento acabou de ser medida.
+   *
+   * O editor grava no projeto (ver `ProjectConfig.alturaSolo`); é o que
+   * permite à vitrine abrir sem a fotogrametria depois.
+   */
+  onAlturaSolo?: (buildingId: string, altura: number) => void;
   /** Clique no terreno em modo edição, com um empreendimento selecionado. */
   onEditPlace?: (id: string, lat: number, lng: number) => void;
   /** Arraste dos gizmos (modo edição): atualiza posição/rotação/escala ao vivo. */
@@ -293,7 +300,12 @@ interface Scene3DProps {
    *
    * Com o pivô certo, o modo volta a valer nas três vistas.
    */
-  orbitaAlvo?: { unidadeId?: string | null; pavimentoZ?: number | null } | null;
+  orbitaAlvo?: {
+    unidadeId?: string | null;
+    pavimentoZ?: number | null;
+    /** Centro da torre do pavimento aberto, em X/Y do MODELO. */
+    torreXY?: { x: number; y: number } | null;
+  } | null;
   noturno?: boolean;
   /** Quanto realçar o modelo à noite (0..1). */
   realceNoturno?: number;
@@ -518,12 +530,12 @@ export const TILES_TETO_MS = 20000;
 /** Intervalo da checagem. */
 const TILES_PASSO_MS = 250;
 /**
- * Checagens seguidas com o carregamento zerado antes de acreditar nele.
+ * Checagens seguidas confirmando o entorno antes de acreditar nele.
  *
- * `tilesLoaded` mede "nada pendente AGORA", e o streaming trabalha em levas:
- * entre uma leva e a seguinte existe um instante em que nada está pendente e
- * ainda falta metade da cidade. Três amostras (750 ms) atravessam essas
- * folgas; um carregamento de verdade terminado permanece terminado.
+ * O streaming trabalha em levas: entre uma e a seguinte existe um instante em
+ * que nada está pendente e ainda falta metade da cidade. Três amostras
+ * (750 ms) atravessam essas folgas; um carregamento de verdade terminado
+ * permanece terminado.
  */
 const TILES_ESTAVEL = 3;
 
@@ -533,34 +545,31 @@ interface EstatisticasTileset {
 }
 
 /**
- * Segura o `onReady` até a fotogrametria da vista inicial estar na tela.
+ * Segura o `onReady` até o ENTORNO da vista inicial estar na tela.
  *
- * `createGooglePhotorealistic3DTileset` resolve quando o `root.json` chega —
- * o índice, não as texturas. Os tiles em si continuam streamando por vários
- * segundos depois. Entregar a cena nesse instante fazia o visitante entrar num
- * chão borrado que ia se resolvendo à sua frente, tile por tile: a vitrine
- * nunca era vista pronta, era vista carregando.
+ * O que é "entorno" depende do modo, e por isso a condição chega de fora: com
+ * a cidade 3D é a fotogrametria do Google; sem ela, o mini mapa. Os dois
+ * carregam de formas completamente diferentes — streaming de milhares de tiles
+ * contra um GLB único —, e a espera não tem por que saber disso.
  *
- * Por que checagem por tempo e não pelo evento `allTilesLoaded`: com
- * `requestRenderMode` a cena para de desenhar quando nada muda, e eventos do
- * tileset dependem do ciclo de render. O evento também dispara a cada vez que
- * o carregamento zera — inclusive no meio do voo, para um enquadramento
- * intermediário que não é o que o visitante vai ver. Um `setInterval` não tem
- * nenhuma dessas armadilhas.
+ * Por que checagem por tempo e não por evento: com `requestRenderMode` a cena
+ * para de desenhar quando nada muda, e os eventos do tileset dependem do ciclo
+ * de render. O `allTilesLoaded` ainda dispara a cada vez que o carregamento
+ * zera — inclusive no meio do voo, para um enquadramento intermediário que
+ * ninguém vai ver. Um `setInterval` não tem nenhuma dessas armadilhas.
  *
- * São TRÊS condições, e nenhuma sozinha basta:
+ * Três exigências, e nenhuma sozinha basta:
  *
- * 1. o voo de abertura terminou (`TILES_ESPERA_MINIMA_MS`) — antes disso os
- *    tiles pedidos são de um enquadramento que ninguém vai ver;
- * 2. há tile com conteúdo carregado (`temChao`) — a prova de que existe chão
- *    desenhado, que a bandeira `tilesLoaded` sozinha não dá;
- * 3. as duas se mantêm por `TILES_ESTAVEL` amostras — atravessa a folga entre
- *    levas de download.
+ * 1. o voo de abertura terminou (`TILES_ESPERA_MINIMA_MS`) — antes disso o que
+ *    está carregando é o enquadramento errado;
+ * 2. `entornoNaTela()` — há chão desenhado, não só ausência de pendências;
+ * 3. isso se mantém por `TILES_ESTAVEL` amostras — atravessa a folga entre
+ *    levas de download, onde a bandeira pisca "pronto" pela metade.
  *
  * E um teto, para a espera sempre acabar.
  */
-function aguardarFotogrametria(
-  tileset: Cesium3DTileset,
+function aguardarEntorno(
+  entornoNaTela: () => boolean,
   cancelado: () => boolean,
   pronto: () => void,
 ) {
@@ -579,22 +588,7 @@ function aguardarFotogrametria(
     }
     if (decorrido < TILES_ESPERA_MINIMA_MS) return;
 
-    /**
-     * `tilesLoaded` NÃO significa "a fotogrametria está na tela".
-     *
-     * No Cesium ele é só `pendentes === 0 && processando === 0 && tentados === 0`
-     * — um "nada em voo neste instante". É verdade também ANTES do primeiro
-     * pedido sair, e nas folgas entre levas de download. Era por isso que a
-     * capa saía cedo e o prédio aparecia flutuando: nenhum tile tinha chegado,
-     * e a bandeira dizia que tinha acabado.
-     *
-     * `numberOfTilesWithContentReady` conta tiles com CONTEÚDO carregado. Zero
-     * é a prova de que não há chão nenhum desenhado, diga o que disser a outra
-     * bandeira.
-     */
-    const st = (tileset as unknown as { statistics?: EstatisticasTileset }).statistics;
-    const temChao = (st?.numberOfTilesWithContentReady ?? 0) > 0;
-    estavel = tileset.tilesLoaded && temChao ? estavel + 1 : 0;
+    estavel = entornoNaTela() ? estavel + 1 : 0;
     if (estavel < TILES_ESTAVEL) return;
 
     clearInterval(timer);
@@ -605,7 +599,7 @@ function aguardarFotogrametria(
 const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   {
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
-    onModelLoading, onError, onModelError,
+    onModelLoading, onError, onModelError, onAlturaSolo,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
     cidade = true, mapaBase = null, sombras = "sempre",
     orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
@@ -843,6 +837,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   onErrorRef.current = onError;
   const onModelErrorRef = useRef(onModelError);
   onModelErrorRef.current = onModelError;
+  const onAlturaSoloRef = useRef(onAlturaSolo);
+  onAlturaSoloRef.current = onAlturaSolo;
   /**
    * Frame ao vivo do gizmo, lido pelas CallbackProperty.
    *
@@ -2012,7 +2008,33 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         } else {
           flyHome();
         }
-        aguardarFotogrametria(tileset, () => destroyed, () => onReady?.());
+        /**
+         * O que precisa estar na tela antes de abrir, conforme o modo.
+         *
+         * Sem a cidade 3D não há tile nenhum a esperar — o tileset está com
+         * `show = false` e nem pede. Esperar por ele ali prenderia a capa até o
+         * teto de 20s justamente no caminho que existe para ser RÁPIDO.
+         */
+        const entornoNaTela = () => {
+          if (!cidadeRef.current) {
+            // Quem faz o chão é o mini mapa; sem ele, não há o que aguardar.
+            const cfg = mapaBaseRef.current;
+            return !cfg?.url || !!mapaModelRef.current?.ready;
+          }
+          /**
+           * `tilesLoaded` NÃO significa "a fotogrametria está na tela".
+           *
+           * No Cesium ele é só `pendentes === 0 && processando === 0 &&
+           * tentados === 0` — um "nada em voo neste instante", verdade também
+           * ANTES do primeiro pedido sair. Era por isso que a capa saía cedo e
+           * o prédio aparecia flutuando: nenhum tile tinha chegado e a bandeira
+           * dizia que tinha acabado. `numberOfTilesWithContentReady` conta
+           * tiles com CONTEÚDO; zero é prova de que não há chão desenhado.
+           */
+          const st = (tileset as unknown as { statistics?: EstatisticasTileset }).statistics;
+          return tileset.tilesLoaded && (st?.numberOfTilesWithContentReady ?? 0) > 0;
+        };
+        aguardarEntorno(entornoNaTela, () => destroyed, () => onReady?.());
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Falha ao carregar os 3D Tiles";
@@ -2088,6 +2110,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!carto || !Number.isFinite(carto.height)) return;
       const anterior = node.groundHeight;
       node.groundHeight = carto.height;
+      // A medição custa uma sonda contra a fotogrametria inteira; quem puder
+      // guardar, guarde. É o que dispensa a próxima.
+      onAlturaSoloRef.current?.(id, carto.height);
       const cur = buildingsRef.current.find((x) => x.id === id);
       if (!cur) return;
       upsertMarker(cur, node);
@@ -4272,7 +4297,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       seen.add(b.id);
       let node = nodesRef.current.get(b.id);
       if (!node) {
-        node = { groundHeight: FALLBACK_GROUND_HEIGHT };
+        /**
+         * Começa na cota SALVA quando existe.
+         *
+         * O fallback de 3 m é um chute de nível do mar, e ele só era aceitável
+         * porque a medição contra a fotogrametria vinha logo em seguida. Sem a
+         * cidade 3D essa medição nunca vem — e o prédio ficava a 3 m de
+         * altitude, centenas de metros abaixo do terreno.
+         */
+        node = { groundHeight: b.alturaSolo ?? FALLBACK_GROUND_HEIGHT };
         nodesRef.current.set(b.id, node);
       }
 
@@ -4530,25 +4563,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    */
   function alvoDaOrbita(b: Building3D, esfera: BoundingSphere): Cartesian3 {
     const alvo = orbitaAlvoRef.current;
-
-    // 1. Unidade escolhida: gira em torno do apartamento, que é o assunto.
-    if (alvo?.unidadeId) {
-      const p = centroDaUnidade(alvo.unidadeId);
-      if (p) return p;
-    }
-
-    // 2. Pavimento aberto: o centro do prédio, na COTA daquele andar. Manter a
-    //    cota do centro do volume punha o pivô dezenas de metros acima ou
-    //    abaixo do piso que se está visitando.
-    const z = alvo?.pavimentoZ;
     const node = nodesRef.current.get(b.id);
+
+    /**
+     * 1. Pavimento aberto: o centro da TORRE, na cota daquele andar.
+     *
+     * Vem antes da unidade de propósito. Abrir um andar quase sempre acontece
+     * com uma unidade já escolhida, e girar em torno do apartamento — um ponto
+     * na quina do volume — fazia a torre inteira descrever um arco: a vista do
+     * pavimento saía torta ao primeiro arraste. O andar é um plano, e o eixo
+     * de um plano é o meio dele.
+     *
+     * A cota importa tanto quanto o centro: no meio do volume o pivô ficaria
+     * dezenas de metros acima ou abaixo do piso que se está visitando.
+     */
+    const z = alvo?.pavimentoZ;
     if (z != null && node) {
+      const t = alvo?.torreXY;
+      // Com a torre conhecida o ponto é exato; sem ela, o centro do volume
+      // inteiro na cota do andar — o melhor palpite para prédio de bloco único.
+      if (t) return poseNoModelo(b, node.groundHeight, t.x, t.y, z, 0).position;
       const noAndar = poseNoModelo(b, node.groundHeight, 0, 0, z, 0).position;
       const cAndar = Cartographic.fromCartesian(noAndar);
       const cCentro = Cartographic.fromCartesian(esfera.center);
       if (cAndar && cCentro) {
         return Cartesian3.fromRadians(cCentro.longitude, cCentro.latitude, cAndar.height);
       }
+    }
+
+    // 2. Unidade escolhida SEM pavimento aberto: aí o apartamento é o assunto,
+    //    e girar em torno dele é examinar de perto o que se está vendendo.
+    if (alvo?.unidadeId) {
+      const p = centroDaUnidade(alvo.unidadeId);
+      if (p) return p;
     }
 
     // 3. Cena externa: o empreendimento inteiro, como sempre foi.
@@ -5746,7 +5793,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // Trocar de unidade ou de andar reancora o pivô. Na maioria dos casos o
     // voo já faz isso (soltar → reatar), mas focar algo sem voar não faria.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orbitar, orbitaAlvo?.unidadeId, orbitaAlvo?.pavimentoZ, pronto]);
+  }, [orbitar, orbitaAlvo?.unidadeId, orbitaAlvo?.pavimentoZ, orbitaAlvo?.torreXY, pronto]);
 
   /**
    * Fotogrametria ligada/desligada.

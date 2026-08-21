@@ -278,6 +278,22 @@ export interface ProjectConfig {
    * o pivô só oferece risco.
    */
   mapaTravado?: boolean;
+  /**
+   * Cota do terreno sob o empreendimento, em metros. Medida uma vez.
+   *
+   * Existe para a vitrine poder ABRIR sem a fotogrametria. A altura do prédio
+   * é sempre relativa ao solo, e o solo é medido lançando uma sonda de 3.000 m
+   * contra os tiles do Google (`sampleGroundFor`). Sem eles não há superfície
+   * que o raio encontre: a medida volta vazia, a cota cai no fallback de 3 m e
+   * o prédio nasce despencado — em Anápolis, a ~1.100 m do chão real.
+   *
+   * Era por isso que a cidade 3D nunca podia começar desligada. Guardada aqui,
+   * a medição vira dado do projeto: feita uma vez no editor, vale para sempre,
+   * e o aparelho fraco pode abrir direto no mini mapa.
+   *
+   * Gravada sozinha quando o editor mede — não há campo para preencher à mão.
+   */
+  alturaSolo?: number;
   heading: number;
   pitch: number;
   roll: number;
@@ -936,6 +952,7 @@ export function projectToBuilding3D(data: ProjectData): Building3D {
     lat: c.lat ?? emp.lat,
     lng: c.lng ?? emp.lng,
     camera: c.camera,
+    alturaSolo: c.alturaSolo,
   };
 }
 

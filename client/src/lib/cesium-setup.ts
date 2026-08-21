@@ -84,6 +84,29 @@ export function patchDegradedWebGL() {
  * fraco. O celular do corretor no plantão é o caso real, não a exceção.
  */
 /**
+ * O aparelho é fraco?
+ *
+ * Extraído de `ajustesDoAparelho` para a PÁGINA poder fazer a mesma pergunta —
+ * ela decide se a vitrine abre pela fotogrametria ou pelo mini mapa. Duas
+ * definições de "aparelho fraco" acabariam divergindo, e um tablet tratado
+ * como fraco pelo render e como forte pela abertura teria o pior dos dois.
+ */
+export function ehAparelhoLeve(): boolean {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
+  const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
+  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 900;
+  const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+
+  /**
+   * Tablet e celular: ponteiro grosso + tela não-grande. É a assinatura do
+   * aparelho de plantão de vendas, e casa melhor com a realidade do que medir
+   * memória — que muito navegador nem informa.
+   */
+  return (toque && telaEstreita) || poucaMemoria || poucosNucleos;
+}
+
+/**
  * Ajustes de render.
  *
  * Houve dois perfis com um seletor para o visitante, e eles saíram porque o
@@ -101,18 +124,7 @@ export function patchDegradedWebGL() {
  * ela só mexe em coisas que ninguém consegue nomear olhando a tela.
  */
 function ajustesDoAparelho() {
-  const nav = navigator as Navigator & { deviceMemory?: number };
-  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
-  const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
-  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 900;
-  const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
-
-  /**
-   * Tablet e celular: ponteiro grosso + tela não-grande. É a assinatura do
-   * aparelho de plantão de vendas, e casa melhor com a realidade do que medir
-   * memória — que muito navegador nem informa.
-   */
-  const aparelhoLeve = (toque && telaEstreita) || poucaMemoria || poucosNucleos;
+  const aparelhoLeve = ehAparelhoLeve();
 
   return {
     /**

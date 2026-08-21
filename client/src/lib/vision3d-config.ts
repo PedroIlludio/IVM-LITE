@@ -76,6 +76,11 @@ export interface Building3D extends Building3DConfig {
   lng: number;
   /** Câmera inicial salva no editor (se houver). */
   camera?: CameraView;
+  /**
+   * Cota do terreno sob o empreendimento, em metros, medida uma vez contra a
+   * fotogrametria. Ver `ProjectConfig.alturaSolo`.
+   */
+  alturaSolo?: number;
 }
 
 /**

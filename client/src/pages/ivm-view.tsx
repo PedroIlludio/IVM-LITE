@@ -19,7 +19,7 @@ import {
   type IvmProject,
 } from "@/lib/ivm-store";
 import type { Unidade } from "@/lib/unidades";
-import { buildUnitBoxes } from "@/lib/unidades3d";
+import { buildUnitBoxes, volumeDaTorre } from "@/lib/unidades3d";
 import { tocarTour, vistaPrincipal, type TourHandle } from "@/lib/tour";
 import { plantasDoProjeto } from "@/lib/tipologias";
 import { niveisDe, alturaDaPlanta, type NivelDef } from "@/lib/pavimentos";
@@ -27,6 +27,7 @@ import MapaEntorno from "@/components/MapaEntorno";
 import { CartaoPoi } from "@/components/CartaoPoi";
 import type { EditablePoi } from "@/lib/ivm-store";
 import { getSunReadout, getSunTimesLocal, localToUtc, seasonDate, type Season } from "@/lib/solar";
+import { ehAparelhoLeve } from "@/lib/cesium-setup";
 
 /**
  * Página pública de um IVM Lite (projeto do Supabase): mesma experiência rica
@@ -91,14 +92,47 @@ export default function IvmViewPage() {
    * intactos. Se o projeto tiver mini mapa (`mapaBase`), ele entra no lugar da
    * fotogrametria e o prédio ganha terreno de volta, sem o custo do streaming.
    *
-   * NÃO é lembrada entre visitas, de propósito. A altura do terreno sob o
-   * empreendimento é medida CONTRA a fotogrametria: recarregar com ela já
-   * desligada deixava o prédio sem referência de solo e ele nascia despencado,
-   * como se viesse do infinito. Começar sempre com a cidade garante a medição;
-   * desligar depois é seguro, porque a altura já foi resolvida.
+   * Começa ligada, EXCETO no caminho abaixo (aparelho fraco com mini mapa).
+   *
+   * A restrição antiga era mais dura: começar desligada era proibido, porque a
+   * altura do terreno é medida contra a fotogrametria e sem ela o prédio
+   * nascia despencado. Isso deixou de valer quando a medição passou a ser
+   * guardada no projeto (`ProjectConfig.alturaSolo`) — com a cota conhecida,
+   * abrir sem a cidade é seguro. Onde a cota NÃO existe, a regra antiga
+   * continua em vigor, e é por isso que ela é uma das condições.
    */
   const [cidade3D, setCidade3D] = useState(true);
   const alternarCidade3D = () => setCidade3D((v) => !v);
+
+  /**
+   * Aparelho fraco abre pelo MINI MAPA, não pela fotogrametria.
+   *
+   * O streaming do Google é, de longe, o item mais caro da cena: milhares de
+   * tiles pela rede antes de a vitrine poder abrir. O mini mapa é um GLB só,
+   * já em cache depois da primeira visita. Num tablet de plantão a diferença
+   * não é de conforto, é de conseguir ou não mostrar o empreendimento antes de
+   * o cliente perder o interesse.
+   *
+   * As TRÊS condições são obrigatórias, e cada uma protege de um estrago:
+   *
+   * - `mapaUrl` — sem mini mapa não há "modo mapa 3D" para abrir; seria abrir
+   *   no vazio cinza, que não é uma experiência melhor, é uma pior;
+   * - `alturaSolo` — sem a cota salva o prédio nasce no fallback de 3 m, ou
+   *   seja, enterrado (ver o campo em `ProjectConfig`);
+   * - aparelho leve — no computador do escritório a fotogrametria carrega
+   *   rápido e é o que há de mais convincente na vitrine. Não se troca isso
+   *   por velocidade que ninguém pediu.
+   *
+   * Decisão de ABERTURA apenas: o botão de camadas continua mandando, e o
+   * visitante liga a cidade quando quiser.
+   */
+  const aberturaDecididaRef = useRef(false);
+  useEffect(() => {
+    if (!project || aberturaDecididaRef.current) return;
+    aberturaDecididaRef.current = true;
+    const c = project.data.config;
+    if (c.mapaUrl && c.alturaSolo != null && ehAparelhoLeve()) setCidade3D(false);
+  }, [project]);
 
   /**
    * Celular em pé, com o painel aberto.
@@ -249,6 +283,24 @@ export default function IvmViewPage() {
   const torres = useMemo(() => (project ? projectTorres(project.data) : []), [project]);
 
   const pavCfg = useMemo(() => (project ? projectPavCfg(project.data) : undefined), [project]);
+
+  /**
+   * Centro da torre do pavimento aberto, em X/Y do modelo — o eixo da órbita
+   * na vista de andar (ver `orbitaAlvo` no `Scene3D`).
+   *
+   * Num projeto de várias torres o centro do EMPREENDIMENTO fica entre elas,
+   * e girar por ali afastaria a torre visitada em vez de examiná-la. Sem
+   * `torreId` no nível — projeto de bloco único — devolve nulo e a cena usa o
+   * centro do volume, que ali é a mesma coisa.
+   */
+  const centroDaTorreAberta = useMemo(() => {
+    const id = nivelAberto?.torreId;
+    if (!id) return null;
+    const i = torres.findIndex((t) => t.id === id);
+    if (i < 0) return null;
+    const vol = volumeDaTorre(torres[i], i, torres.length);
+    return { x: vol.x, y: vol.y };
+  }, [nivelAberto?.torreId, torres]);
 
   // --- Ambiente ---------------------------------------------------------------
   const ambiente = useMemo(() => (project ? projectAmbiente(project.data) : null), [project]);
@@ -540,7 +592,11 @@ export default function IvmViewPage() {
             vale. `pavMode` segue fora: ali o palco é o painel, não a cena.
           */
           orbitar={!pavMode}
-          orbitaAlvo={{ unidadeId: unidadeSelId, pavimentoZ: nivelAberto?.cutZ ?? null }}
+          orbitaAlvo={{
+            unidadeId: unidadeSelId,
+            pavimentoZ: nivelAberto?.cutZ ?? null,
+            torreXY: centroDaTorreAberta,
+          }}
           noturno={noturno}
           realceNoturno={ambiente?.realceNoturno}
           /* Na vitrine o recorte vale SEMPRE: não há edição a proteger. */
