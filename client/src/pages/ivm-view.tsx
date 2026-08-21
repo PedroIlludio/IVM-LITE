@@ -531,14 +531,16 @@ export default function IvmViewPage() {
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
           /*
-            Órbita SÓ na cena externa.
+            Órbita em toda vista que tem a CENA no palco.
 
-            Com pavimento aberto, unidade escolhida ou corte ativo, a câmera
-            está olhando de dentro — e girar em torno do centro do prédio ali é
-            o oposto do que a vista pede. Foi por valer em todos os casos que a
-            vista do andar e a vista principal quebraram.
+            Antes ela era desligada com unidade ou pavimento aberto, porque o
+            pivô era sempre o centro do prédio e de perto isso jogava o alvo
+            para fora da tela. Agora o pivô acompanha o foco (`orbitaAlvo`), e
+            examinar de perto é justamente onde a navegação de maquete mais
+            vale. `pavMode` segue fora: ali o palco é o painel, não a cena.
           */
-          orbitar={!pavMode && !nivelAberto && !unidadeSelId}
+          orbitar={!pavMode}
+          orbitaAlvo={{ unidadeId: unidadeSelId, pavimentoZ: nivelAberto?.cutZ ?? null }}
           noturno={noturno}
           realceNoturno={ambiente?.realceNoturno}
           /* Na vitrine o recorte vale SEMPRE: não há edição a proteger. */

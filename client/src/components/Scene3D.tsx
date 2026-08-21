@@ -280,6 +280,20 @@ interface Scene3DProps {
    * modelo, traçar via e desenhar área.
    */
   orbitar?: boolean;
+  /**
+   * O que a órbita gira em torno, quando a vista está focada em algo DENTRO
+   * do prédio.
+   *
+   * A órbita nasceu com um pivô só, o centro do empreendimento, e foi por isso
+   * que ela precisou ser desligada na unidade e no pavimento: lá a câmera está
+   * olhando de perto, e girar em torno do centro do prédio mandava o alvo para
+   * fora da tela ao primeiro arraste. Desligar resolvia o sintoma e cobrava o
+   * preço de a navegação virar a do globo justamente onde examinar de perto é
+   * a tarefa.
+   *
+   * Com o pivô certo, o modo volta a valer nas três vistas.
+   */
+  orbitaAlvo?: { unidadeId?: string | null; pavimentoZ?: number | null } | null;
   noturno?: boolean;
   /** Quanto realçar o modelo à noite (0..1). */
   realceNoturno?: number;
@@ -503,6 +517,20 @@ const TILES_ESPERA_MINIMA_MS = 2500;
 export const TILES_TETO_MS = 20000;
 /** Intervalo da checagem. */
 const TILES_PASSO_MS = 250;
+/**
+ * Checagens seguidas com o carregamento zerado antes de acreditar nele.
+ *
+ * `tilesLoaded` mede "nada pendente AGORA", e o streaming trabalha em levas:
+ * entre uma leva e a seguinte existe um instante em que nada está pendente e
+ * ainda falta metade da cidade. Três amostras (750 ms) atravessam essas
+ * folgas; um carregamento de verdade terminado permanece terminado.
+ */
+const TILES_ESTAVEL = 3;
+
+/** Parte de `Cesium3DTilesetStatistics` que interessa; fora dos tipos públicos. */
+interface EstatisticasTileset {
+  numberOfTilesWithContentReady?: number;
+}
 
 /**
  * Segura o `onReady` até a fotogrametria da vista inicial estar na tela.
@@ -519,6 +547,17 @@ const TILES_PASSO_MS = 250;
  * o carregamento zera — inclusive no meio do voo, para um enquadramento
  * intermediário que não é o que o visitante vai ver. Um `setInterval` não tem
  * nenhuma dessas armadilhas.
+ *
+ * São TRÊS condições, e nenhuma sozinha basta:
+ *
+ * 1. o voo de abertura terminou (`TILES_ESPERA_MINIMA_MS`) — antes disso os
+ *    tiles pedidos são de um enquadramento que ninguém vai ver;
+ * 2. há tile com conteúdo carregado (`temChao`) — a prova de que existe chão
+ *    desenhado, que a bandeira `tilesLoaded` sozinha não dá;
+ * 3. as duas se mantêm por `TILES_ESTAVEL` amostras — atravessa a folga entre
+ *    levas de download.
+ *
+ * E um teto, para a espera sempre acabar.
  */
 function aguardarFotogrametria(
   tileset: Cesium3DTileset,
@@ -526,13 +565,38 @@ function aguardarFotogrametria(
   pronto: () => void,
 ) {
   const inicio = Date.now();
+  let estavel = 0;
   const timer = setInterval(() => {
     const decorrido = Date.now() - inicio;
     // Desmontou no meio da espera (troca de rota, "Tentar de novo"): não
     // entregar uma cena que já não existe.
     if (cancelado()) return clearInterval(timer);
+    // O teto vem antes de tudo: é a promessa de que esta espera acaba.
+    if (decorrido >= TILES_TETO_MS) {
+      clearInterval(timer);
+      pronto();
+      return;
+    }
     if (decorrido < TILES_ESPERA_MINIMA_MS) return;
-    if (!tileset.tilesLoaded && decorrido < TILES_TETO_MS) return;
+
+    /**
+     * `tilesLoaded` NÃO significa "a fotogrametria está na tela".
+     *
+     * No Cesium ele é só `pendentes === 0 && processando === 0 && tentados === 0`
+     * — um "nada em voo neste instante". É verdade também ANTES do primeiro
+     * pedido sair, e nas folgas entre levas de download. Era por isso que a
+     * capa saía cedo e o prédio aparecia flutuando: nenhum tile tinha chegado,
+     * e a bandeira dizia que tinha acabado.
+     *
+     * `numberOfTilesWithContentReady` conta tiles com CONTEÚDO carregado. Zero
+     * é a prova de que não há chão nenhum desenhado, diga o que disser a outra
+     * bandeira.
+     */
+    const st = (tileset as unknown as { statistics?: EstatisticasTileset }).statistics;
+    const temChao = (st?.numberOfTilesWithContentReady ?? 0) > 0;
+    estavel = tileset.tilesLoaded && temChao ? estavel + 1 : 0;
+    if (estavel < TILES_ESTAVEL) return;
+
     clearInterval(timer);
     pronto();
   }, TILES_PASSO_MS);
@@ -544,7 +608,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     onModelLoading, onError, onModelError,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
     cidade = true, mapaBase = null, sombras = "sempre",
-    orbitar = false, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
+    orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
     gizmoMapa = false, onMapaTransform, onMapaErro, corteArea = null,
     plantaPavimento = null,
@@ -745,6 +809,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const reatarRef = useRef<number | null>(null);
   const orbitarRef = useRef(orbitar);
   orbitarRef.current = orbitar;
+  const orbitaAlvoRef = useRef(orbitaAlvo);
+  orbitaAlvoRef.current = orbitaAlvo;
   const noturnoRef = useRef(noturno);
   noturnoRef.current = noturno;
   const realceRef = useRef(realceNoturno);
@@ -4454,6 +4520,41 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * Preserva o ângulo e a distância atuais, para ligar a órbita não dar um
    * salto de câmera.
    */
+  /**
+   * Ponto em torno do qual o arraste gira.
+   *
+   * Três alvos, do mais específico para o mais geral. A regra é sempre a
+   * mesma: girar em torno do que a vista está examinando. Um pivô mais longe
+   * do que se olha faz o alvo descrever um arco e sair da tela — que foi o que
+   * derrubou a órbita nas vistas de dentro.
+   */
+  function alvoDaOrbita(b: Building3D, esfera: BoundingSphere): Cartesian3 {
+    const alvo = orbitaAlvoRef.current;
+
+    // 1. Unidade escolhida: gira em torno do apartamento, que é o assunto.
+    if (alvo?.unidadeId) {
+      const p = centroDaUnidade(alvo.unidadeId);
+      if (p) return p;
+    }
+
+    // 2. Pavimento aberto: o centro do prédio, na COTA daquele andar. Manter a
+    //    cota do centro do volume punha o pivô dezenas de metros acima ou
+    //    abaixo do piso que se está visitando.
+    const z = alvo?.pavimentoZ;
+    const node = nodesRef.current.get(b.id);
+    if (z != null && node) {
+      const noAndar = poseNoModelo(b, node.groundHeight, 0, 0, z, 0).position;
+      const cAndar = Cartographic.fromCartesian(noAndar);
+      const cCentro = Cartographic.fromCartesian(esfera.center);
+      if (cAndar && cCentro) {
+        return Cartesian3.fromRadians(cCentro.longitude, cCentro.latitude, cAndar.height);
+      }
+    }
+
+    // 3. Cena externa: o empreendimento inteiro, como sempre foi.
+    return esfera.center;
+  }
+
   function aplicarOrbita() {
     const v = viewerRef.current;
     if (!v || v.isDestroyed() || !orbitarRef.current) return;
@@ -4476,7 +4577,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * exatamente onde está, e o arraste passa a girar em torno da origem desse
      * referencial. É o que se quer — orbitar sem mexer no enquadramento.
      */
-    v.camera.lookAtTransform(Transforms.eastNorthUpToFixedFrame(esfera.center));
+    v.camera.lookAtTransform(
+      Transforms.eastNorthUpToFixedFrame(alvoDaOrbita(b, esfera)),
+    );
 
 
     requestRender();
@@ -5615,10 +5718,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * centro do prédio em vez de olhar em volta do pavimento. As vistas de andar
    * e a principal ficaram inutilizáveis.
    *
-   * Agora quem decide é a página, que sabe o que está aberto: `orbitar` só é
-   * verdadeiro na cena EXTERNA — sem pavimento aberto, sem unidade escolhida,
-   * sem corte. Nas demais o referencial fica solto e a navegação é a padrão do
-   * Cesium, que é o que aquelas vistas sempre esperaram.
+   * O diagnóstico da época estava incompleto: o problema não era a órbita
+   * valer nessas vistas, era o PIVÔ dela ser sempre o centro do prédio. De
+   * perto, girar em torno de um ponto distante manda o alvo para fora da tela
+   * no primeiro arraste. Desligar tratava o sintoma — e cobrava a navegação de
+   * globo justamente onde examinar de perto é a tarefa.
+   *
+   * Com `orbitaAlvo` o pivô acompanha o foco (ver `alvoDaOrbita`), e a órbita
+   * volta a valer na unidade e no pavimento. A página ainda decide: `pavMode`
+   * e o editor continuam fora, porque lá o palco não é a cena.
    */
   useEffect(() => {
     const v = viewerRef.current;
@@ -5635,8 +5743,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (reatarRef.current != null) cancelAnimationFrame(reatarRef.current);
       reatarRef.current = null;
     };
+    // Trocar de unidade ou de andar reancora o pivô. Na maioria dos casos o
+    // voo já faz isso (soltar → reatar), mas focar algo sem voar não faria.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orbitar, pronto]);
+  }, [orbitar, orbitaAlvo?.unidadeId, orbitaAlvo?.pavimentoZ, pronto]);
 
   /**
    * Fotogrametria ligada/desligada.
