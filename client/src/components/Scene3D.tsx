@@ -305,6 +305,11 @@ interface Scene3DProps {
     pavimentoZ?: number | null;
     /** Centro da torre do pavimento aberto, em X/Y do MODELO. */
     torreXY?: { x: number; y: number } | null;
+    /**
+     * A câmera está DENTRO do prédio (vista do andar): o pivô vai à frente
+     * dela, e o arraste vira olhar em volta em vez de orbitar.
+     */
+    naCamera?: boolean;
   } | null;
   noturno?: boolean;
   /** Quanto realçar o modelo à noite (0..1). */
@@ -538,6 +543,15 @@ const TILES_PASSO_MS = 250;
  * permanece terminado.
  */
 const TILES_ESTAVEL = 3;
+
+/**
+ * Distância do pivô de "olhar em volta", em metros à frente da câmera.
+ *
+ * Longe o bastante para o giro não ser degenerado (pivô EM cima da câmera não
+ * tem eixo), perto o bastante para o gesto ler como virar a cabeça, e não como
+ * orbitar um objeto.
+ */
+const PIVO_OLHAR_M = 30;
 
 /** Parte de `Cesium3DTilesetStatistics` que interessa; fora dos tipos públicos. */
 interface EstatisticasTileset {
@@ -4564,6 +4578,26 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   function alvoDaOrbita(b: Building3D, esfera: BoundingSphere): Cartesian3 {
     const alvo = orbitaAlvoRef.current;
     const node = nodesRef.current.get(b.id);
+
+    /**
+     * 0. Câmera dentro do prédio: o pivô vai um pouco À FRENTE dela.
+     *
+     * Na vista do andar a câmera pousa na lat/lng do empreendimento, ou seja,
+     * dentro da torre. Qualquer pivô "do prédio" cai praticamente em cima
+     * dela, e orbitar em torno de um ponto colado na câmera faz um arraste
+     * curto virar o mundo inteiro. À frente, o mesmo arraste vira olhar em
+     * volta — que é o gesto que aquela vista pede.
+     */
+    if (alvo?.naCamera) {
+      const v = viewerRef.current;
+      if (v && !v.isDestroyed()) {
+        return Cartesian3.add(
+          v.camera.positionWC,
+          Cartesian3.multiplyByScalar(v.camera.directionWC, PIVO_OLHAR_M, new Cartesian3()),
+          new Cartesian3(),
+        );
+      }
+    }
 
     /**
      * 1. Pavimento aberto: o centro da TORRE, na cota daquele andar.

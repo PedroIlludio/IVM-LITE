@@ -597,16 +597,31 @@ export default function IvmViewPage() {
             fora da tela. Agora o pivô acompanha o foco (`orbitaAlvo`), e
             examinar de perto é onde a navegação de maquete mais vale.
 
-            Duas exceções, e as duas por não haver o que orbitar: `pavMode`
-            (o palco é o painel, não a cena) e `vista`, em que a câmera pousa
-            DENTRO da torre — orbitar em torno de um ponto colado na câmera
-            faz um arraste curto virar o prédio inteiro.
+            `pavMode` fica fora: ali o palco é o painel, não a cena.
+
+            `vista` é o caso torto, e a razão é do Cesium. A cena roda com
+            `globe: false`, e sem globo o controlador de câmera tira o pivô
+            EXCLUSIVAMENTE do buffer de profundidade:
+
+                if (!defined(globe)) return clone(depthIntersection, result);
+                                          // ScreenSpaceCameraController.js
+
+            Com a fotogrametria ligada há chão no buffer sob o cursor e a
+            navegação padrão funciona — é o "modo cesium normal". Sem ela, o
+            cursor cai no vazio, o pivô sai indefinido e o arraste dispara: o
+            "modo 3D bugado". Por isso, sem cidade, a órbita continua LIGADA
+            também em `vista` — com o pivô à frente da câmera (`naCamera`), que
+            não depende de superfície nenhuma para existir.
+
+            Com cidade, `vista` segue na navegação padrão, que já funciona e
+            pivota no que o visitante aponta.
           */
-          orbitar={!pavMode && modoFoco !== "vista"}
+          orbitar={!pavMode && (modoFoco !== "vista" || !cidade3D)}
           orbitaAlvo={{
             unidadeId: unidadeSelId,
             pavimentoZ: nivelAberto?.cutZ ?? null,
             torreXY: centroDaTorreAberta,
+            naCamera: modoFoco === "vista",
           }}
           noturno={noturno}
           realceNoturno={ambiente?.realceNoturno}
