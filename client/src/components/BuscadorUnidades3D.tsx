@@ -26,6 +26,18 @@ import {
   unidadesComTipologia,
 } from "@/lib/tipologias";
 
+/**
+ * Como o visitante está olhando a unidade escolhida.
+ *
+ * - `volume`  — o prédio inteiro, com a caixa da unidade acesa;
+ * - `corte`   — o andar cortado, visto DE FORA e de cima;
+ * - `vista`   — a vista real a partir do andar, com a câmera DENTRO da torre.
+ *
+ * Os dois primeiros olham de fora e pedem navegação de maquete; o terceiro é
+ * um ponto de vista, e ali orbitar não faz sentido nenhum.
+ */
+export type ModoFoco = "corte" | "vista" | "volume";
+
 interface BuscadorUnidades3DProps {
   sceneRef: React.RefObject<Scene3DHandle | null>;
   /** Identifica o projeto — separa os favoritos de um empreendimento dos do outro. */
@@ -48,6 +60,8 @@ interface BuscadorUnidades3DProps {
   /** Unidade escolhida no 3D (a página controla, para a cena receber as caixas). */
   selecionadaId?: string | null;
   onSelecionar?: (u: Unidade | null) => void;
+  /** Modo de foco em curso — ver `setModo`. */
+  onModo?: (m: ModoFoco) => void;
   /** Unidades que passam no filtro — a página usa para montar as caixas. */
   onFiltrar?: (ids: string[]) => void;
 }
@@ -98,6 +112,7 @@ export default function BuscadorUnidades3D({
   onClose,
   selecionadaId,
   onSelecionar,
+  onModo,
   onFiltrar,
 }: BuscadorUnidades3DProps) {
   /**
@@ -120,7 +135,21 @@ export default function BuscadorUnidades3D({
   const [tipologiaId, setTipologiaId] = useState<string>("");
   const [pavimento, setPavimento] = useState<number | null>(null);
   const [busca, setBusca] = useState("");
-  const [modo, setModo] = useState<"corte" | "vista" | "volume">("volume");
+  const [modoInterno, setModoInterno] = useState<ModoFoco>("volume");
+  const modo = modoInterno;
+
+  /**
+   * Troca o modo e AVISA a página.
+   *
+   * A página precisa saber porque o modo decide a navegação da câmera: em
+   * "vista" ela pousa DENTRO da torre, e ali orbitar gira em torno de um ponto
+   * praticamente colado na câmera — um arraste curto vira o prédio inteiro.
+   * Nos outros dois a câmera olha de fora, e a órbita é o gesto certo.
+   */
+  function setModo(m: ModoFoco) {
+    setModoInterno(m);
+    onModo?.(m);
+  }
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [avancados, setAvancados] = useState(false);
   const [ordem, setOrdem] = useState<Ordem>("numero");

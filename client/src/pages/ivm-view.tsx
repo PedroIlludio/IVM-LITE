@@ -5,7 +5,7 @@ import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D
 import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
 import PavimentosView from "@/components/PavimentosView";
-import BuscadorUnidades3D from "@/components/BuscadorUnidades3D";
+import BuscadorUnidades3D, { type ModoFoco } from "@/components/BuscadorUnidades3D";
 import Bussola from "@/components/Bussola";
 import {
   aplicarCrm,
@@ -71,6 +71,13 @@ export default function IvmViewPage() {
   const [buscaMode, setBuscaMode] = useState(false);
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [unidadeSelId, setUnidadeSelId] = useState<string | null>(null);
+  /**
+   * Como a unidade está sendo olhada — ver `ModoFoco`.
+   *
+   * Vive aqui, e não só no buscador, porque decide a NAVEGAÇÃO da câmera, que
+   * é prop do `Scene3D`. Em `vista` a câmera pousa dentro da torre.
+   */
+  const [modoFoco, setModoFoco] = useState<ModoFoco>("volume");
   const [filtradas, setFiltradas] = useState<string[]>([]);
   const [season, setSeason] = useState<Season>("verao");
   const [timeMinutes, setTimeMinutes] = useState(780);
@@ -583,15 +590,19 @@ export default function IvmViewPage() {
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
           /*
-            Órbita em toda vista que tem a CENA no palco.
+            Órbita em toda vista que OLHA DE FORA.
 
-            Antes ela era desligada com unidade ou pavimento aberto, porque o
-            pivô era sempre o centro do prédio e de perto isso jogava o alvo
-            para fora da tela. Agora o pivô acompanha o foco (`orbitaAlvo`), e
-            examinar de perto é justamente onde a navegação de maquete mais
-            vale. `pavMode` segue fora: ali o palco é o painel, não a cena.
+            Ela era desligada com unidade ou pavimento aberto, porque o pivô
+            era sempre o centro do prédio e de perto isso jogava o alvo para
+            fora da tela. Agora o pivô acompanha o foco (`orbitaAlvo`), e
+            examinar de perto é onde a navegação de maquete mais vale.
+
+            Duas exceções, e as duas por não haver o que orbitar: `pavMode`
+            (o palco é o painel, não a cena) e `vista`, em que a câmera pousa
+            DENTRO da torre — orbitar em torno de um ponto colado na câmera
+            faz um arraste curto virar o prédio inteiro.
           */
-          orbitar={!pavMode}
+          orbitar={!pavMode && modoFoco !== "vista"}
           orbitaAlvo={{
             unidadeId: unidadeSelId,
             pavimentoZ: nivelAberto?.cutZ ?? null,
@@ -809,10 +820,13 @@ export default function IvmViewPage() {
           onNivel={setNivelAberto}
           selecionadaId={unidadeSelId}
           onSelecionar={(u) => setUnidadeSelId(u?.id ?? null)}
+          onModo={setModoFoco}
           onFiltrar={setFiltradas}
           onClose={() => {
             setBuscaMode(false);
             setUnidadeSelId(null);
+            // Fechar a busca devolve a cena externa — e com ela a órbita.
+            setModoFoco("volume");
             // Sem isto a planta do último andar visitado ficava deitada no
             // prédio inteiro depois de fechar a busca.
             setNivelAberto(null);
