@@ -3318,9 +3318,24 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          */
         const sel = selectedRef.current;
         const atual = buildingsRef.current.find((x) => x.id === b.id);
+        /**
+         * Sem fotogrametria, a camera salva perde o direito de mandar.
+         *
+         * A regra original — "se ha camera salva, ela e a decisao de quem
+         * montou o projeto" — vale enquanto a cena for a mesma em que ela foi
+         * definida. No modo reduzido nao e: sem o terreno do Google nao ha o
+         * que sondar, a cota do predio cai para `alturaSolo`/fallback e a
+         * camera salva passa a mirar um ponto onde nao ha mais nada. O
+         * resultado e a tela vazia.
+         *
+         * Aqui o enquadramento vem da GEOMETRIA, que e sempre coerente com a
+         * pose em que o modelo foi realmente desenhado.
+         */
+        const semFotogrametria = !tilesetRef.current;
+        const temCameraSalva = !!(atual?.camera && cameraAindaServe(atual, atual.camera));
         if (atual && sel === b.id && !cameraInteragidaRef.current
-          && !(atual.camera && cameraAindaServe(atual, atual.camera))) {
-          flyToBuilding(atual);
+          && (semFotogrametria || !temCameraSalva)) {
+          flyToBuilding(atual, semFotogrametria);
         } else {
           /**
            * Reata a orbita agora que existe geometria medida.
@@ -4841,8 +4856,33 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     return visivel && perto;
   }
 
-  function flyToBuilding(b: Building3D) {
-    if (b.camera && cameraAindaServe(b, b.camera)) return flyToCamera(b.camera, 1.6);
+  /**
+   * Voa ate o empreendimento.
+   *
+   * `forcarGeometria` ignora a camera salva e enquadra a ESFERA MEDIDA do GLB.
+   * Existe para o modo sem fotogrametria: ali a camera salva foi definida
+   * olhando a cidade do Google, com o predio assentado na cota que a sondagem
+   * do terreno media. Tirada a fotogrametria, some a sondagem e some a
+   * referencia — a camera continua apontando para onde o predio ESTAVA, e o
+   * que se ve e cena vazia.
+   *
+   * A esfera nao tem esse problema: ela e calculada a partir da pose real do
+   * modelo, com o mesmo `groundHeight` que o desenha. Seja qual for a cota, a
+   * camera cai centrada no empreendimento.
+   */
+  function flyToBuilding(b: Building3D, forcarGeometria = false) {
+    /**
+     * Sem fotogrametria a regra vale para TODO voo, nao so para a abertura.
+     *
+     * Sao varias as chamadas espalhadas (abertura, troca de selecao, retorno a
+     * vista principal, fim de tour). Deixar a decisao com cada uma delas
+     * significaria que a proxima a ser escrita nasceria errada — e o sintoma,
+     * uma tela vazia, nao aponta para a causa.
+     */
+    const forcar = forcarGeometria || !tilesetRef.current;
+    if (!forcar && b.camera && cameraAindaServe(b, b.camera)) {
+      return flyToCamera(b.camera, 1.6);
+    }
     const v = viewerRef.current;
     const esfera = esferaDoPredio(b);
     if (v && esfera) {

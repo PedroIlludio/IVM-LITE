@@ -416,7 +416,19 @@ export default function IvmViewPage() {
     const cena = sceneRef.current;
     if (!cena) return;
     cena.cutAtFloor(principal?.cutFloorZ ?? null);
-    if (principal) cena.flyToCamera(principal, principal.duracao ?? 2);
+    /**
+     * No modo sem fotogrametria a vista principal salva mira o vazio.
+     *
+     * Ela foi gravada com a cidade do Google em cena e com o predio na cota
+     * que a sondagem do terreno media. Sem isso, o ponto que ela guarda nao
+     * corresponde mais a lugar nenhum — e este botao, que existe justamente
+     * para RESGATAR quem se perdeu, entregaria a mesma tela vazia de onde a
+     * pessoa esta tentando sair.
+     *
+     * `frameBuilding` enquadra a geometria real do GLB, que e sempre coerente
+     * com a pose em que o modelo foi desenhado.
+     */
+    if (principal && !semFotogrametria) cena.flyToCamera(principal, principal.duracao ?? 2);
     else cena.frameBuilding();
   }
 
