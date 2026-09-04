@@ -48,6 +48,7 @@ import {
   type Cesium3DTileset,
 } from "cesium";
 import { createVision3DViewer, FALLBACK_GROUND_HEIGHT } from "@/lib/cesium-setup";
+import { elevacaoDoTerreno } from "@/lib/elevacao";
 import { corDaCategoriaPoi } from "@/lib/poi-icones";
 import { medirGlb, type CaixaGlb } from "@/lib/glb-bounds";
 import {
@@ -496,6 +497,15 @@ interface BuildingNode {
   /** Símbolo em uso no marcador — se mudar, o marcador é recriado. */
   markerImg?: string;
   groundHeight: number;
+  /**
+   * A cota ja foi MEDIDA (ou veio calibrada do projeto)?
+   *
+   * `false` significa que `groundHeight` e o fallback de 3 m — um chute de
+   * nivel do mar. A distincao importa porque so nesse estado as cameras
+   * salvas do projeto sao inuteis: elas guardam altitude absoluta e apontam
+   * para o terreno real, nao para o chute.
+   */
+  cotaConfiavel?: boolean;
 }
 
 // Paleta da marca Quinta das Mangueiras.
@@ -1701,7 +1711,29 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         roll: CesiumMath.toDegrees(v.camera.roll),
       };
     },
-    flyToCamera: (cam, duration = 1.5) => flyToCamera(cam, duration),
+    /**
+     * Camera salva do projeto — vista principal, tour, unidades, entorno.
+     *
+     * Todas guardam altitude ABSOLUTA e foram gravadas com o terreno real sob
+     * o empreendimento. Enquanto a cota nao for confiavel (sem fotogrametria e
+     * sem `alturaSolo`, com o predio no fallback de 3 m), elas apontam para
+     * onde o terreno ESTARIA, nao para onde o predio esta — num planalto, mais
+     * de um quilometro de erro, que na tela se le como "a camera foi para o
+     * infinito".
+     *
+     * A guarda mora AQUI, na fronteira do componente, e nao em cada chamador:
+     * sao quatro entradas hoje e o tour adiciona uma por vista salva. Repetir a
+     * condicao em cada uma garantiria que a proxima nasceria sem ela.
+     */
+    flyToCamera: (cam, duration = 1.5) => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      if (b && !tilesetRef.current && !node?.cotaConfiavel) {
+        return flyToBuilding(b, true);
+      }
+      flyToCamera(cam, duration);
+    },
     flyToPoi: (lat, lng, cam) => flyToPoi(lat, lng, cam),
     flyHome: () => flyHome(),
     cutAtFloor: (modelZ) => cutAtFloor(modelZ),
@@ -2136,6 +2168,117 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // --- Amostragem de altura do terreno (só do prédio selecionado, sob demanda) -
   // Evita forçar alta resolução na cidade toda (que floodava e travava). Amostra
   // 1 ponto, quando a câmera já está perto do prédio e os tiles carregaram.
+  /**
+   * Aplica ao empreendimento uma cota de terreno recem-medida.
+   *
+   * Extraido de `sampleGroundFor` porque agora existem DUAS fontes: a sonda
+   * contra a fotogrametria e o DEM publico do modo sem cidade. Tudo o que vem
+   * DEPOIS da medicao e identico nas duas — mini mapa, caixas do espelho,
+   * contorno da torre, reenquadramento —, e duplicar isso deixaria uma das
+   * cenas com metade dos elementos na cota antiga.
+   */
+  /**
+   * Plano de referencia deduzido da CAMERA SALVA do projeto.
+   *
+   * A cota do terreno so importa por um motivo: as cameras salvas guardam
+   * altitude absoluta, e o predio precisa estar na altura em que elas foram
+   * gravadas. Sendo assim, a propria camera responde a pergunta — ela e um
+   * registro de onde o chao estava naquele dia.
+   *
+   * A conta e a intersecao do raio de mira com o eixo vertical do
+   * empreendimento: anda-se pela direcao do `heading` ate a aproximacao maxima
+   * do predio e aplica-se o `pitch`.
+   *
+   * Nao subtrair meia altura do predio. Parece obvio (a camera "mira o meio")
+   * e esta errado: medido nos dados reais, a mira crua fica a ~9 m do valor do
+   * DEM, e subtraindo meia altura o resultado despenca 34 m ABAIXO dele. Quem
+   * enquadra um predio aponta para perto da base, nao para o meio.
+   *
+   * Preferido ao DEM por tres razoes: e instantaneo, nao depende de rede, e e
+   * COERENTE COM AS CAMERAS por construcao — que e exatamente o que se quer
+   * corrigir. Precisao aferida contra o SRTM: ~10 m.
+   */
+  function cotaPelaCameraSalva(b: Building3D): number | null {
+    const cam = b.camera;
+    if (!cam || !cameraAindaServe(b, cam)) return null;
+    const mPorLat = 111320;
+    const mPorLng = 111320 * Math.cos(CesiumMath.toRadians(b.lat));
+    const dE = (b.lng - cam.lng) * mPorLng;
+    const dN = (b.lat - cam.lat) * mPorLat;
+    const h = CesiumMath.toRadians(cam.heading);
+    // Projecao do vetor camera->predio na direcao para onde a camera olha.
+    const dist = dE * Math.sin(h) + dN * Math.cos(h);
+    /**
+     * Descarta o que a geometria nao sustenta: camera de costas para o predio
+     * (`dist` negativa) ou praticamente em cima dele, onde um erro de um grau
+     * no pitch vira dezenas de metros na mira.
+     */
+    if (!Number.isFinite(dist) || dist < 20) return null;
+    // Olhando para o horizonte ou para cima nao ha intersecao com o solo.
+    if (cam.pitch > -3) return null;
+    const cota = cam.height + dist * Math.tan(CesiumMath.toRadians(cam.pitch));
+    if (!Number.isFinite(cota)) return null;
+    // Sanidade: nada abaixo do fundo do mar nem acima do Himalaia.
+    if (cota < -500 || cota > 9000) return null;
+    return cota;
+  }
+
+  function aplicarCotaMedida(id: string, altura: number) {
+    const node = nodesRef.current.get(id);
+    if (!node) return;
+    const anterior = node.groundHeight;
+    node.groundHeight = altura;
+    /**
+     * Marcado ANTES do reenquadramento, de proposito.
+     *
+     * O voo logo abaixo passa por `flyToBuilding`, que decide entre a camera
+     * salva do projeto e a geometria do GLB olhando justamente esta flag. Com
+     * ela marcada depois, o voo que CORRIGE a cota seria o ultimo a ainda
+     * ignorar a camera salva — a cena acabaria certa e enquadrada errado.
+     *
+     * Tambem precisa vir antes do `if (!cur) return` seguinte: a cota foi
+     * medida de todo modo, e perder o registro disso faria a proxima camera
+     * salva ser descartada sem motivo.
+     */
+    node.cotaConfiavel = true;
+    // A medição custa uma sonda contra a fotogrametria inteira; quem puder
+    // guardar, guarde. É o que dispensa a próxima.
+    onAlturaSoloRef.current?.(id, altura);
+    const cur = buildingsRef.current.find((x) => x.id === id);
+    if (!cur) return;
+    upsertMarker(cur, node);
+    if (cur.modelUrl) updateModelTransform(cur, node);
+    else upsertPlaceholder(cur, node);
+    // As caixas do espelho 3D usam a mesma matriz do modelo: sem isto, elas
+    // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
+    syncUnitBoxes();
+    syncTowerOutline();
+    // Pelo mesmo motivo: o mini mapa se assenta na cota medida
+    // (`alturaDoSoloBase`), e com a URL inalterada isto só reposiciona.
+    void syncMapaBase();
+    /**
+     * Reenquadra quando a cota corrigiu MUITO — e a câmera vai junto.
+     *
+     * O primeiro voo acontece com `groundHeight` no fallback de 3 m, porque a
+     * medição só é confiável 2,5 s depois, com os tiles carregados. Ao nível
+     * do mar isso não se nota. Numa cidade de planalto (Anápolis está a
+     * ~1.100 m) o prédio nasce 1.100 m abaixo do chão, a câmera é enquadrada
+     * nele e a vitrine abre DEBAIXO do terreno — tela preta com as emendas
+     * dos tiles, que foi o que apareceu.
+     *
+     * Corrigir a altura do prédio sem corrigir a da câmera resolvia metade: o
+     * prédio subia e a câmera continuava enterrada.
+     *
+     * 20 m de limiar separa "estava no fallback" de um reajuste fino, e
+     * `cameraInteragida` protege quem já tomou o controle da navegação — um
+     * voo inesperado no meio do gesto do visitante seria pior que o erro.
+     */
+    if (Math.abs(altura - anterior) > 20 && !cameraInteragidaRef.current) {
+      flyToBuilding(cur);
+    }
+    requestRender();
+  }
+
   async function sampleGroundFor(id: string) {
     const v = viewerRef.current;
     if (!v || !readyRef.current) return;
@@ -2152,11 +2295,46 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * segundos e meio depois, desliza para um lugar que nao e o
      * empreendimento.
      *
-     * Neste modo a cota certa ja esta no projeto: `alturaSolo`, gravada na
-     * calibracao do editor (ver `node = { groundHeight: b.alturaSolo ... }`).
-     * Ela nao precisa — nem admite — refinamento em tempo de execucao.
+     * A cota certa deveria estar no projeto (`alturaSolo`, gravada na
+     * calibracao do editor), mas projeto antigo pode nunca te-la recebido — e
+     * ai sobra o fallback de 3 m, que num planalto erra mais de um QUILOMETRO
+     * e joga todas as cameras salvas para fora do empreendimento.
+     *
+     * Entao mede-se de outro jeito: um DEM publico (SRTM, sem chave nem
+     * cartao). Grosseiro perto da fotogrametria, exato perto de 3 m.
      */
-    if (!tilesetRef.current) return;
+    if (!tilesetRef.current) {
+      const bSemFoto = buildingsRef.current.find((x) => x.id === id);
+      const nodeSemFoto = nodesRef.current.get(id);
+      if (!bSemFoto || !nodeSemFoto) return;
+      // Cota calibrada no editor tem precedencia: ela veio da fotogrametria,
+      // que e mais precisa que o DEM. Sobrescrever seria piorar.
+      if (nodeSemFoto.cotaConfiavel) return;
+      /**
+       * A camera salva do projeto vem PRIMEIRO.
+       *
+       * O DEM publico e correto, mas e um terceiro: 1000 chamadas por dia, uma
+       * por segundo, sem termos de uso comercial nem garantia de
+       * disponibilidade. Numa vitrine de plantao isso e um teto que se atinge,
+       * e a falha cairia justamente no dia de movimento.
+       *
+       * A camera nao tem teto, nao tem rede e concorda com o DEM dentro de
+       * ~10 m — e, por ser a propria referencia que se quer honrar, acerta o
+       * que de fato importa.
+       */
+      const porCamera = cotaPelaCameraSalva(bSemFoto);
+      if (porCamera != null) {
+        aplicarCotaMedida(id, porCamera);
+        return;
+      }
+      // Sem camera salva nao ha o que deduzir: ai sim o DEM.
+      const elev = await elevacaoDoTerreno(bSemFoto.lat, bSemFoto.lng);
+      // `null` = nao deu para saber. Mantem o fallback: a cena ja esta de pe,
+      // e o enquadramento por geometria cobre esse caso.
+      if (elev == null || !viewerRef.current) return;
+      aplicarCotaMedida(id, elev);
+      return;
+    }
     const b = buildingsRef.current.find((x) => x.id === id);
     const node = nodesRef.current.get(id);
     if (!b || !node) return;
@@ -2188,43 +2366,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!p || !viewerRef.current) return;
       const carto = Cartographic.fromCartesian(p);
       if (!carto || !Number.isFinite(carto.height)) return;
-      const anterior = node.groundHeight;
-      node.groundHeight = carto.height;
-      // A medição custa uma sonda contra a fotogrametria inteira; quem puder
-      // guardar, guarde. É o que dispensa a próxima.
-      onAlturaSoloRef.current?.(id, carto.height);
-      const cur = buildingsRef.current.find((x) => x.id === id);
-      if (!cur) return;
-      upsertMarker(cur, node);
-      if (cur.modelUrl) updateModelTransform(cur, node);
-      else upsertPlaceholder(cur, node);
-      // As caixas do espelho 3D usam a mesma matriz do modelo: sem isto, elas
-      // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
-      syncUnitBoxes();
-      syncTowerOutline();
-      // Pelo mesmo motivo: o mini mapa se assenta na cota medida
-      // (`alturaDoSoloBase`), e com a URL inalterada isto só reposiciona.
-      void syncMapaBase();
-      /**
-       * Reenquadra quando a cota corrigiu MUITO — e a câmera vai junto.
-       *
-       * O primeiro voo acontece com `groundHeight` no fallback de 3 m, porque a
-       * medição só é confiável 2,5 s depois, com os tiles carregados. Ao nível
-       * do mar isso não se nota. Numa cidade de planalto (Anápolis está a
-       * ~1.100 m) o prédio nasce 1.100 m abaixo do chão, a câmera é enquadrada
-       * nele e a vitrine abre DEBAIXO do terreno — tela preta com as emendas
-       * dos tiles, que foi o que apareceu.
-       *
-       * Corrigir a altura do prédio sem corrigir a da câmera resolvia metade: o
-       * prédio subia e a câmera continuava enterrada.
-       *
-       * 20 m de limiar separa "estava no fallback" de um reajuste fino, e
-       * `cameraInteragida` protege quem já tomou o controle da navegação — um
-       * voo inesperado no meio do gesto do visitante seria pior que o erro.
-       */
-      if (Math.abs(carto.height - anterior) > 20 && !cameraInteragidaRef.current) {
-        flyToBuilding(cur);
-      }
+      aplicarCotaMedida(id, carto.height);
       requestRender();
     } catch {
       /* mantém fallback */
@@ -3331,11 +3473,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          * Aqui o enquadramento vem da GEOMETRIA, que e sempre coerente com a
          * pose em que o modelo foi realmente desenhado.
          */
-        const semFotogrametria = !tilesetRef.current;
+        const semCotaConfiavel = !tilesetRef.current
+          && !nodesRef.current.get(b.id)?.cotaConfiavel;
         const temCameraSalva = !!(atual?.camera && cameraAindaServe(atual, atual.camera));
         if (atual && sel === b.id && !cameraInteragidaRef.current
-          && (semFotogrametria || !temCameraSalva)) {
-          flyToBuilding(atual, semFotogrametria);
+          && (semCotaConfiavel || !temCameraSalva)) {
+          flyToBuilding(atual, semCotaConfiavel);
         } else {
           /**
            * Reata a orbita agora que existe geometria medida.
@@ -4424,7 +4567,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          * cidade 3D essa medição nunca vem — e o prédio ficava a 3 m de
          * altitude, centenas de metros abaixo do terreno.
          */
-        node = { groundHeight: b.alturaSolo ?? FALLBACK_GROUND_HEIGHT };
+        node = {
+          groundHeight: b.alturaSolo ?? FALLBACK_GROUND_HEIGHT,
+          // Calibrada no editor: ja nasce confiavel, nada a medir.
+          cotaConfiavel: b.alturaSolo != null,
+        };
         nodesRef.current.set(b.id, node);
       }
 
@@ -4879,7 +5026,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * significaria que a proxima a ser escrita nasceria errada — e o sintoma,
      * uma tela vazia, nao aponta para a causa.
      */
-    const forcar = forcarGeometria || !tilesetRef.current;
+    const forcar = forcarGeometria
+      || (!tilesetRef.current && !nodesRef.current.get(b.id)?.cotaConfiavel);
     if (!forcar && b.camera && cameraAindaServe(b, b.camera)) {
       return flyToCamera(b.camera, 1.6);
     }
