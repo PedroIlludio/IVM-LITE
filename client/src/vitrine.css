@@ -264,6 +264,15 @@
   color: var(--v-accent-ink);
 }
 
+.vitrine :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid var(--v-accent);
+  outline-offset: 2px;
+}
+
+/* O menu de ações compacto existe apenas onde a largura é disputada. */
+.vitrine .v-mobile-more,
+.vitrine .v-mobile-actions { display: none; }
+
 /* CTA preenchido — a pílula da marca. */
 .vitrine .v-btn {
   display: inline-flex;
@@ -743,6 +752,206 @@
   .vitrine .v-solar-time { font-size: 24px; }
   .vitrine .v-solar-seasons { max-width: 54%; overflow-x: auto; }
   .vitrine .v-solar-seasons button { min-width: max-content; padding-inline: 9px; }
+}
+
+/* ========================================================================
+   CELULAR â€” a cena continua sendo o produto.
+
+   As regras abaixo não apenas reduzem medidas: elas mudam a hierarquia. A
+   gaveta inicial fica compacta, ações secundárias saem do topo e detalhes que
+   antes eram laterais viram folhas inferiores alcançáveis pelo polegar.
+   ======================================================================== */
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) {
+  .vitrine {
+    -webkit-text-size-adjust: 100%;
+    touch-action: manipulation;
+  }
+
+  .vitrine button,
+  .vitrine a,
+  .vitrine input,
+  .vitrine select { -webkit-tap-highlight-color: transparent; }
+
+  .vitrine .v-icon-btn,
+  .vitrine .v-pill { min-width: 44px; height: 44px; }
+
+  .vitrine .v-pill { padding-inline: 13px; }
+
+  .vitrine .v-scene-controls {
+    top: max(10px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    gap: 7px;
+  }
+
+  .vitrine .v-desktop-secondary { display: none; }
+  .vitrine .v-mobile-more { display: inline-flex; }
+
+  .vitrine .v-mobile-actions {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    display: grid;
+    width: min(248px, calc(100vw - 20px));
+    overflow: hidden;
+    padding: 6px;
+    border: 1px solid var(--v-line);
+    border-radius: var(--v-r);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: var(--v-sh-3);
+    backdrop-filter: blur(18px);
+  }
+
+  .vitrine .v-mobile-actions > button {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+    gap: 10px;
+    padding: 0 12px;
+    border-radius: 9px;
+    color: var(--v-ink);
+    font-size: 14px;
+    font-weight: 600;
+    text-align: left;
+  }
+  .vitrine .v-mobile-actions > button:hover,
+  .vitrine .v-mobile-actions > button:active { background: var(--v-surface-3); }
+  .vitrine .v-mobile-actions > button + button { border-top: 1px solid var(--v-line); }
+
+  .vitrine .v-panel-trigger {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+    max-width: calc(100vw - 170px);
+  }
+
+  /* Bússola abaixo da barra de ações: no centro do topo ela ficava por baixo
+     das seis pastilhas e deixava de ser legível/clicável. */
+  .vitrine > button[title^="Orienta"] {
+    top: calc(max(10px, env(safe-area-inset-top)) + 52px);
+    width: min(72vw, 280px);
+  }
+
+  .vitrine .v-mobile-sheet {
+    padding-bottom: env(safe-area-inset-bottom);
+    box-shadow: 0 -12px 36px rgba(25, 28, 31, 0.18);
+  }
+  .vitrine .v-mobile-sheet-menu { height: 170px; }
+  .vitrine .v-mobile-sheet-detail { height: min(76dvh, 720px); }
+
+  .vitrine .v-gaveta-h {
+    justify-content: flex-start;
+    padding-bottom: 8px;
+    scroll-padding-inline: 16px;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .vitrine .v-gaveta-h .v-gaveta-item {
+    width: 96px;
+    min-height: 76px;
+    padding: 9px 7px;
+  }
+
+  /* Busca e ficha da unidade usam a largura inteira. Deixar 20â€“30px da cena
+     aparecendo ao lado parecia um erro e criava um alvo de gesto acidental. */
+  .vitrine .v-unit-search,
+  .vitrine.v-unit-popup {
+    inset: 0;
+    width: 100%;
+    max-width: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    border: 0;
+  }
+
+  .vitrine .v-unit-search .v-card button[title*="Favorit"],
+  .vitrine.v-unit-popup button[title*="Favorit"] { opacity: 1; }
+
+  /* POI vira folha inferior. Assim ele não compete com a barra superior e a
+     imagem permanece grande sem cobrir o ponto que acabou de ser visitado. */
+  .vitrine .v-poi-card {
+    top: auto;
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: max(10px, env(safe-area-inset-left));
+    width: auto;
+    max-height: min(58dvh, 520px);
+    border-radius: var(--v-r-lg);
+  }
+  .vitrine .v-poi-card img { height: min(25dvh, 190px); }
+
+  /* Pavimentos: cabeçalho seguro no topo, régua menor à esquerda e cartão de
+     leitura no rodapé. As três zonas deixam sempre um corredor livre para
+     girar a maquete. */
+  .vitrine .v-pav-header {
+    padding: max(10px, env(safe-area-inset-top)) 10px 10px;
+  }
+  .vitrine .v-pav-header .v-glass { padding: 8px 12px; }
+  .vitrine .v-pav-header .v-pill { padding-inline: 12px; }
+  .vitrine .v-pav-ruler {
+    top: calc(max(10px, env(safe-area-inset-top)) + 64px);
+    left: max(10px, env(safe-area-inset-left));
+    width: min(45vw, 178px);
+    max-height: 43dvh;
+    transform: none;
+  }
+  .vitrine .v-pav-card {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    width: calc(100vw - 20px);
+    padding: 14px;
+  }
+  .vitrine .v-pav-card > div { gap: 10px; }
+  .vitrine .v-pav-card h3 { font-size: 17px; }
+  .vitrine .v-pav-card button { width: 100px; height: 88px; }
+  .vitrine .v-pav-card .v-muted { font-size: 12px; }
+  .vitrine .v-pav-hint {
+    bottom: max(14px, env(safe-area-inset-bottom));
+    width: calc(100vw - 24px);
+    text-align: center;
+  }
+
+  /* A barra solar deixa de ser um cartão alto de desktop. A leitura essencial
+     (hora, estação e slider) cabe numa única zona de polegar. */
+  .vitrine .v-solar {
+    bottom: max(10px, env(safe-area-inset-bottom));
+    max-width: calc(100vw - 20px);
+    padding: 12px 13px 9px;
+    border-radius: 16px;
+  }
+  .vitrine .v-solar .v-eyebrow,
+  .vitrine .v-solar .v-meta,
+  .vitrine .v-solar-orbit { display: none; }
+  .vitrine .v-solar-time { font-size: 22px; }
+  .vitrine .v-solar-seasons {
+    max-width: calc(100% - 72px);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .vitrine .v-solar-seasons::-webkit-scrollbar { display: none; }
+  .vitrine .v-solar-seasons button { min-width: max-content; min-height: 32px; }
+  .vitrine .v-solar-range { height: 24px; margin-top: 4px; }
+
+  /* Cabeçalhos de overlays respeitam recortes de iPhone/Android. */
+  .vitrine[data-testid="media-overlay"] > header {
+    padding-top: max(12px, env(safe-area-inset-top));
+  }
+}
+
+@media (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) and (orientation: landscape) {
+  .vitrine .v-poi-card {
+    top: max(64px, env(safe-area-inset-top));
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: auto;
+    width: min(46vw, 340px);
+    max-height: none;
+  }
+  .vitrine .v-pav-ruler { max-height: calc(100dvh - 88px); }
+  .vitrine .v-pav-card {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: auto;
+    width: min(52vw, 440px);
+    transform: none;
+  }
 }
 
 /*

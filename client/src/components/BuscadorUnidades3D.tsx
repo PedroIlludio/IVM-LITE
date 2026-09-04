@@ -501,7 +501,7 @@ export default function BuscadorUnidades3D({
         faz a tela parecer feita de blocos soltos: o painel vira mais uma
         caixa sobre a cena, em vez de uma coluna de leitura.
       */}
-      <div className="v-scroll absolute inset-y-0 left-0 z-40 flex w-[380px] max-w-full flex-col bg-[var(--v-surface)] shadow-[var(--v-sh-3)]">
+      <div className="v-unit-search v-scroll absolute inset-y-0 left-0 z-40 flex w-[380px] max-w-full flex-col bg-[var(--v-surface)] shadow-[var(--v-sh-3)]">
         <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
           <div className="min-w-0">
             <h2 className="v-title text-[22px]">Unidades</h2>
@@ -858,7 +858,7 @@ function PopupUnidade({
   const cor = corStatus(u.status);
 
   return (
-    <aside className="vitrine fixed inset-y-0 right-0 z-[90] w-[390px] max-w-full border-l border-[var(--v-line)] bg-[var(--v-surface)] shadow-[-18px_0_45px_rgba(25,28,31,0.14)] animate-in slide-in-from-right duration-300">
+    <aside className="v-unit-popup vitrine fixed inset-y-0 right-0 z-[90] w-[390px] max-w-full border-l border-[var(--v-line)] bg-[var(--v-surface)] shadow-[-18px_0_45px_rgba(25,28,31,0.14)] animate-in slide-in-from-right duration-300">
       <div className="v-in v-scroll h-full overflow-y-auto">
         <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
           <div className="min-w-0">

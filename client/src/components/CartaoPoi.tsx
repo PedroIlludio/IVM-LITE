@@ -47,7 +47,7 @@ export function CartaoPoi({ poi, estilo, onFechar, onFoto }: {
     */
     <div
       data-testid="cartao-poi"
-      className="absolute right-4 top-[72px] z-30 flex max-h-[calc(100vh-96px)] w-[min(92vw,340px)] flex-col overflow-hidden rounded-[10px] glassmorphism shadow-2xl"
+      className="v-poi-card absolute right-4 top-[72px] z-30 flex max-h-[calc(100dvh-96px)] w-[min(92vw,340px)] flex-col overflow-hidden rounded-[10px] glassmorphism shadow-2xl"
     >
       {fotos.length > 0 && (
         <div className="relative shrink-0">

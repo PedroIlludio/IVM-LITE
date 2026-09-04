@@ -184,7 +184,7 @@ export default function PavimentosView({
     <>
       {/* Cabeçalho: pastilhas flutuantes, sem a faixa de gradiente que
           escurecia o topo da cena inteira. */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between p-4">
+      <div className="v-pav-header pointer-events-none absolute inset-x-0 top-0 z-40 flex items-start justify-between p-4">
         <div className="v-glass pointer-events-auto px-4 py-2.5">
           <h2 className="v-title text-[15px]">Pavimentos</h2>
           <p className="v-faint mt-0.5 text-[11px]">Corte por nível</p>
@@ -201,7 +201,7 @@ export default function PavimentosView({
       </div>
 
       {/* Régua de pavimentos (esquerda), com um bloco por vez */}
-      <div className="v-panel absolute left-4 top-1/2 z-40 flex max-h-[72vh] w-[min(80vw,212px)] -translate-y-1/2 flex-col overflow-hidden">
+      <div className="v-pav-ruler v-panel absolute left-4 top-1/2 z-40 flex max-h-[72dvh] w-[min(80vw,212px)] -translate-y-1/2 flex-col overflow-hidden">
         {mostrarGrupos && (
           <div className="border-b border-[var(--v-line)] px-4 pb-3 pt-4">
             <span className="v-eyebrow mb-2 block">Bloco</span>
@@ -251,7 +251,7 @@ export default function PavimentosView({
 
       {/* Cartão de informação do nível (base) */}
       {sel && (
-        <div className="v-panel v-in absolute bottom-5 left-1/2 z-40 w-[min(92vw,560px)] -translate-x-1/2 p-5">
+        <div className="v-pav-card v-panel v-in absolute bottom-5 left-1/2 z-40 w-[min(92vw,560px)] -translate-x-1/2 p-5">
           <div className="flex items-center gap-4">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
@@ -315,7 +315,7 @@ export default function PavimentosView({
 
       {/* Dica inicial */}
       {!sel && (
-        <div className="pointer-events-none absolute bottom-6 left-1/2 z-40 -translate-x-1/2">
+        <div className="v-pav-hint pointer-events-none absolute bottom-6 left-1/2 z-40 -translate-x-1/2">
           <p className="v-glass px-5 py-2.5 text-[13px] text-[var(--v-ink-2)]">
             Escolha um pavimento na régua — o prédio é cortado naquele nível
           </p>

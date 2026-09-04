@@ -7,7 +7,8 @@
     "dev": "cross-env NODE_ENV=development tsx server/index.ts",
     "build": "tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
-    "check": "tsc"
+    "check": "tsc",
+    "test:ux:mobile": "playwright test tests/mobile-ux.spec.ts"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.4",
@@ -70,6 +71,7 @@
   },
   "devDependencies": {
     "@gltf-transform/cli": "^4.4.0",
+    "@playwright/test": "^1.62.1",
     "@replit/vite-plugin-cartographer": "^0.4.4",
     "@replit/vite-plugin-dev-banner": "^0.1.1",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",

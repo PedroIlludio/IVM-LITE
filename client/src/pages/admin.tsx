@@ -255,7 +255,7 @@ function Dashboard() {
 
   return (
     <div className="tool min-h-screen bg-[var(--ed-canvas)] text-white">
-      <header className="flex items-center justify-between border-b border-[var(--ed-line)] px-6 py-4">
+      <header className="flex items-center justify-between gap-3 border-b border-[var(--ed-line)] px-4 py-3 sm:px-6 sm:py-4">
         <div className="flex items-center gap-3">
           <Globe className="h-4 w-4 text-white" />
           {/* Display da spec: peso 400 com tracking negativo. A spec proíbe
@@ -278,7 +278,7 @@ function Dashboard() {
         )}
       </header>
 
-      <main className="mx-auto max-w-6xl p-6">
+      <main className="mx-auto max-w-6xl p-3 sm:p-6">
         {/* A migração 0002 é aplicada à mão no Supabase; sem ela a plataforma
             funciona, mas só no endereço legado /v/{slug}. */}
         {migracaoOk === false && (
@@ -315,7 +315,7 @@ function Dashboard() {
                 ))
               )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <input
                 value={novaInc}
                 onChange={(e) => setNovaInc(e.target.value)}
@@ -340,12 +340,12 @@ function Dashboard() {
         )}
 
         {/* Novo projeto */}
-        <div className="mb-3 flex flex-wrap gap-2">
+        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {incorporadoras.length > 0 && (
             <select
               value={incSel}
               onChange={(e) => setIncSel(e.target.value)}
-              className={`${CAMPO} w-auto`}
+              className={`${CAMPO} w-full sm:w-auto`}
             >
               <option value="" className="bg-[#0a0a0a]">Sem incorporadora</option>
               {incorporadoras.map((i) => (
@@ -360,13 +360,13 @@ function Dashboard() {
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
             placeholder="Nome do novo IVM Lite (ex: Edifício Aurora)"
-            className={`${CAMPO} min-w-[16rem] flex-1`}
+            className={`${CAMPO} min-w-0 w-full flex-1`}
           />
           {/* A pílula branca preenchida da tela — a ação principal do painel. */}
           <button
             onClick={create}
             disabled={busy}
-            className="tool-pill-primary flex shrink-0 items-center gap-2 px-5 py-2 text-[14px]"
+            className="tool-pill-primary flex w-full shrink-0 items-center justify-center gap-2 px-5 py-2 text-[14px] sm:w-auto"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Criar
           </button>

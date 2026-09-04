@@ -458,6 +458,71 @@ input[type="range"].solar-slider::-moz-range-thumb {
   box-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
 }
 
+/* Editor em telas estreitas: viewport e inspetor passam a dividir a ALTURA.
+   O editor continua denso, mas nenhum painel fica espremido para fora da tela. */
+@media (max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) {
+  .ed-editor { height: 100dvh !important; }
+
+  .ed-topbar {
+    min-height: 48px;
+    height: 48px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .ed-topbar::-webkit-scrollbar { display: none; }
+  .ed-topbar > * { flex-shrink: 0; }
+  .ed-topbar > input { width: 8.5rem; flex-shrink: 1; }
+
+  .ed-workspace { flex-direction: column; }
+
+  .ed-rail {
+    width: 100% !important;
+    height: 48px;
+    flex-direction: row !important;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 4px 6px !important;
+    border-right: 0 !important;
+    border-bottom: 1px solid var(--ed-line);
+    scrollbar-width: none;
+  }
+  .ed-rail::-webkit-scrollbar { display: none; }
+  .ed-rail > button { width: 40px; height: 40px; flex: 0 0 40px; }
+  .ed-rail > button > span:first-of-type {
+    inset: auto 7px 0 !important;
+    width: auto !important;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+  }
+  .ed-rail > button > span:last-of-type { display: none; }
+
+  .ed-viewport {
+    flex: 0 0 34dvh !important;
+    min-height: 220px;
+    border-bottom: 1px solid var(--ed-line);
+  }
+  .ed-viewport .v-solar { display: none; }
+  .ed-divider { display: none; }
+  .ed-inspector {
+    width: 100% !important;
+    min-height: 0;
+    flex: 1 1 0 !important;
+    border-left: 0 !important;
+    border-top: 1px solid var(--ed-line);
+  }
+}
+
+@media (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) and (orientation: landscape) {
+  /* Em paisagem a altura não comporta duas pilhas: volta para lado a lado,
+     reservando ao inspetor largura suficiente para campos de duas colunas. */
+  .ed-workspace { flex-direction: row; flex-wrap: wrap; }
+  .ed-rail { flex: 0 0 100%; }
+  .ed-viewport { min-height: 0; height: auto; flex: 1 1 0 !important; }
+  .ed-inspector { width: min(44vw, 390px) !important; flex: 0 0 min(44vw, 390px) !important; }
+}
+
 /* --------------------------------------------------------------------------
    Slider de FAIXA (dois polegares) — filtros de área, quartos, andar e preço
    do buscador de unidades.

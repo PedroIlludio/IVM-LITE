@@ -2049,9 +2049,9 @@ export default function IvmEditorPage() {
   const abaAtual = TABS.find((t) => t.id === tab);
 
   return (
-    <div className="ed flex h-screen w-full flex-col overflow-hidden bg-[#0a0a0a] text-white">
+    <div className="ed ed-editor flex h-screen w-full flex-col overflow-hidden bg-[#0a0a0a] text-white">
       {/* ================= BARRA DE DOCUMENTO ================= */}
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--ed-line)] bg-[var(--ed-chrome)] px-2">
+      <header className="ed-topbar flex h-11 shrink-0 items-center gap-2 border-b border-[var(--ed-line)] bg-[var(--ed-chrome)] px-2">
         <Link href="/admin" title="Voltar aos projetos"
           className="flex h-7 w-7 items-center justify-center rounded-[4px] text-white/50 transition-colors hover:bg-white/5 hover:text-white">
           <ArrowLeft className="h-4 w-4" />
@@ -2176,13 +2176,13 @@ export default function IvmEditorPage() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="ed-workspace flex min-h-0 flex-1">
         {/* ================= RAIL DE SEÇÕES =================
             Ícones numa coluna, no lugar das pílulas que quebravam em três
             linhas — o padrão de VS Code, Figma e Unreal. */}
-        <nav className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-[var(--ed-line)] bg-[var(--ed-chrome)] py-2">
+        <nav className="ed-rail flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-[var(--ed-line)] bg-[var(--ed-chrome)] py-2" aria-label="Seções do editor">
           {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)}
+            <button key={t.id} onClick={() => setTab(t.id)} title={t.label} aria-label={t.label}
               className={`group relative flex h-9 w-9 items-center justify-center rounded-[4px] transition-colors ${
                 tab === t.id ? "bg-teal-500/12 text-teal-300" : "text-white/35 hover:bg-white/5 hover:text-white/80"
               }`}>
@@ -2198,7 +2198,7 @@ export default function IvmEditorPage() {
         {/* ================= VIEWPORT =================
             Espaço próprio, não sobreposto pelos painéis: o Cesium se
             redimensiona sozinho ao container. */}
-        <main className="relative min-w-0 flex-1 bg-[#0a0a0a]">
+        <main className="ed-viewport relative min-w-0 flex-1 bg-[#0a0a0a]">
           {apiKey && (
             <Scene3D
           key={tentativaCena}
@@ -2408,13 +2408,13 @@ export default function IvmEditorPage() {
           }}
           onDoubleClick={() => setLarguraPainel(360)}
           title="Arraste para redimensionar · duplo clique para restaurar"
-          className="w-1 shrink-0 cursor-col-resize bg-[var(--ed-line)] transition-colors hover:bg-teal-400/60"
+          className="ed-divider w-1 shrink-0 cursor-col-resize bg-[var(--ed-line)] transition-colors hover:bg-teal-400/60"
         />
 
         {/* ================= INSPETOR ================= */}
         <aside
           style={{ width: larguraPainel }}
-          className="flex shrink-0 flex-col border-l border-[var(--ed-line)] bg-[var(--ed-bg)]">
+          className="ed-inspector flex shrink-0 flex-col border-l border-[var(--ed-line)] bg-[var(--ed-bg)]">
           <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-[var(--ed-line)] px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">
             {abaAtual?.icon}
             {abaAtual?.label}

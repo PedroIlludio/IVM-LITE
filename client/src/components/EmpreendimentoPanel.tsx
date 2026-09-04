@@ -75,7 +75,14 @@ function useRetrato() {
 function useIsMobile() {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 768);
+    // Celular deitado costuma passar de 768px (Pixel 7: 915px). A largura
+    // sozinha o classificava como desktop justamente na orientação mais
+    // apertada. Ponteiro grosso + até 1024px identifica esse caso sem mudar o
+    // layout de notebooks pequenos.
+    const check = () => setIsMobile(
+      window.innerWidth < 768
+      || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024),
+    );
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
@@ -536,12 +543,16 @@ function EmpreendimentoDetail({
         faixa de 84px não esconde a cena.
       */}
       {vista === "menu" && !trilho && (
-        <div className="flex shrink-0 items-center justify-end border-b border-[var(--v-line)] px-3 py-3">
+        <div className="flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[var(--v-line)] px-4 py-2">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <MarcaDoProjeto logoUrl={logoUrl} nome={emp.name} className="h-7 max-w-20 object-contain" />
+            <span className="v-title truncate text-[17px]">{emp.name}</span>
+          </div>
           <button
             onClick={onFechar}
             data-testid="btn-menu-gaveta"
             title="Fechar o painel"
-            className="shrink-0 rounded-[8px] p-1.5 text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-[var(--v-ink-2)] transition-colors hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1347,7 +1358,7 @@ export default function EmpreendimentoPanel({
         data-testid="panel-empreendimentos"
         className={`absolute z-30 flex flex-col glassmorphism transition-transform duration-300 ease-out ${
           retrato
-            ? `inset-x-0 bottom-0 h-[64dvh] rounded-t-[var(--v-r-lg)] ${isOpen ? "translate-y-0" : "translate-y-full"}`
+            ? `v-mobile-sheet inset-x-0 bottom-0 rounded-t-[var(--v-r-lg)] ${vista === "menu" ? "v-mobile-sheet-menu" : "v-mobile-sheet-detail"} ${isOpen ? "translate-y-0" : "translate-y-full"}`
             : `inset-y-0 left-0 w-[min(64vw,380px)] ${isOpen ? "translate-x-0" : "-translate-x-full"}`
         }`}
         style={retrato ? undefined : { height: "100dvh", maxHeight: "100dvh" }}
@@ -1363,6 +1374,7 @@ export default function EmpreendimentoPanel({
                   <button
                     data-testid="btn-close-panel"
                     onClick={onToggle}
+                    aria-label="Fechar painel"
                     className="p-1.5 rounded-md text-[var(--v-ink-3)] hover:text-[var(--v-ink-2)] transition-colors"
                   >
                     <X className="w-4 h-4" />
@@ -1444,6 +1456,7 @@ export default function EmpreendimentoPanel({
               <button
                 data-testid="btn-close-panel"
                 onClick={onToggle}
+                aria-label="Fechar painel"
                 className="p-1.5 rounded-md text-[var(--v-ink-3)] hover:text-[var(--v-ink-2)] transition-colors"
               >
                 <X className="w-4 h-4" />

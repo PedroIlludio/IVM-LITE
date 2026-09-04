@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw } from "lucide-react";
+import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw, MoreHorizontal, X } from "lucide-react";
 import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D";
 import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
@@ -98,8 +98,13 @@ export default function IvmViewPage() {
   const [filtradas, setFiltradas] = useState<string[]>([]);
   const [season, setSeason] = useState<Season>("verao");
   const [timeMinutes, setTimeMinutes] = useState(780);
+  /** Ações menos frequentes, agrupadas no celular para liberar o topo da cena. */
+  const [acoesMoveisAbertas, setAcoesMoveisAbertas] = useState(false);
   /** Entorno: 3D ou mapa. Vive aqui porque o mapa ocupa o viewport. */
   const [modoEntorno, setModoEntorno] = useState<"3d" | "mapa">("3d");
+  useEffect(() => {
+    setAcoesMoveisAbertas(false);
+  }, [pavMode, buscaMode, modoEntorno]);
   const [poiEntornoId, setPoiEntornoId] = useState<string | null>(null);
   /** Foto do cartão do POI aberta em tela cheia. */
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
@@ -932,7 +937,7 @@ export default function IvmViewPage() {
         achar o certo sem ler, e é a da referência.
       */}
       {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && (
-        <div className="absolute right-4 top-4 z-40 flex items-center gap-2">
+        <div className="v-scene-controls absolute right-4 top-4 z-40 flex items-center gap-2">
           {/* Mostrar/esconder a fotogrametria. O prédio nunca some.
               Escondido no modo sem fotogrametria: ali nao ha tileset para
               alternar, e um botao que nao faz nada e pior que a ausencia
@@ -940,7 +945,7 @@ export default function IvmViewPage() {
           {!semFotogrametria && (
           <button
             onClick={alternarCidade3D}
-            className="v-icon-btn"
+            className="v-icon-btn v-desktop-secondary"
             data-on={cidade3D ? undefined : "1"}
             title={cidade3D
               ? (mapaBase
@@ -952,13 +957,13 @@ export default function IvmViewPage() {
           </button>
           )}
 
-          <button onClick={irParaPrincipal} title="Voltar à vista principal" className="v-pill">
+          <button onClick={() => { irParaPrincipal(); setAcoesMoveisAbertas(false); }} title="Voltar à vista principal" className="v-pill">
             <Home className="h-4 w-4" />
             <span className="hidden sm:inline">Vista principal</span>
           </button>
 
           {views.length > 0 && (
-            <button onClick={alternarTour} className="v-pill" data-on={tourAtivo ? "1" : undefined}
+            <button onClick={alternarTour} className="v-pill v-desktop-secondary" data-on={tourAtivo ? "1" : undefined}
               title={tourAtivo ? "Parar o tour" : "Rodar o tour de vistas"}>
               {tourAtivo ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
               <span className="hidden sm:inline">{tourAtivo ? "Parar" : "Tour"}</span>
@@ -967,7 +972,7 @@ export default function IvmViewPage() {
 
           {unidades.length > 0 && (
             <button
-              onClick={() => abrirUnidades()}
+              onClick={() => { abrirUnidades(); setAcoesMoveisAbertas(false); }}
               className="v-pill">
               <Search className="h-4 w-4" />
               <span className="hidden sm:inline">Buscar unidade</span>
@@ -975,24 +980,62 @@ export default function IvmViewPage() {
           )}
 
           {ambiente?.noturnoDisponivel && (
-            <button onClick={alternarNoturno} className="v-icon-btn" data-on={noturno ? "1" : undefined}
+            <button onClick={alternarNoturno} className="v-icon-btn v-desktop-secondary" data-on={noturno ? "1" : undefined}
               title={noturno ? "Voltar ao dia" : "Ver à noite"}>
               {noturno ? <SunMedium className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>
           )}
 
           {ambiente?.permitirScreenshot && (
-            <button onClick={capturarTela} className="v-icon-btn" data-on={capturando ? "1" : undefined}
+            <button onClick={capturarTela} className="v-icon-btn v-desktop-secondary" data-on={capturando ? "1" : undefined}
               title="Capturar a tela">
               <Camera className="h-4 w-4" />
             </button>
+          )}
+
+          <button
+            onClick={() => setAcoesMoveisAbertas((v) => !v)}
+            className="v-icon-btn v-mobile-more"
+            data-on={acoesMoveisAbertas ? "1" : undefined}
+            aria-label={acoesMoveisAbertas ? "Fechar mais ações" : "Mais ações"}
+            aria-expanded={acoesMoveisAbertas}
+          >
+            {acoesMoveisAbertas ? <X className="h-4 w-4" /> : <MoreHorizontal className="h-5 w-5" />}
+          </button>
+
+          {acoesMoveisAbertas && (
+            <div className="v-mobile-actions" role="menu" aria-label="Mais ações da cena">
+              {!semFotogrametria && (
+                <button onClick={() => { alternarCidade3D(); setAcoesMoveisAbertas(false); }} role="menuitem">
+                  <Layers3 className="h-4 w-4" />
+                  {cidade3D ? "Cena mais leve" : "Mostrar entorno"}
+                </button>
+              )}
+              {views.length > 0 && (
+                <button onClick={() => { alternarTour(); setAcoesMoveisAbertas(false); }} role="menuitem">
+                  {tourAtivo ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  {tourAtivo ? "Parar tour" : "Iniciar tour"}
+                </button>
+              )}
+              {ambiente?.noturnoDisponivel && (
+                <button onClick={() => { alternarNoturno(); setAcoesMoveisAbertas(false); }} role="menuitem">
+                  {noturno ? <SunMedium className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  {noturno ? "Voltar ao dia" : "Ver à noite"}
+                </button>
+              )}
+              {ambiente?.permitirScreenshot && (
+                <button onClick={() => { capturarTela(); setAcoesMoveisAbertas(false); }} role="menuitem">
+                  <Camera className="h-4 w-4" /> Capturar imagem
+                </button>
+              )}
+            </div>
           )}
 
         </div>
       )}
 
       {!tilesError && !pavMode && !buscaMode && !panelOpen && (
-        <button onClick={() => setPanelOpen(true)} className="v-pill absolute left-4 top-4 z-40">
+        <button onClick={() => setPanelOpen(true)} className="v-panel-trigger v-pill absolute left-4 top-4 z-40">
           <Menu className="h-4 w-4" />
           <span className="max-w-[42vw] truncate">{project?.name ?? "Detalhes"}</span>
         </button>
