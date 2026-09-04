@@ -671,6 +671,31 @@ export default function IvmEditorPage() {
     setViews(n);
   }
 
+  /**
+   * Congela a referencia de altura no primeiro enquadramento capturado sem
+   * fotogrametria.
+   *
+   * Sem isto havia um LACO. A cota do terreno, nesse modo, e deduzida da
+   * camera salva; capturar uma camera nova mudava a deducao, a deducao movia
+   * o empreendimento, e o enquadramento gravado deixava de ser o que se via na
+   * tela — o predio subia e parecia que a camera tinha descido.
+   *
+   * Gravando `alturaSolo` junto com a camera, a cena para de re-deduzir e
+   * passa a usar a MESMA referencia em que o enquadramento foi feito. Nao e um
+   * chute promovido a medida: e o registro de contra o que aquela camera foi
+   * definida, que e exatamente o papel deste campo.
+   *
+   * So a primeira captura grava. Depois disso a referencia esta posta, e
+   * reescreve-la a cada captura voltaria a mover o chao debaixo das cameras ja
+   * definidas.
+   */
+  function fixarCotaDeReferencia() {
+    if (!semFotogrametria) return;
+    if (project?.data.config.alturaSolo != null) return;
+    const cota = sceneRef.current?.cotaDoSolo();
+    if (cota != null) setConfig({ alturaSolo: cota });
+  }
+
   /** Só uma vista pode ser a principal. */
   function definirPrincipal(id: string) {
     setViews(views.map((v) => ({ ...v, isMain: v.id === id })));
@@ -680,6 +705,7 @@ export default function IvmEditorPage() {
   function capturarVista() {
     const cam = sceneRef.current?.getCurrentCamera();
     if (!cam) return;
+    fixarCotaDeReferencia();
     const nova: NamedView = {
       ...cam,
       id: genId("view"),
@@ -698,6 +724,7 @@ export default function IvmEditorPage() {
   function recapturarVista(id: string) {
     const cam = sceneRef.current?.getCurrentCamera();
     if (!cam) return;
+    fixarCotaDeReferencia();
     patchView(id, { ...cam, thumbUrl: sceneRef.current?.captureImage(240) ?? undefined });
     setSaveMsg("Vista recapturada (salve para aplicar)");
   }
@@ -3440,7 +3467,7 @@ export default function IvmEditorPage() {
                 title="A vista marcada com estrela na sequência do tour é a que abre a experiência pública; esta aqui é o enquadramento bruto do viewport.">
                 Enquadramento de partida da cena, antes de qualquer vista.
               </p>
-              <button onClick={() => { const cam = sceneRef.current?.getCurrentCamera(); if (cam) setConfig({ camera: cam }); }}
+              <button onClick={() => { const cam = sceneRef.current?.getCurrentCamera(); if (cam) { fixarCotaDeReferencia(); setConfig({ camera: cam }); } }}
                 className="flex w-full items-center justify-center gap-2 rounded-[3px] bg-white/10 px-3 py-1.5 text-[11px] text-white/80 hover:bg-white/20">
                 <Camera className="h-3.5 w-3.5" /> {c.camera ? "Recapturar" : "Capturar"}
               </button>
@@ -3488,7 +3515,7 @@ export default function IvmEditorPage() {
                     <button
                       onClick={() => {
                         const cam = sceneRef.current?.getCurrentCamera();
-                        if (cam) setConfig({ [campo]: cam });
+                        if (cam) { fixarCotaDeReferencia(); setConfig({ [campo]: cam }); }
                       }}
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-[3px] bg-white/10 px-2 py-1 text-[10px] text-white/80 hover:bg-white/20">
                       <Camera className="h-3 w-3" /> {valor ? "Recapturar" : "Capturar"}

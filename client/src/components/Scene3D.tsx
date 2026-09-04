@@ -97,6 +97,14 @@ export interface TowerOutline {
 
 export interface Scene3DHandle {
   getCurrentCamera: () => CameraView | null;
+  /**
+   * Cota do terreno em uso sob o empreendimento, ou `null` se ela ainda for o
+   * fallback (nada medido nem calibrado).
+   *
+   * Existe para o editor poder GRAVAR a referencia de altura no mesmo gesto em
+   * que grava uma camera — ver `alturaSolo`.
+   */
+  cotaDoSolo: () => number | null;
   flyToCamera: (cam: CameraView, duration?: number) => void;
   /** Voa até um POI. `cam` (enquadramento salvo) é usado só se for plausível. */
   flyToPoi: (lat: number, lng: number, cam?: CameraView) => void;
@@ -1698,6 +1706,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Imperative handle (usado pelo editor / páginas) ------------------------
   useImperativeHandle(ref, () => ({
+    cotaDoSolo: () => {
+      const id = selectedRef.current;
+      const node = id ? nodesRef.current.get(id) : undefined;
+      // Sem `cotaConfiavel` o valor e o fallback de 3 m: devolver isso como se
+      // fosse medida faria o editor gravar um chute no projeto.
+      return node?.cotaConfiavel ? node.groundHeight : null;
+    },
     getCurrentCamera: () => {
       const v = viewerRef.current;
       if (!v) return null;
