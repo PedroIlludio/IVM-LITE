@@ -209,9 +209,26 @@ async function carregarTilesetDoGoogle(): Promise<Cesium3DTileset> {
        * Credencial recusada não melhora insistindo — só atrasa em 45s a única
        * mensagem que resolve o problema (chave, billing, restrição de domínio).
        * Repetir serve para rede; para 403 é teimosia.
+       *
+       * O 404 entra na mesma lista porque o `tile.googleapis.com` responde
+       * `404 NOT_FOUND` — "Requested entity was not found" — quando a chave
+       * existe mas o PROJETO do Google Cloud não pode servir os tiles (billing
+       * desativado, Map Tiles API não habilitada). É a resposta menos
+       * intuitiva da API: parece rota errada e é credencial. Sem esta linha o
+       * caso mais comum de erro de configuração era repetido 3 vezes e
+       * anunciado ao visitante como "a conexão parece instável", mandando
+       * investigar o wi-fi do estande por um problema que está no console do
+       * Google.
        */
       const msg = e instanceof Error ? e.message : String(e);
-      if (/(?:401|403|api.?key|billing|forbidden|unauthorized)/i.test(msg)) throw e;
+      if (/(?:401|403|404|api.?key|billing|forbidden|unauthorized|not.?found)/i.test(msg)) {
+        throw new Error(
+          "A fotogrametria do Google recusou a credencial. Confira, no Google Cloud: "
+          + "billing ativo no projeto, Map Tiles API habilitada e a restrição de "
+          + "domínio da GOOGLE_MAPS_API_KEY incluindo este site.",
+          { cause: e },
+        );
+      }
       // Espera crescente: se a rede caiu, voltar no mesmo instante encontra a
       // mesma rede caída.
       if (tentativa < TILESET_TENTATIVAS) {
