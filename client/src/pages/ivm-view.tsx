@@ -61,6 +61,23 @@ export default function IvmViewPage() {
    * mesma tela e à mesma saída, o "Tentar de novo".
    */
   const [tilesError, setTilesError] = useState<string | null>(null);
+  /**
+   * A falha foi da FOTOGRAMETRIA (e nao do modelo do empreendimento)?
+   *
+   * So esse caso tem saida alternativa. Quando o que faltou foi o GLB do
+   * empreendimento, entrar sem a cidade nao resolve nada — a vitrine abriria
+   * vazia, que e pior do que a tela de erro.
+   */
+  const [erroDeFotogrametria, setErroDeFotogrametria] = useState(false);
+  /**
+   * Abrir a cena sem pedir a fotogrametria do Google.
+   *
+   * Ligado pelo botao da tela de erro. Nao e automatico de proposito: com
+   * cobertura e conexao normais a cidade do Google e a melhor experiencia, e
+   * cair sozinho para o modo reduzido esconderia do operador do plantao que
+   * algo esta errado na configuracao.
+   */
+  const [semFotogrametria, setSemFotogrametria] = useState(false);
   const [ready, setReady] = useState(false);
   /** O GLB terminou de carregar (ou o projeto não tem modelo a esperar). */
   const [modeloPronto, setModeloPronto] = useState(false);
@@ -496,9 +513,31 @@ export default function IvmViewPage() {
   const [tentativaCena, setTentativaCena] = useState(0);
   const recarregarCena = () => {
     setTilesError(null);
+    setErroDeFotogrametria(false);
     setReady(false);
     setModeloPronto(false);
     setSegundosCarregando(0);
+    // "Tentar de novo" significa tentar o Google OUTRA VEZ: se o visitante ja
+    // estava no modo reduzido, este botao e o caminho de volta.
+    setSemFotogrametria(false);
+    setTentativaCena((n) => n + 1);
+  };
+
+  /**
+   * Entrar no 3D com o entorno do PROJETO no lugar da cidade do Google.
+   *
+   * Remonta a cena pela mesma chave do `recarregarCena`, mudando so uma coisa:
+   * a fotogrametria nao e pedida. O empreendimento, o mini mapa (`mapaBase`),
+   * o espelho de vendas e a simulacao solar seguem inteiros — nada disso
+   * dependia do Google.
+   */
+  const entrarSemFotogrametria = () => {
+    setTilesError(null);
+    setErroDeFotogrametria(false);
+    setReady(false);
+    setModeloPronto(false);
+    setSegundosCarregando(0);
+    setSemFotogrametria(true);
     setTentativaCena((n) => n + 1);
   };
 
@@ -580,12 +619,21 @@ export default function IvmViewPage() {
              vale a tela de erro — que traz o "Tentar de novo" — em vez de abrir
              a cena e deixar o visitante procurar um empreendimento que não
              chegou. */
-          onModelError={(msg) =>
-            setTilesError(`O modelo 3D do empreendimento não carregou. ${msg}`)}
-          onError={setTilesError}
+          onModelError={(msg) => {
+            setErroDeFotogrametria(false);
+            setTilesError(`O modelo 3D do empreendimento não carregou. ${msg}`);
+          }}
+          onError={(msg) => {
+            setErroDeFotogrametria(true);
+            setTilesError(msg);
+          }}
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
-          cidade={cidade3D}
+          /* No modo reduzido a cidade fica desligada tambem no estado da
+             interface, senao o botao da barra ofereceria ligar algo que nao
+             foi baixado. */
+          cidade={cidade3D && !semFotogrametria}
+          fotogrametria={!semFotogrametria}
           sombras={ambiente?.sombras}
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
@@ -1080,6 +1128,35 @@ export default function IvmViewPage() {
               <RotateCw className="h-4 w-4" />
               <span>Tentar de novo</span>
             </button>
+
+            {/*
+              Saida alternativa: a cidade do Google e a UNICA coisa que faltou.
+
+              Sem isto, a falha de um servico externo levava junto o
+              empreendimento, o espelho de vendas e a simulacao solar — que
+              estavam prontos e nunca dependeram dele. Num plantao de vendas,
+              com o cliente ao lado, ter a maquete sem a cidade em volta e
+              incomparavelmente melhor do que ter uma tela de erro.
+
+              So aparece quando o que falhou foi a fotogrametria: se o que nao
+              chegou foi o GLB do empreendimento, este caminho abriria a
+              vitrine vazia.
+            */}
+            {erroDeFotogrametria && (
+              <>
+                <button
+                  onClick={entrarSemFotogrametria}
+                  className="v-pill mx-auto mt-3"
+                >
+                  <Layers3 className="h-4 w-4" />
+                  <span>Entrar no 3D mesmo assim</span>
+                </button>
+                <p className="mt-3 text-[11px] leading-relaxed text-[var(--v-ink-3)]">
+                  O empreendimento e o entorno do projeto aparecem normalmente.
+                  Só a cidade 3D do Google fica de fora.
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}

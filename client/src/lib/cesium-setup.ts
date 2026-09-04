@@ -161,8 +161,12 @@ function ajustesDoAparelho() {
 
 interface CreatedViewer {
   viewer: Viewer;
-  tileset: Cesium3DTileset;
-  /** Perfil efetivamente aplicado (para a interface poder exibi-lo). */
+  /**
+   * `null` quando a cena foi montada SEM fotogrametria (ver o parametro
+   * `fotogrametria`). Nulo aqui nao e falha: e o modo em que o entorno vem do
+   * GLB do projeto. Quem consome precisa tratar a ausencia como normal.
+   */
+  tileset: Cesium3DTileset | null;
 }
 
 // --- Fotogrametria: timeout e retry -----------------------------------------
@@ -255,6 +259,18 @@ async function carregarTilesetDoGoogle(): Promise<Cesium3DTileset> {
 export async function createVision3DViewer(
   container: HTMLElement,
   apiKey: string,
+  /**
+   * Pedir a fotogrametria do Google.
+   *
+   * `false` monta a cena inteira — camera, luz, sombras, GLB — e simplesmente
+   * NAO fala com o Google. Nao confundir com `cidade={false}` no Scene3D, que
+   * apenas ESCONDE (`tileset.show`) um tileset ja baixado: aqui o pedido nem
+   * sai, entao nem a falha nem a cobranca do root tileset acontecem.
+   *
+   * E o que sustenta o botao da vitrine: quando a fotogrametria nao vem, o
+   * visitante entra numa cena que nao depende dela.
+   */
+  fotogrametria = true,
 ): Promise<CreatedViewer> {
   // Must run before Viewer creates WebGL and reads ContextLimits. Running it
   // afterward leaves the first render broken on remote/software GPUs.
@@ -416,6 +432,13 @@ export async function createVision3DViewer(
   // mesmo tempo (força alta resolução na cidade toda) — isso agora é feito
   // apenas 1 prédio por vez, ao selecionar.
   RequestScheduler.throttleRequests = false;
+
+  /**
+   * Sem fotogrametria a cena ja esta pronta aqui: tudo o que resta nesta
+   * funcao configura o tileset, e nao ha tileset. Sair antes e o que garante
+   * que nenhum pedido ao Google sai neste modo.
+   */
+  if (!fotogrametria) return { viewer, tileset: null };
 
   let tileset: Cesium3DTileset;
   try {

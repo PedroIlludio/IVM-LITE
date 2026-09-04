@@ -260,6 +260,16 @@ interface Scene3DProps {
    */
   cidade?: boolean;
   /**
+   * Pedir a fotogrametria do Google ao montar a cena.
+   *
+   * Diferente de `cidade`, que so esconde um tileset JA baixado: com `false`
+   * aqui o pedido nunca sai. E a diferenca entre uma cena que sobrevive a
+   * falha do Google e uma que nao chega a existir por causa dela — o
+   * carregamento do tileset acontece DENTRO da criacao do Viewer, e falhar ali
+   * derrubava a cena inteira, junto com o empreendimento.
+   */
+  fotogrametria?: boolean;
+  /**
    * Quando projetar sombras — ver `AmbienteCfg.sombras`.
    *
    * A regra mora AQUI, e não em quem chama, porque ela depende de `cidade`,
@@ -615,7 +625,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
     onModelLoading, onError, onModelError, onAlturaSolo,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
-    cidade = true, mapaBase = null, sombras = "sempre",
+    cidade = true, fotogrametria = true, mapaBase = null, sombras = "sempre",
     orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
     gizmoMapa = false, onMapaTransform, onMapaErro, corteArea = null,
@@ -1778,7 +1788,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     let aoRolar: (() => void) | null = null;
     let encerrarArraste: (() => void) | null = null;
 
-    createVision3DViewer(containerRef.current, apiKey)
+    createVision3DViewer(containerRef.current, apiKey, fotogrametria)
       .then(({ viewer, tileset }) => {
         if (destroyed) {
           if (!viewer.isDestroyed()) viewer.destroy();
@@ -2066,7 +2076,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          * teto de 20s justamente no caminho que existe para ser RÁPIDO.
          */
         const entornoNaTela = () => {
-          if (!cidadeRef.current) {
+          // `!tileset` e o modo sem fotogrametria: nao ha streaming a aguardar,
+          // e ler `tileset.tilesLoaded` abaixo lancaria.
+          if (!cidadeRef.current || !tileset) {
             // Quem faz o chão é o mini mapa; sem ele, não há o que aguardar.
             const cfg = mapaBaseRef.current;
             return !cfg?.url || !!mapaModelRef.current?.ready;
@@ -2119,7 +2131,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       mapaUrlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey]);
+  }, [apiKey, fotogrametria]);
 
   // --- Amostragem de altura do terreno (só do prédio selecionado, sob demanda) -
   // Evita forçar alta resolução na cidade toda (que floodava e travava). Amostra
