@@ -2,6 +2,7 @@ import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import AdminPage from "@/pages/admin";
@@ -59,7 +60,16 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <Toaster />
-        <Router />
+        {/*
+          Só o <Router /> vai dentro do anteparo.
+
+          O <Toaster /> fica FORA de propósito: ele é o canal por onde o resto
+          do sistema avisa o que aconteceu, e um aviso preso dentro da árvore
+          que acabou de quebrar não chega a ninguém.
+        */}
+        <ErrorBoundary area="rota">
+          <Router />
+        </ErrorBoundary>
       </TooltipProvider>
     </QueryClientProvider>
   );

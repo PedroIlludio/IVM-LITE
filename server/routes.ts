@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { registerObjectStorageRoutes } from "./replit_integrations/object_storage";
 import { registerVision3DRoutes } from "./vision3dRoutes";
 import { registerUnidadesRoutes } from "./unidadesRoutes";
 import { registerProjectsRoutes } from "./projectsRoutes";
@@ -22,14 +21,29 @@ export async function registerRoutes(
     });
   }
 
+  /**
+   * Avisa UMA vez, no arranque, se a configuracao do Supabase faltar.
+   *
+   * O erro do cliente ("Config do Supabase ausente") aparece na tela, mas quem
+   * sobe o servidor costuma estar olhando o terminal. Dizer aqui encurta o
+   * diagnostico de minutos para segundos.
+   */
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_ANON_KEY) {
+    console.error(
+      "[config] SUPABASE_URL/SUPABASE_ANON_KEY ausentes — o app nao vai "
+      + "conseguir ler o banco. Defina-as no .env (dev) ou no ambiente do deploy.",
+    );
+  }
+
   app.get("/api/config", (_req, res) => {
     res.json({
       googleMapsApiKey: process.env.GOOGLE_MAPS_API_KEY || "",
       googleMapId: process.env.GOOGLE_MAP_ID || "DEMO_MAP_ID",
       // Chaves públicas do Supabase (seguras de expor no cliente).
-      supabaseUrl: process.env.SUPABASE_URL || "https://pdnybigohaayvykxwxzb.supabase.co",
-      supabaseAnonKey:
-        process.env.SUPABASE_ANON_KEY || "sb_publishable_xcztKWGU0gQ4gY7-baU2qA_LBqLmG0M",
+      // Sem default: ver a nota em `api/config.ts`. Um fallback apontando para
+      // outro projeto fazia a aplicacao ler o banco errado em silencio.
+      supabaseUrl: process.env.SUPABASE_URL || "",
+      supabaseAnonKey: process.env.SUPABASE_ANON_KEY || "",
     });
   });
 
@@ -96,7 +110,6 @@ export async function registerRoutes(
     }
   });
 
-  registerObjectStorageRoutes(app);
   registerVision3DRoutes(app);
   registerUnidadesRoutes(app);
   registerProjectsRoutes(app);

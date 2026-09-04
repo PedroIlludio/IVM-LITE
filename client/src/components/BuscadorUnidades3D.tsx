@@ -272,6 +272,25 @@ export default function BuscadorUnidades3D({
     return tipologias.filter((t) => ids.has(t.id) || ids.has(t.nome));
   }, [tipologias, unidades]);
 
+  /**
+   * Ha algum filtro avancado para mostrar?
+   *
+   * Os tres filtros do painel sao condicionais, cada um por um bom motivo:
+   * faixa de quartos so existe se houver variacao, e torre e tipologia so
+   * fazem sentido com mais de uma opcao — filtrar entre um item unico nao
+   * filtra nada. Num empreendimento de torre unica e tipologia unica os tres
+   * caem, e sobrava um botao "Filtros avancados" que abria um painel VAZIO.
+   *
+   * Um controle de revelacao sem conteudo e pior do que ausencia: o visitante
+   * clica, nada acontece, e a conclusao razoavel e que a vitrine travou.
+   *
+   * A condicao repete as tres de dentro do painel de proposito — e ela que
+   * garante que o botao e o conteudo aparecem e somem juntos.
+   */
+  const temFiltrosAvancados = !!(limites.quartos && fQuartos)
+    || TORRES.length > 1
+    || tipsUsadas.length > 1;
+
   const tipDe = (u: Unidade) => tipologiaDaUnidade(u, tipologias);
   /**
    * Imagem do card: a planta.
@@ -557,13 +576,15 @@ export default function BuscadorUnidades3D({
             </select>
           </label>
 
-          <button onClick={() => setAvancados((v) => !v)}
-            className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--v-ink-2)] transition-colors hover:text-[var(--v-ink)]">
-            <SlidersHorizontal className="h-3.5 w-3.5" /> Filtros avançados
-            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${avancados ? "rotate-180" : ""}`} />
-          </button>
+          {temFiltrosAvancados && (
+            <button onClick={() => setAvancados((v) => !v)}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--v-ink-2)] transition-colors hover:text-[var(--v-ink)]">
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Filtros avançados
+              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${avancados ? "rotate-180" : ""}`} />
+            </button>
+          )}
 
-          {avancados && (
+          {temFiltrosAvancados && avancados && (
             <div className="v-in space-y-3.5 border-t border-[var(--v-line)] pt-4">
               {limites.quartos && fQuartos && (
                 <FaixaSlider label="Quartos" min={limites.quartos[0]} max={limites.quartos[1]} step={PASSO.quartos}
