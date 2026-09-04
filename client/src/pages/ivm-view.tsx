@@ -126,6 +126,21 @@ export default function IvmViewPage() {
    * continua em vigor, e é por isso que ela é uma das condições.
    */
   const [cidade3D, setCidade3D] = useState(true);
+  /**
+   * A cidade esta REALMENTE em cena?
+   *
+   * `cidade3D` e so a preferencia do visitante no botao. No modo sem
+   * fotogrametria nao ha tileset nenhum, e a preferencia perde o objeto.
+   *
+   * A distincao nao e cosmetica: varias decisoes desta pagina — sombras,
+   * vias, superficies e, principalmente, o modo de navegacao — perguntam "ha
+   * cidade?" para escolher comportamento. Lendo a preferencia crua elas
+   * concluiam que sim, e agiam como se houvesse chao onde nao ha. Foi assim
+   * que a vista do andar voltou a entortar: a orbita se desligava esperando a
+   * navegacao padrao do Cesium assumir, e ela depende de um buffer de
+   * profundidade que, sem fotogrametria, esta vazio.
+   */
+  const cidadeEfetiva = cidade3D && !semFotogrametria;
   const alternarCidade3D = () => setCidade3D((v) => !v);
 
   /**
@@ -339,7 +354,7 @@ export default function IvmViewPage() {
    * ausente.
    */
   const sombrasAtivas = ambiente?.sombras !== "nunca"
-    && !(ambiente?.sombras === "com-cidade" && !cidade3D);
+    && !(ambiente?.sombras === "com-cidade" && !cidadeEfetiva);
   const [noturno, setNoturno] = useState(false);
   const [heading, setHeading] = useState(0);
   const [capturando, setCapturando] = useState(false);
@@ -634,7 +649,7 @@ export default function IvmViewPage() {
           /* No modo reduzido a cidade fica desligada tambem no estado da
              interface, senao o botao da barra ofereceria ligar algo que nao
              foi baixado. */
-          cidade={cidade3D && !semFotogrametria}
+          cidade={cidadeEfetiva}
           fotogrametria={!semFotogrametria}
           sombras={ambiente?.sombras}
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
@@ -666,7 +681,7 @@ export default function IvmViewPage() {
             Com cidade, `vista` segue na navegação padrão, que já funciona e
             pivota no que o visitante aponta.
           */
-          orbitar={!pavMode && (modoFoco !== "vista" || !cidade3D)}
+          orbitar={!pavMode && (modoFoco !== "vista" || !cidadeEfetiva)}
           orbitaAlvo={{
             unidadeId: unidadeSelId,
             pavimentoZ: nivelAberto?.cutZ ?? null,
@@ -699,9 +714,9 @@ export default function IvmViewPage() {
              para situar o empreendimento NO ENTORNO, e sem a fotogrametria
              perdem o chão a que se referem — viram linhas e pinos boiando no
              vazio, pior que ausentes, porque parecem defeito. */
-          vias={cidade3D ? (project?.data.config.entorno?.vias ?? null) : null}
+          vias={cidadeEfetiva ? (project?.data.config.entorno?.vias ?? null) : null}
           corVia={project?.data.config.entorno?.corVia}
-          superficies={cidade3D ? (project?.data.config.entorno?.superficies ?? null) : null}
+          superficies={cidadeEfetiva ? (project?.data.config.entorno?.superficies ?? null) : null}
           onCameraMove={setHeading}
         />
       )}
@@ -792,7 +807,7 @@ export default function IvmViewPage() {
             },
           }}
           /* Sem cidade não há entorno a mostrar: a categoria some da gaveta. */
-          cidadeVisivel={cidade3D}
+          cidadeVisivel={cidadeEfetiva}
         />
       )}
 
@@ -918,7 +933,11 @@ export default function IvmViewPage() {
       */}
       {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && (
         <div className="absolute right-4 top-4 z-40 flex items-center gap-2">
-          {/* Mostrar/esconder a fotogrametria. O prédio nunca some. */}
+          {/* Mostrar/esconder a fotogrametria. O prédio nunca some.
+              Escondido no modo sem fotogrametria: ali nao ha tileset para
+              alternar, e um botao que nao faz nada e pior que a ausencia
+              dele — o visitante clica, nada muda, e a vitrine parece travada. */}
+          {!semFotogrametria && (
           <button
             onClick={alternarCidade3D}
             className="v-icon-btn"
@@ -931,6 +950,7 @@ export default function IvmViewPage() {
           >
             <Layers3 className="h-4 w-4" />
           </button>
+          )}
 
           <button onClick={irParaPrincipal} title="Voltar à vista principal" className="v-pill">
             <Home className="h-4 w-4" />

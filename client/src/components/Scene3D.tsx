@@ -4583,6 +4583,27 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           // Calibrada no editor: ja nasce confiavel, nada a medir.
           cotaConfiavel: b.alturaSolo != null,
         };
+        /**
+         * Sem fotogrametria, deduz a cota AGORA — nao daqui a 2,5 s.
+         *
+         * `sampleGroundFor` roda com atraso porque a sonda contra os tiles
+         * precisa deles carregados. A deducao pela camera salva nao precisa de
+         * nada: e trigonometria sobre dados que ja estao na memoria.
+         *
+         * Rodar tarde criava uma corrida com o voo de abertura, que acontece
+         * logo apos este `reconcile()`. Ele partia com a cota no fallback,
+         * concluia que ela nao era confiavel e enquadrava pela GEOMETRIA —
+         * ignorando a camera salva. Quem tinha acabado de redefinir a camera no
+         * editor via a cena abrir em outro lugar e concluia, com razao, que a
+         * camera nova nao estava valendo.
+         */
+        if (!node.cotaConfiavel && !tilesetRef.current) {
+          const porCamera = cotaPelaCameraSalva(b);
+          if (porCamera != null) {
+            node.groundHeight = porCamera;
+            node.cotaConfiavel = true;
+          }
+        }
         nodesRef.current.set(b.id, node);
       }
 
