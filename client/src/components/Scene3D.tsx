@@ -256,6 +256,16 @@ interface Scene3DProps {
   /** Há um posicionamento por clique em curso: o clique não seleciona, posiciona. */
   placementActive?: boolean;
   /**
+   * O que está sendo posicionado.
+   *
+   * POI é um caso especial: a coordenada precisa vir da fotogrametria do
+   * Google, e não do GLB, do pivô ou do próprio marcador que estiverem
+   * desenhados por cima do mesmo pixel.
+   */
+  placementTarget?: "poi" | "building" | "tower";
+  /** Clique de posicionamento que não encontrou uma superfície utilizável. */
+  onPlacementMiss?: () => void;
+  /**
    * Modo noturno: baixa a luz da cena e realça o modelo para ele não virar uma
    * silhueta preta. Não acende janelas — isso depende de material emissivo no
    * próprio GLB, que o Cesium respeita mas não sabe criar.
@@ -643,6 +653,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
     onModelLoading, onError, onModelError, onAlturaSolo,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
+    placementTarget, onPlacementMiss,
     cidade = true, fotogrametria = true, mapaBase = null, sombras = "sempre",
     orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
@@ -830,6 +841,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   onSelectRef.current = onSelect;
   const placementRef = useRef(placementActive);
   placementRef.current = placementActive;
+  const placementTargetRef = useRef(placementTarget);
+  placementTargetRef.current = placementTarget;
+  const onPlacementMissRef = useRef(onPlacementMiss);
+  onPlacementMissRef.current = onPlacementMiss;
   const onCameraMoveRef = useRef(onCameraMove);
   onCameraMoveRef.current = onCameraMove;
   const gizmoModoRef = useRef(gizmoModo);
@@ -2110,7 +2125,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         const selB = selId ? buildingsRef.current.find((x) => x.id === selId) : undefined;
         if (selB) {
           flyToBuilding(selB);
-          showPoiMarkers(selB);
+          // O marcador usa `RELATIVE_TO_3D_TILE`, portanto só pertence ao
+          // mundo do Google. No estúdio ele ficava preso à altura elipsoidal e
+          // aparecia no fim da tela, muito abaixo do mini mapa.
+          if (cidadeRef.current) showPoiMarkers(selB);
+          else clearPoiMarkers();
           setTimeout(() => void sampleGroundFor(selB.id), 2500);
         } else {
           flyHome();
@@ -4322,10 +4341,48 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * consultar: o chão é a fotogrametria, que é geometria como qualquer outra.
    * Daí as quatro tentativas, da mais exata para a mais grosseira.
    */
-  function pickGround(position: Cartesian2): Cartesian3 | undefined {
+  function pickGround(position: Cartesian2, preferirFotogrametria = false): Cartesian3 | undefined {
     const v = viewerRef.current;
     if (!v) return undefined;
     const scene = v.scene;
+
+    const ray = v.camera.getPickRay(position);
+
+    /**
+     * Para POI, mira primeiro SOMENTE a fotogrametria.
+     *
+     * `pickPosition` lê o primeiro pixel do buffer de profundidade. Um GLB,
+     * caixa, pivô ou marcador na frente do bairro ganha essa disputa e a
+     * coordenada gravada passa a ser a desse andaime de edição. O ray pick
+     * permite excluir todas as entidades e modelos locais, deixando apenas o
+     * tileset do Google como superfície possível.
+     */
+    if (preferirFotogrametria) {
+      if (!ray || !cidadeRef.current || !tilesetRef.current?.show) return undefined;
+      const excluir: object[] = [...v.entities.values];
+      if (mapaModelRef.current) excluir.push(mapaModelRef.current);
+      nodesRef.current.forEach((node) => {
+        if (node.model) excluir.push(node.model);
+      });
+      const cenaComRaio = scene as unknown as {
+        pickFromRay?: (
+          r: typeof ray,
+          objectsToExclude?: object[],
+          width?: number,
+        ) => { position?: Cartesian3 } | undefined;
+      };
+      try {
+        const google = cenaComRaio.pickFromRay?.(ray, excluir, 0.5)?.position;
+        if (google && Number.isFinite(google.x)) return google;
+      } catch {
+        /* o tile sob o cursor ainda pode estar entrando; cai no elipsoide */
+      }
+
+      // Para posicionar um POI interessam latitude/longitude. Se o tile ainda
+      // não terminou de carregar, o cruzamento com a Terra conserva essas
+      // coordenadas sem deixar o clique parecer quebrado.
+      return v.camera.pickEllipsoid(position, Ellipsoid.WGS84) ?? undefined;
+    }
 
     // 1) Buffer de profundidade — o mais exato quando existe.
     if (scene.pickPositionSupported) {
@@ -4333,7 +4390,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (p && Number.isFinite(p.x)) return p;
     }
 
-    const ray = v.camera.getPickRay(position);
     if (!ray) return undefined;
 
     // 2) Raio contra a geometria carregada (fotogrametria e modelo).
@@ -4457,8 +4513,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     // Modo edição: clique no terreno reposiciona o que estiver sendo colocado.
     if (editRef.current && selectedRef.current && onEditPlaceRef.current) {
-      const world = pickGround(position);
-      if (!world) return;
+      const world = pickGround(position, placementTargetRef.current === "poi");
+      if (!world) {
+        onPlacementMissRef.current?.();
+        return;
+      }
       const carto = Cartographic.fromCartesian(world);
       onEditPlaceRef.current(
         selectedRef.current,
@@ -6484,7 +6543,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMode, selectedId, buildings, pronto]);
 
-  return <div ref={containerRef} className="absolute inset-0 h-full w-full" />;
+  return (
+    <div
+      ref={containerRef}
+      className={`absolute inset-0 h-full w-full ${placementActive ? "cursor-crosshair" : ""}`}
+    />
+  );
 });
 
 export default Scene3D;

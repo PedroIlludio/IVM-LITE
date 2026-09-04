@@ -2260,6 +2260,12 @@ export default function IvmEditorPage() {
           unitBoxes={unitBoxes}
           towerOutline={towerOutline}
           placementActive={placing}
+          placementTarget={placingPoiId ? "poi" : placingTorreId ? "tower" : placingBuilding ? "building" : undefined}
+          onPlacementMiss={() => setSaveMsg(
+            placingPoiId
+              ? "Não encontrei o mundo do Google nesse ponto. Clique sobre uma área visível da cidade."
+              : "Não encontrei uma superfície nesse ponto. Tente novamente sobre o mapa.",
+          )}
           gizmoModo={gizmoModo}
           onGizmoInfo={setGizmoInfo}
           /* O pivô do empreendimento só existe onde ele se edita: fora dessas
