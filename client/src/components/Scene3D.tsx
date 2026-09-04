@@ -2139,6 +2139,24 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   async function sampleGroundFor(id: string) {
     const v = viewerRef.current;
     if (!v || !readyRef.current) return;
+    /**
+     * Sem fotogrametria nao ha solo a medir — e medir assim mesmo ESTRAGA a
+     * cena.
+     *
+     * A sonda cai de 3000 m sobre o empreendimento contando encontrar o
+     * terreno do Google. Sem o tileset, a unica superficie no caminho e o GLB
+     * do proprio empreendimento: a medicao volta com a altura do TELHADO, o
+     * `groundHeight` sobe a altura inteira do predio e o reenquadramento de
+     * `> 20 m` logo abaixo leva a camera junto para esse ponto errado. O
+     * sintoma e exatamente o relatado — a vitrine abre enquadrada e, dois
+     * segundos e meio depois, desliza para um lugar que nao e o
+     * empreendimento.
+     *
+     * Neste modo a cota certa ja esta no projeto: `alturaSolo`, gravada na
+     * calibracao do editor (ver `node = { groundHeight: b.alturaSolo ... }`).
+     * Ela nao precisa — nem admite — refinamento em tempo de execucao.
+     */
+    if (!tilesetRef.current) return;
     const b = buildingsRef.current.find((x) => x.id === id);
     const node = nodesRef.current.get(id);
     if (!b || !node) return;
