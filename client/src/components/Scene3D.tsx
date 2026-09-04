@@ -3321,6 +3321,30 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         if (atual && sel === b.id && !cameraInteragidaRef.current
           && !(atual.camera && cameraAindaServe(atual, atual.camera))) {
           flyToBuilding(atual);
+        } else {
+          /**
+           * Reata a orbita agora que existe geometria medida.
+           *
+           * `aplicarOrbita` desiste quando `esferaDoPredio` ainda nao tem o
+           * GLB (o proprio codigo diz "o `moveEnd` tenta de novo depois" — mas
+           * o `moveEnd` foi ABANDONADO por nao disparar com `requestRenderMode`,
+           * e nada assumiu esse retry). Restavam duas chances, as duas cedo
+           * demais: o efeito preso a `pronto` e a vigilia que reata apos um
+           * voo. Se as duas corressem antes do GLB medir — corrida que depende
+           * do tamanho do arquivo e da rede, por isso o defeito era
+           * INTERMITENTE — a cena ficava sem orbita, o arraste voltava a girar
+           * a Terra e o empreendimento saia de vista sem caminho de volta.
+           *
+           * O ramo que faltava e justamente este: quando o projeto TEM camera
+           * salva nao ha reenquadramento, logo nao ha voo, logo ninguem reatava.
+           *
+           * `aplicarOrbita` so troca o referencial (`lookAtTransform`), nao
+           * move a camera: chamar aqui nao mexe no enquadramento escolhido por
+           * quem montou o projeto. Fica no `else` porque, no ramo de cima, o
+           * voo precisa terminar antes — reatar durante o voo faria o `flyTo`
+           * ler o destino no referencial do alvo.
+           */
+          aplicarOrbita();
         }
       };
       /**
@@ -4711,7 +4735,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
       ?? buildingsRef.current[0];
     if (!b) return;
-    // Sem esfera o GLB ainda não foi medido; o `moveEnd` tenta de novo depois.
+    // Sem esfera o GLB ainda nao foi medido: desistir aqui e correto, mas
+    // ALGUEM precisa tentar de novo. Nao e o `moveEnd` (abandonado, ver
+    // `agendarReatarOrbita`) — e o `concluir()` do `loadModel`, que chama esta
+    // funcao assim que o modelo fica desenhavel.
     const esfera = esferaDoPredio(b);
     if (!esfera) return;
     /**
