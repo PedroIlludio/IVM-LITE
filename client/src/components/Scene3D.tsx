@@ -3505,6 +3505,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         if (atual && sel === b.id && !cameraInteragidaRef.current
           && (semCotaConfiavel || !temCameraSalva)) {
           flyToBuilding(atual, semCotaConfiavel);
+        } else if (atual?.camera && sel === b.id && !cameraInteragidaRef.current
+          && temCameraSalva) {
+          /**
+           * A primeira camera costuma voar antes de o GLB estar pronto. Agora
+           * que a esfera real existe, reaplica a mesma vista sem animacao para
+           * corrigir apenas o centro horizontal ainda sob a capa de carga.
+           */
+          flyToCamera(atual.camera, 0);
         } else {
           /**
            * Reata a orbita agora que existe geometria medida.
@@ -4731,17 +4739,78 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Câmeras ------------------------------------------------------------------
 
-  function flyToCamera(cam: CameraView, duration = 1.5) {
-    const v = viewerRef.current;
-    if (!v || v.isDestroyed()) return;
-    soltarOrbita();
-    v.camera.flyTo({
-      destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
-      orientation: {
+  /**
+   * Mantem a composicao vertical da camera salva, mas leva o centro real do
+   * predio para o eixo horizontal da lente.
+   *
+   * As cameras do editor guardam posicao + HPR absolutos, sem um `target`. Se o
+   * GLB tem o pivo fora do centro, esse erro fica gravado e reaparece em todas
+   * as resolucoes. Projetar a mira no plano perpendicular ao `up` original
+   * corrige apenas esquerda/direita, sem destruir a altura visual escolhida.
+   */
+  function orientacaoComCentroHorizontal(cam: CameraView, alvo: Cartesian3) {
+    const destino = Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height);
+    const enu = Transforms.eastNorthUpToFixedFrame(destino);
+    // Mesma conversao usada internamente pelo `Camera.setView` do Cesium.
+    const hpr = new HeadingPitchRoll(
+      CesiumMath.toRadians(cam.heading) - CesiumMath.PI_OVER_TWO,
+      CesiumMath.toRadians(cam.pitch),
+      CesiumMath.toRadians(cam.roll),
+    );
+    const rotacao = Matrix3.fromQuaternion(Quaternion.fromHeadingPitchRoll(hpr), new Matrix3());
+    const acima = Matrix4.multiplyByPointAsVector(
+      enu,
+      Matrix3.getColumn(rotacao, 2, new Cartesian3()),
+      new Cartesian3(),
+    );
+    Cartesian3.normalize(acima, acima);
+
+    const ateAlvo = Cartesian3.normalize(
+      Cartesian3.subtract(alvo, destino, new Cartesian3()),
+      new Cartesian3(),
+    );
+    const componenteVertical = Cartesian3.dot(ateAlvo, acima);
+    const direcaoCentrada = Cartesian3.subtract(
+      ateAlvo,
+      Cartesian3.multiplyByScalar(acima, componenteVertical, new Cartesian3()),
+      new Cartesian3(),
+    );
+    // Quase exatamente acima/abaixo: nao existe horizontal confiavel a alinhar.
+    if (Cartesian3.magnitudeSquared(direcaoCentrada) < CesiumMath.EPSILON12) {
+      return {
         heading: CesiumMath.toRadians(cam.heading),
         pitch: CesiumMath.toRadians(cam.pitch),
         roll: CesiumMath.toRadians(cam.roll),
-      },
+      };
+    }
+    Cartesian3.normalize(direcaoCentrada, direcaoCentrada);
+    const direita = Cartesian3.normalize(
+      Cartesian3.cross(direcaoCentrada, acima, new Cartesian3()),
+      new Cartesian3(),
+    );
+    const acimaCorrigido = Cartesian3.normalize(
+      Cartesian3.cross(direita, direcaoCentrada, new Cartesian3()),
+      new Cartesian3(),
+    );
+    return { direction: direcaoCentrada, up: acimaCorrigido };
+  }
+
+  function flyToCamera(cam: CameraView, duration = 1.5, centralizarPredio = true) {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    soltarOrbita();
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    const esfera = centralizarPredio && b ? esferaRealDoPredio(b) : undefined;
+    v.camera.flyTo({
+      destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
+      orientation: esfera
+        ? orientacaoComCentroHorizontal(cam, esfera.center)
+        : {
+            heading: CesiumMath.toRadians(cam.heading),
+            pitch: CesiumMath.toRadians(cam.pitch),
+            roll: CesiumMath.toRadians(cam.roll),
+          },
       duration,
     });
   }
@@ -4773,7 +4842,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // 800 m: um enquadramento de POI é de aproximação; acima disso ele não
       // está mostrando o ponto, está mostrando outra coisa.
       if (Number.isFinite(distancia) && distancia < 800) {
-        flyToCamera(cam, 1.6);
+        flyToCamera(cam, 1.6, false);
         return;
       }
     }
@@ -4789,9 +4858,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   }
 
   /** Esfera que envolve o prédio — a medida real quando o GLB já carregou. */
-  function esferaDoPredio(b: Building3D): BoundingSphere | undefined {
+  function esferaRealDoPredio(b: Building3D): BoundingSphere | undefined {
     const node = nodesRef.current.get(b.id);
     const gh = node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
+    // Com o modelo pronto, o volume calculado sobre os vertices e a referencia
+    // visual mais fiel. A caixa do JSON inclui cantos vazios em formas assimetricas.
+    if (node?.model?.ready) {
+      const esfera = node.model.boundingSphere;
+      const ancora = poseNoModelo(b, gh, 0, 0, 0, 0).position;
+      if (Number.isFinite(esfera.radius) && esfera.radius >= 1 && esfera.radius < 2000
+        && Cartesian3.distance(esfera.center, ancora) < 3000) {
+        return esfera;
+      }
+    }
     const caixa = b.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
     if (caixa) {
       const cx = (caixa.min[0] + caixa.max[0]) / 2;
@@ -4805,18 +4884,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         return new BoundingSphere(poseNoModelo(b, gh, cx, cy, cz, 0).position, raio);
       }
     }
-    // Alguns GLBs declaram bounding spheres em referencial/escala incorretos.
-    // Só a aceita quando é plausível e continua perto da âncora do projeto.
-    // `ready` antes de tocar em `boundingSphere`: o getter lança enquanto o GLB
-    // não carregou, e o `?.` não protege contra getter que lança.
-    if (node?.model?.ready) {
-      const esfera = node.model.boundingSphere;
-      const ancora = poseNoModelo(b, gh, 0, 0, 0, 0).position;
-      if (Number.isFinite(esfera.radius) && esfera.radius >= 1 && esfera.radius < 2000
-        && Cartesian3.distance(esfera.center, ancora) < 3000) {
-        return esfera;
-      }
-    }
+    return undefined;
+  }
+
+  /** Usa o volume real quando disponivel e o placeholder apenas durante a carga. */
+  function esferaDoPredio(b: Building3D): BoundingSphere | undefined {
+    const real = esferaRealDoPredio(b);
+    if (real) return real;
+    const node = nodesRef.current.get(b.id);
+    const gh = node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
     const ph = b.placeholder;
     if (!ph) return undefined;
     const centro = Cartesian3.fromDegrees(b.lng, b.lat, gh + b.heightOffset + (ph.height * b.scale) / 2);

@@ -37,12 +37,40 @@ interface NoGltf {
   scale?: number[];
 }
 
+interface AccessorGltf {
+  min?: number[];
+  max?: number[];
+  componentType?: number;
+  normalized?: boolean;
+}
+
 interface DocGltf {
   scene?: number;
   scenes?: { nodes?: number[] }[];
   nodes?: NoGltf[];
   meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
-  accessors?: { min?: number[]; max?: number[] }[];
+  accessors?: AccessorGltf[];
+}
+
+/**
+ * Converte extremos de accessors inteiros normalizados para o valor que o
+ * shader realmente recebe.
+ *
+ * `KHR_mesh_quantization` costuma guardar POSITION como `i16_norm`. Nesse
+ * caso `accessor.min/max` continuam sendo os inteiros do buffer (por exemplo
+ * -32767..32767), enquanto a matriz do no foi calculada para -1..1. Aplicar a
+ * matriz diretamente aos inteiros infla a caixa dezenas de milhares de vezes.
+ */
+function valorDoAccessor(valor: number, accessor: AccessorGltf): number {
+  if (!accessor.normalized) return valor;
+  switch (accessor.componentType) {
+    case 5120: return Math.max(valor / 127, -1); // BYTE
+    case 5121: return valor / 255; // UNSIGNED_BYTE
+    case 5122: return Math.max(valor / 32767, -1); // SHORT
+    case 5123: return valor / 65535; // UNSIGNED_SHORT
+    case 5125: return valor / 4294967295; // UNSIGNED_INT
+    default: return valor;
+  }
 }
 
 /** Matriz local do nó: `matrix` explícita ou a composição T·R·S. */
@@ -150,8 +178,8 @@ export async function medirGlb(url: string): Promise<CaixaGlb | null> {
       for (const prim of doc.meshes?.[no.mesh]?.primitives ?? []) {
         const acc = doc.accessors?.[prim.attributes?.POSITION ?? -1];
         if (!acc?.min || !acc?.max) continue;
-        const [x0, y0, z0] = acc.min;
-        const [x1, y1, z1] = acc.max;
+        const [x0, y0, z0] = acc.min.map((v) => valorDoAccessor(v, acc));
+        const [x1, y1, z1] = acc.max.map((v) => valorDoAccessor(v, acc));
         // Os oito cantos, porque o nó pode girar: transformar só min e max
         // daria caixa errada em qualquer modelo com rotação na hierarquia.
         for (const cx of [x0, x1]) {
