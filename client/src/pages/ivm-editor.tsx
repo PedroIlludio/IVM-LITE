@@ -165,6 +165,27 @@ export default function IvmEditorPage() {
    * os campos, o espelho e o salvar continuam valendo.
    */
   const [cenaErro, setCenaErro] = useState<string | null>(null);
+  /**
+   * Editar em 3D SEM a fotogrametria do Google.
+   *
+   * O editor depende do 3D para o que a vitrine so consome: posicionar o
+   * modelo, tracar via, desenhar area e — o motivo desta opcao — REALINHAR as
+   * cameras salvas. Sem fotogrametria a cena inteira falhava, e com ela
+   * falhava tambem o unico lugar onde essas cameras podem ser corrigidas.
+   *
+   * O entorno passa a ser o GLB do projeto. Vale lembrar que a cota do terreno
+   * neste modo e estimada (~10 m): camera realinhada aqui fica coerente com
+   * ESTA cena, e pode precisar de um retoque quando a fotogrametria voltar.
+   */
+  const [semFotogrametria, setSemFotogrametria] = useState(false);
+  /** Trocar a chave remonta o Scene3D — e o que aplica a troca de modo. */
+  const [tentativaCena, setTentativaCena] = useState(0);
+
+  function recarregarCena(sem: boolean) {
+    setCenaErro(null);
+    setSemFotogrametria(sem);
+    setTentativaCena((n) => n + 1);
+  }
   const [ready, setReady] = useState(false);
   /**
    * GLB baixando. No editor isto NÃO bloqueia a tela: o inspetor é utilizável
@@ -2153,8 +2174,10 @@ export default function IvmEditorPage() {
         <main className="relative min-w-0 flex-1 bg-[#0a0a0a]">
           {apiKey && (
             <Scene3D
+          key={tentativaCena}
           ref={sceneRef}
           apiKey={apiKey}
+          fotogrametria={!semFotogrametria}
           buildings={buildings}
           solarUtc={utcDate}
           /* Sem isto o `daylight` da cena ficava travado no padrão (45°): a
@@ -2166,7 +2189,8 @@ export default function IvmEditorPage() {
           noturno={previewNoturno}
           realceNoturno={ambiente?.realceNoturno}
           /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
-          cidade={!previewEstudio}
+          /* Sem fotogrametria nao ha cidade a mostrar; o mini mapa assume. */
+          cidade={!previewEstudio && !semFotogrametria}
           sombras={ambiente?.sombras}
           mapaBase={mapaBase}
           gizmoMapa={pivoNoMapa}
@@ -2281,10 +2305,42 @@ export default function IvmEditorPage() {
                   O restante do editor segue funcionando — salve o que já fez (Ctrl+S)
                   antes de recarregar.
                 </p>
+                {/*
+                  Sem isto, a falha do Google tirava do ar justamente a tela em
+                  que as câmeras salvas podem ser consertadas — e elas são o que
+                  quebra quando a fotogrametria some. O editor ficava incapaz de
+                  corrigir o próprio problema.
+                */}
+                {!semFotogrametria && (
+                  <button
+                    onClick={() => recarregarCena(true)}
+                    className="mt-2 rounded-[3px] border border-white/15 bg-white/5 px-2 py-1 text-[10px] text-white/80 hover:bg-white/10"
+                  >
+                    Editar em 3D sem a fotogrametria
+                  </button>
+                )}
               </div>
               <button onClick={() => setCenaErro(null)} title="Dispensar"
                 className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-white/10 hover:text-white/80">
                 <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/*
+            Modo reduzido: precisa ficar VISÍVEL enquanto durar.
+            Quem realinha uma câmera aqui está gravando coordenadas contra um
+            terreno estimado; saber disso no momento da decisão é a diferença
+            entre um ajuste consciente e uma surpresa quando a cidade voltar.
+          */}
+          {semFotogrametria && !cenaErro && (
+            <div className="absolute right-3 top-3 z-30 flex items-center gap-2 rounded-[4px] border border-amber-400/25 bg-[#1a1712]/95 px-2.5 py-1.5 text-[10px] text-amber-200/90 shadow-xl">
+              <span>3D sem fotogrametria · entorno pelo GLB, cota estimada</span>
+              <button
+                onClick={() => recarregarCena(false)}
+                className="rounded-[3px] border border-white/15 px-1.5 py-0.5 text-white/70 hover:bg-white/10"
+              >
+                Tentar com a cidade
               </button>
             </div>
           )}

@@ -2223,7 +2223,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     return cota;
   }
 
-  function aplicarCotaMedida(id: string, altura: number) {
+  function aplicarCotaMedida(id: string, altura: number, persistir = false) {
     const node = nodesRef.current.get(id);
     if (!node) return;
     const anterior = node.groundHeight;
@@ -2241,9 +2241,20 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * salva ser descartada sem motivo.
      */
     node.cotaConfiavel = true;
-    // A medição custa uma sonda contra a fotogrametria inteira; quem puder
-    // guardar, guarde. É o que dispensa a próxima.
-    onAlturaSoloRef.current?.(id, altura);
+    /**
+     * So a medicao contra a FOTOGRAMETRIA vira `alturaSolo` no projeto.
+     *
+     * A medicao custa uma sonda contra a cidade inteira; quem puder guardar,
+     * guarde — e o que dispensa a proxima. Mas as outras duas fontes (camera
+     * salva e DEM) sao ESTIMATIVAS de ~10 m, e grava-las aqui as promoveria a
+     * "cota calibrada": o projeto passaria a carregar um chute com cara de
+     * medicao, e nada mais o corrigiria por conta propria.
+     *
+     * Deixando `alturaSolo` vazio, cada abertura re-deriva a estimativa — que
+     * e barata — e o campo continua reservado para o valor de verdade, quando
+     * a fotogrametria voltar.
+     */
+    if (persistir) onAlturaSoloRef.current?.(id, altura);
     const cur = buildingsRef.current.find((x) => x.id === id);
     if (!cur) return;
     upsertMarker(cur, node);
@@ -2366,7 +2377,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!p || !viewerRef.current) return;
       const carto = Cartographic.fromCartesian(p);
       if (!carto || !Number.isFinite(carto.height)) return;
-      aplicarCotaMedida(id, carto.height);
+      aplicarCotaMedida(id, carto.height, true);
       requestRender();
     } catch {
       /* mantém fallback */
@@ -4919,6 +4930,22 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     v.camera.lookAtTransform(
       Transforms.eastNorthUpToFixedFrame(alvoDaOrbita(b, esfera)),
     );
+    /**
+     * Trava o eixo vertical do giro — sem isto o horizonte entorta.
+     *
+     * Com um `lookAtTransform` posto e `constrainedAxis` indefinido, o
+     * controlador do Cesium gira em modo trackball: livre nos tres eixos. Um
+     * arraste em diagonal vira ROLL, e a cena aparece inclinada — o defeito
+     * muda conforme a direcao do gesto, que e por que ele parecia aleatorio.
+     *
+     * `UNIT_Z` no referencial ENU do pivo e a vertical local. Com ela travada
+     * o arraste vira azimute + elevacao, que e o par que descreve "girar em
+     * torno" e "olhar de mais alto ou mais baixo" — e o horizonte fica de pe.
+     *
+     * A vista do andar e onde isto mais se nota: ali o pivo fica 30 m a frente
+     * da camera, e pivo perto multiplica o efeito de qualquer giro.
+     */
+    v.camera.constrainedAxis = Cartesian3.UNIT_Z;
 
 
     requestRender();
@@ -4975,6 +5002,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     v.camera.lookAtTransform(Matrix4.IDENTITY);
+    /**
+     * Devolve a rotacao livre junto com o referencial.
+     *
+     * O eixo travado pertence ao referencial da orbita; deixa-lo posto depois
+     * de soltar restringiria a navegacao livre do editor, onde arrastar
+     * PRECISA poder inclinar para posicionar modelo e tracar via.
+     */
+    v.camera.constrainedAxis = undefined;
     // Soltar é sempre para um voo: já deixa marcada a volta.
     agendarReatarOrbita();
   }
