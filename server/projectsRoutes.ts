@@ -255,7 +255,9 @@ export function registerProjectsRoutes(app: Express) {
               + `${relatorio.anisotropiaRemovida} material(is) com anisotropia sem `
               + "normal map (quebrava a compilação do shader), "
               + `${relatorio.escalasCorrigidas} nó(s) com escala zero `
-              + "(matriz singular, parava o render).",
+              + "(matriz singular, parava o render), "
+              + `${relatorio.texturasSemUv} textura(s) pedida(s) por malha sem UV `
+              + "(v_texCoord_0 indefinido, quebrava a compilação do shader).",
             );
           }
         }

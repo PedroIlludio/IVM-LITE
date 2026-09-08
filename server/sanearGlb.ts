@@ -45,6 +45,8 @@ export interface RelatorioSaneamento {
   saneado: boolean;
   anisotropiaRemovida: number;
   escalasCorrigidas: number;
+  /** Texturas soltas de malha sem UV — ver `corrigirTexturasSemUv`. */
+  texturasSemUv: number;
   motivo?: string;
 }
 
@@ -67,8 +69,20 @@ const ESCALA_MINIMA = 1e-4;
 const MAGIC_GLB = 0x46546c67; // "glTF"
 const TIPO_JSON = 0x4e4f534a; // "JSON"
 
+/** Referência a textura no glTF: `{ index, texCoord? }`. */
+interface RefTextura {
+  index?: number;
+  texCoord?: number;
+}
+
 interface MaterialGltf {
-  normalTexture?: unknown;
+  normalTexture?: RefTextura;
+  occlusionTexture?: RefTextura;
+  emissiveTexture?: RefTextura;
+  pbrMetallicRoughness?: {
+    baseColorTexture?: RefTextura;
+    metallicRoughnessTexture?: RefTextura;
+  };
   extensions?: Record<string, unknown>;
 }
 
@@ -78,9 +92,14 @@ interface NoGltf {
   matrix?: number[];
 }
 
+interface PrimitivaGltf {
+  attributes?: Record<string, number>;
+  material?: number;
+}
+
 interface JsonGltf {
   materials?: MaterialGltf[];
-  meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
+  meshes?: { name?: string; primitives?: PrimitivaGltf[] }[];
   nodes?: NoGltf[];
   extensionsUsed?: string[];
   extensionsRequired?: string[];
@@ -122,6 +141,134 @@ function corrigirEscalas(nos: NoGltf[]): number {
 }
 
 /**
+ * Toda referência a textura de um material, inclusive as vindas de extensão.
+ *
+ * Devolve funções que APAGAM o slot, não os valores: quem chama precisa
+ * justamente desligar a textura, e cada slot mora num lugar diferente do JSON
+ * (raiz do material, dentro de `pbrMetallicRoughness`, dentro de `extensions`).
+ */
+function slotsDeTextura(
+  mat: MaterialGltf,
+): { rotulo: string; ref: RefTextura; desligar: () => void }[] {
+  const out: { rotulo: string; ref: RefTextura; desligar: () => void }[] = [];
+
+  const anotar = (dono: Record<string, unknown>, chave: string, rotulo: string) => {
+    const ref = dono[chave] as RefTextura | undefined;
+    if (!ref || typeof ref.index !== "number") return;
+    out.push({ rotulo, ref, desligar: () => delete dono[chave] });
+  };
+
+  const raiz = mat as unknown as Record<string, unknown>;
+  for (const c of ["normalTexture", "occlusionTexture", "emissiveTexture"]) anotar(raiz, c, c);
+
+  const pbr = mat.pbrMetallicRoughness as Record<string, unknown> | undefined;
+  if (pbr) {
+    for (const c of ["baseColorTexture", "metallicRoughnessTexture"]) anotar(pbr, c, c);
+  }
+
+  /**
+   * Extensões de material (`KHR_materials_specular`, `_transmission`, ...) têm
+   * seus próprios slots, e é ali que mora metade do problema: o exportador do
+   * 3ds Max escreve `specularTexture` em objetos que ele nunca desdobrou.
+   * Varrer por convenção de nome (`*Texture`) alcança as que existem hoje e as
+   * que aparecerem depois, sem precisar listar extensão por extensão.
+   */
+  for (const [nomeExt, valor] of Object.entries(mat.extensions ?? {})) {
+    if (!valor || typeof valor !== "object") continue;
+    const ext = valor as Record<string, unknown>;
+    for (const chave of Object.keys(ext)) {
+      if (/Texture$/.test(chave)) anotar(ext, chave, `${nomeExt}.${chave}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Desliga textura pedida por material cuja malha NÃO TEM o UV correspondente.
+ *
+ * É o terceiro jeito de o mesmo exportador parar a cena inteira, e o mais
+ * traiçoeiro. O Cesium monta o shader a partir do material: vendo uma textura,
+ * ele emite `v_texCoord_0`. Mas quem declara essa variável é a MALHA, ao trazer
+ * o atributo `TEXCOORD_0`. Material com textura numa malha sem UV gera:
+ *
+ *   ERROR: 0:226: 'v_texCoord_0' : undeclared identifier
+ *
+ * Falha na COMPILAÇÃO do shader, em tempo de desenho — depois do carregamento,
+ * fora do alcance de qualquer try/catch em volta do load, e derruba a cena
+ * toda, não só o modelo. Mesmo mecanismo do bug de anisotropia acima.
+ *
+ * Acontece o tempo todo em cena de arquitetura: o objeto recebeu um material
+ * texturizado da biblioteca e ninguém o desdobrou (arquibancada, mureta, um
+ * `Object179` qualquer). No 3ds Max isso renderiza, porque o renderizador dele
+ * inventa uma projeção quando não há UV; em glTF não existe esse conserto.
+ *
+ * São dois casos, e só o segundo perde textura:
+ *
+ * 1. A malha TEM canal de UV, mas outro (o material pede o 0 e ela traz o 1).
+ *    Aí é só apontar a textura para o canal que existe — nada se perde. O mais
+ *    baixo é o de material; os altos costumam ser lightmap ou detalhe.
+ * 2. A malha não tem UV nenhum. Não há para onde apontar, e a textura sai. O
+ *    que se perde é a textura de um objeto que já não tinha como exibi-la
+ *    corretamente; a cor base do material continua valendo, e a cena fica de pé.
+ *
+ * É o mesmo critério de `client/src/lib/glb-sanear.ts`, que faz esta correção
+ * no envio manual de `.glb`. As duas existem porque os caminhos não se cruzam:
+ * aquele roda no navegador e cobre o modo Supabase, onde o arquivo vai direto
+ * para o storage sem passar por aqui.
+ *
+ * O material é CLONADO antes de ser mexido, porque quase sempre é
+ * compartilhado: corrigi-lo no lugar estragaria as dezenas de malhas que têm o
+ * UV certo e mostram a textura sem problema nenhum.
+ */
+function corrigirTexturasSemUv(json: JsonGltf): number {
+  const materiais = json.materials ?? [];
+  if (!materiais.length) return 0;
+
+  // Chave: material + conjunto de UVs da malha. Duas malhas quebradas do mesmo
+  // jeito compartilham o clone, em vez de gerar um material por primitiva.
+  const clones = new Map<string, number>();
+  let corrigidas = 0;
+
+  for (const mesh of json.meshes ?? []) {
+    for (const prim of mesh.primitives ?? []) {
+      if (typeof prim.material !== "number") continue;
+      const mat = materiais[prim.material];
+      if (!mat) continue;
+
+      const uvs = Object.keys(prim.attributes ?? {})
+        .filter((a) => a.startsWith("TEXCOORD_"))
+        .map((a) => Number(a.slice("TEXCOORD_".length)))
+        .sort((a, b) => a - b);
+
+      const temUv = (n: number) => uvs.includes(n);
+      const quebrados = slotsDeTextura(mat).filter((s) => !temUv(s.ref.texCoord ?? 0));
+      if (!quebrados.length) continue;
+
+      const chave = `${prim.material}|${uvs.join(",")}`;
+      let indice = clones.get(chave);
+      if (indice === undefined) {
+        const clone = JSON.parse(JSON.stringify(mat)) as MaterialGltf;
+        // Recalcula sobre o CLONE: as entradas acima apontam para os objetos do
+        // material ORIGINAL, que não pode ser tocado.
+        for (const s of slotsDeTextura(clone)) {
+          if (temUv(s.ref.texCoord ?? 0)) continue;
+          if (uvs.length) s.ref.texCoord = uvs[0];
+          else s.desligar();
+        }
+        indice = materiais.length;
+        materiais.push(clone);
+        clones.set(chave, indice);
+      }
+      prim.material = indice;
+      corrigidas += quebrados.length;
+    }
+  }
+
+  if (corrigidas) json.materials = materiais;
+  return corrigidas;
+}
+
+/**
  * Devolve o GLB corrigido, ou o próprio buffer quando não há o que fazer.
  *
  * Nunca lança: um arquivo que este código não entende passa intacto. Recusar um
@@ -131,7 +278,9 @@ function corrigirEscalas(nos: NoGltf[]): number {
 export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSaneamento } {
   const intacto = (motivo: string) => ({
     buffer: buf,
-    relatorio: { saneado: false, anisotropiaRemovida: 0, escalasCorrigidas: 0, motivo },
+    relatorio: {
+      saneado: false, anisotropiaRemovida: 0, escalasCorrigidas: 0, texturasSemUv: 0, motivo,
+    },
   });
 
   try {
@@ -177,7 +326,14 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
       if (!Object.keys(ext).length) delete mat.extensions;
       removidas++;
     }
-    if (!removidas && !escalasCorrigidas) return intacto("nada a corrigir");
+    /**
+     * DEPOIS da anisotropia, de propósito: esta etapa CLONA materiais, e um
+     * clone tirado antes carregaria de volta a extensão que a etapa acima
+     * acabou de remover — reintroduzindo o bug pelo qual ela existe.
+     */
+    const texturasSemUv = corrigirTexturasSemUv(json);
+
+    if (!removidas && !escalasCorrigidas && !texturasSemUv) return intacto("nada a corrigir");
 
     // Só sai das listas se nenhum material ainda a referencia.
     const aindaUsada = materiais.some(
@@ -207,7 +363,9 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
 
     return {
       buffer: Buffer.concat([cabecalho, jsonPad, resto]),
-      relatorio: { saneado: true, anisotropiaRemovida: removidas, escalasCorrigidas },
+      relatorio: {
+        saneado: true, anisotropiaRemovida: removidas, escalasCorrigidas, texturasSemUv,
+      },
     };
   } catch (e) {
     return intacto(e instanceof Error ? e.message : "falha ao inspecionar");

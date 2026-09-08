@@ -5,7 +5,7 @@ import {
   Building2, Video, MapPin, Images, Palette, Plus, Trash2, Move, Crosshair,
   Grid3x3, RefreshCw, Play, Square, Star, ChevronUp, ChevronDown, ChevronRight, Scissors,
   Home, Sun, Eye, RotateCw, Maximize, Undo2, Redo2, Copy, Search, History, X,
-  Lock, LockOpen, Moon, SunMedium, Map as MapIcon,
+  Lock, LockOpen, Moon, SunMedium, Map as MapIcon, FolderUp,
 } from "lucide-react";
 import Scene3D, {
   type Scene3DHandle, type TowerOutline, type GizmoModo, type GizmoLocal, type GizmoLocalPatch,
@@ -27,6 +27,7 @@ import {
 } from "@/lib/pavimentos";
 import { plantasDeTipologia, plantasOrfas } from "@/lib/tipologias";
 import { sanearGlb } from "@/lib/glb-sanear";
+import { ATRIBUTOS_PASTA, importarPastaGltf, lerEscolhaPasta } from "@/lib/gltf-pasta";
 import {
   COR_VIA_PADRAO, LARGURA_VIA_PADRAO, comprimentoDaVia, densificarVia,
   densificarViaComCotas,
@@ -475,6 +476,15 @@ export default function IvmEditorPage() {
   const sceneRef = useRef<Scene3DHandle>(null);
   const glbRef = useRef<HTMLInputElement>(null);
   const mapaGlbRef = useRef<HTMLInputElement>(null);
+  // Pastas glTF (`.gltf` + `.bin` + texturas) — ver `importarPasta`.
+  const pastaRef = useRef<HTMLInputElement>(null);
+  const mapaPastaRef = useRef<HTMLInputElement>(null);
+  /**
+   * Importação de pasta em andamento. Trava os dois botões, não só o clicado: a
+   * conversão é um processo por vez no servidor, e a segunda chamada voltaria
+   * com "já está em andamento" depois de o usuário esperar o upload inteiro.
+   */
+  const [importandoPasta, setImportandoPasta] = useState(false);
   const galRef = useRef<HTMLInputElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
   const symbolRef = useRef<HTMLInputElement>(null);
@@ -1808,6 +1818,75 @@ export default function IvmEditorPage() {
       setSaveMsg(`Modelo corrigido no envio — ${correcoes.join("; ")}`);
     }
     return url;
+  }
+
+  /**
+   * Importa uma PASTA glTF (`.gltf` + `.bin` + texturas) como um GLB único.
+   *
+   * O caminho antigo — subir um `.glb` pronto — continua igual e é o mais
+   * curto. Este existe porque o 3ds Max não exporta `.glb`: exporta uma pasta,
+   * e subir só o `.gltf` dela dá um modelo sem geometria e sem textura, sem
+   * nada na tela que explique o porquê. A conversão acontece no servidor
+   * (`server/gltfImport.ts`), que devolve a mesma URL de sempre.
+   *
+   * A pasta pode conter um `.glb` pronto — exportador que gera os dois
+   * formatos. Nesse caso não há o que converter, e ele segue pelo fluxo normal:
+   * é mais rápido e passa pela mesma checagem de peso do envio manual.
+   */
+  async function importarPasta(lista: File[]): Promise<string | null> {
+    if (!lista.length) {
+      setSaveMsg("Nenhum arquivo veio na seleção.");
+      return null;
+    }
+    const escolha = lerEscolhaPasta(lista);
+
+    if (!escolha.gltf) {
+      if (!escolha.glb) {
+        setSaveMsg("Nenhum .gltf ou .glb nessa pasta.");
+        return null;
+      }
+      if (!conferirPesoGlb(escolha.glb)) return null;
+      return uploadGlb(escolha.glb);
+    }
+
+    setImportandoPasta(true);
+    try {
+      const r = await importarPastaGltf(escolha, {}, (p) => setSaveMsg(p.texto));
+      const mb = (r.bytes / (1024 * 1024)).toFixed(1);
+
+      /**
+       * No modo Supabase o GLB ainda precisa sair daqui.
+       *
+       * A conversão grava em `client/public/uploads`, que só existe na máquina
+       * de quem edita. Salvar essa URL num projeto do Supabase publicaria uma
+       * vitrine apontando para um arquivo que ninguém mais alcança — o modelo
+       * abriria para quem converteu e para mais ninguém.
+       */
+      let url = r.url;
+      if (!MODO_LOCAL) {
+        setSaveMsg(`Convertido (${mb} MB). Enviando para o Supabase...`);
+        const bytes = await fetch(url).then((x) => x.blob());
+        const nome = url.split("/").pop() ?? "modelo.glb";
+        const enviado = await upload(new File([bytes], nome, { type: "model/gltf-binary" }));
+        if (!enviado) return null;
+        url = enviado;
+      }
+
+      setSaveMsg(
+        `Modelo importado: ${r.resumo}`
+        + (r.faltando.length
+          ? ` — ATENÇÃO: ${r.faltando.length} textura(s) não estavam na pasta `
+            + `(${r.faltando.slice(0, 3).join(", ")}${r.faltando.length > 3 ? "..." : ""})`
+          : "")
+        + " (salve para aplicar)",
+      );
+      return url;
+    } catch (e) {
+      setSaveMsg(`Erro na importação: ${e instanceof Error ? e.message : ""}`);
+      return null;
+    } finally {
+      setImportandoPasta(false);
+    }
   }
 
   async function upload(file: File): Promise<string | null> {
@@ -3290,8 +3369,17 @@ export default function IvmEditorPage() {
                   <input type="text" value={c.modelUrl ?? ""} placeholder="/models/arquivo.glb ou URL"
                     onChange={(e) => setConfig({ modelUrl: e.target.value })}
                     className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
-                  <button onClick={() => glbRef.current?.click()} className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20">
+                  <button onClick={() => glbRef.current?.click()} disabled={importandoPasta}
+                    title="Enviar um .glb pronto"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
                     <Upload className="h-3 w-3" />
+                  </button>
+                  <button onClick={() => pastaRef.current?.click()} disabled={importandoPasta}
+                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                    {importandoPasta
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <FolderUp className="h-3 w-3" />}
                   </button>
                   <input ref={glbRef} type="file" accept=".glb" className="hidden"
                     onChange={async (e) => {
@@ -3301,7 +3389,32 @@ export default function IvmEditorPage() {
                       const u = await uploadGlb(f);
                       if (u) setConfig({ modelUrl: u });
                     }} />
+                  <input ref={pastaRef} type="file" multiple className="hidden" {...ATRIBUTOS_PASTA}
+                    onChange={async (e) => {
+                      // COPIA antes de limpar: `value = ""` esvazia o proprio
+                      // FileList, e guardar so a referencia deixava a lista
+                      // vazia na hora de usar.
+                      const arquivos = Array.from(e.target.files ?? []);
+                      e.target.value = ""; // permite reenviar a mesma pasta
+                      const u = await importarPasta(arquivos);
+                      if (u) setConfig({ modelUrl: u });
+                    }} />
                 </div>
+                {/* O andamento também vai para a barra do topo, mas ela fica
+                    longe do botão: numa importação de minutos, sem sinal aqui
+                    o clique parece não ter feito nada. */}
+                {importandoPasta ? (
+                  <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-relaxed text-teal-300">
+                    <Loader2 className="mt-px h-3 w-3 shrink-0 animate-spin" />
+                    {saveMsg || "Importando..."}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[10px] leading-relaxed text-white/30">
+                    A <b>pasta</b> aceita a exportação crua do 3ds Max (<code>.gltf</code> +{" "}
+                    <code>.bin</code> + texturas) e devolve um <code>.glb</code> único, já
+                    texturizado e compactado. O envio direto espera um <code>.glb</code> pronto.
+                  </p>
+                )}
               </div>
             </Section>
           )}
@@ -3338,9 +3451,30 @@ export default function IvmEditorPage() {
                   <input type="text" value={c.mapaUrl ?? ""} placeholder="/models/terreno.glb ou URL"
                     onChange={(e) => setConfig({ mapaUrl: e.target.value })}
                     className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
-                  <button onClick={() => mapaGlbRef.current?.click()} className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20">
+                  <button onClick={() => mapaGlbRef.current?.click()} disabled={importandoPasta}
+                    title="Enviar um .glb pronto"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
                     <Upload className="h-3 w-3" />
                   </button>
+                  <button onClick={() => mapaPastaRef.current?.click()} disabled={importandoPasta}
+                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                    {importandoPasta
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <FolderUp className="h-3 w-3" />}
+                  </button>
+                  <input ref={mapaPastaRef} type="file" multiple className="hidden" {...ATRIBUTOS_PASTA}
+                    onChange={async (e) => {
+                      // COPIA antes de limpar: `value = ""` esvazia o proprio
+                      // FileList, e guardar so a referencia deixava a lista
+                      // vazia na hora de usar.
+                      const arquivos = Array.from(e.target.files ?? []);
+                      e.target.value = ""; // permite reenviar a mesma pasta
+                      const u = await importarPasta(arquivos);
+                      // Mesmo motivo do envio direto: quem acabou de importar o
+                      // mini mapa quer ver onde ele caiu.
+                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                    }} />
                   <input ref={mapaGlbRef} type="file" accept=".glb" className="hidden"
                     onChange={async (e) => {
                       const f = e.target.files?.[0];
@@ -3353,6 +3487,12 @@ export default function IvmEditorPage() {
                       if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
                     }} />
                 </div>
+                {importandoPasta && (
+                  <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-relaxed text-teal-300">
+                    <Loader2 className="mt-px h-3 w-3 shrink-0 animate-spin" />
+                    {saveMsg || "Importando..."}
+                  </p>
+                )}
               </div>
               {mapaErro && (
                 <div className="space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
