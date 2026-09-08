@@ -15,7 +15,9 @@ import { Matrix4, Cartesian3, Quaternion, Matrix3 } from "cesium";
  * A silhueta real não faz parte do padrão glTF. Por isso o importador calcula a
  * projeção dos triângulos uma única vez, antes de compactar, e a grava em
  * `scene.extras.ivmFootprintV1`. Este leitor recupera a anotação junto do mesmo
- * cabeçalho. GLBs antigos continuam devolvendo apenas a caixa como fallback.
+ * cabeçalho. GLBs antigos continuam devolvendo a caixa para enquadramento,
+ * mas ela não deve ser usada como recorte: isso abriria o quadrado que a
+ * silhueta existe justamente para evitar.
  */
 
 /** Caixa alinhada aos eixos, no referencial do modelo como o Cesium o usa. */
@@ -160,16 +162,28 @@ function lerJson(buffer: ArrayBuffer): DocGltf | null {
  */
 async function baixarCabecalho(url: string): Promise<ArrayBuffer | null> {
   try {
-    const r1 = await fetch(url, { headers: { Range: "bytes=0-19" } });
+    // O arquivo pode ter sido reprocessado mantendo o mesmo URL. `no-store` é
+    // essencial nesse caso: reutilizar o JSON anterior faz a cena acreditar
+    // que o GLB ainda não possui `ivmFootprintV1` e voltar ao recorte quadrado.
+    const opcoes = { cache: "no-store" as const };
+    const r1 = await fetch(url, {
+      ...opcoes,
+      headers: { Range: "bytes=0-19" },
+    });
     if (r1.status === 206) {
       const cab = await r1.arrayBuffer();
       if (cab.byteLength >= 20) {
         const tamJson = new DataView(cab).getUint32(12, true);
-        const r2 = await fetch(url, { headers: { Range: `bytes=0-${20 + tamJson}` } });
+        const r2 = await fetch(url, {
+          ...opcoes,
+          // O intervalo HTTP é inclusivo: bytes 0..19 são o cabeçalho e o
+          // JSON ocupa exatamente os `tamJson` bytes seguintes.
+          headers: { Range: `bytes=0-${19 + tamJson}` },
+        });
         if (r2.ok) return await r2.arrayBuffer();
       }
     }
-    const inteiro = await fetch(url);
+    const inteiro = await fetch(url, opcoes);
     return inteiro.ok ? await inteiro.arrayBuffer() : null;
   } catch {
     return null;

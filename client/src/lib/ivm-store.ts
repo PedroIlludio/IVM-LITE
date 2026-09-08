@@ -219,7 +219,8 @@ export interface ProjectConfig {
    * arquivo que estiver configurado. O importador grava em `scene.extras` a
    * silhueta calculada sobre os triângulos reais; assim o navegador lê só o
    * cabeçalho e não precisa decodificar a malha novamente. GLBs antigos, sem a
-   * anotação, continuam funcionando com a caixa como fallback.
+   * anotação, continuam sendo exibidos, mas não recebem recorte automático até
+   * serem reprocessados (a caixa criaria um quadrado fora da geometria).
    */
   recorteTerreno?: {
     /** Sobra em volta da pegada (1 = exatamente o contorno do modelo). */

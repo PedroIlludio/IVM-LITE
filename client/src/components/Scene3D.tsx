@@ -726,8 +726,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     recorteDebugRef.current =
       new URLSearchParams(window.location.search).get("recorteDebug") === "1";
   }
-  /** Caixa medida de cada GLB, por URL. Medida uma vez por arquivo. */
+  /** Caixa e pegada medidas de cada GLB, por URL. */
   const caixaGlbRef = useRef<Map<string, CaixaGlb | null>>(new Map());
+  /** Evita duas leituras concorrentes do cabeçalho do mesmo GLB. */
+  const medicaoGlbEmCursoRef = useRef<Set<string>>(new Set());
+  /** URLs antigas em memória são revalidadas uma vez em busca da pegada. */
+  const pegadaRevalidadaRef = useRef<Set<string>>(new Set());
   /** Entidades das vias desenhadas. */
   const viasRef = useRef<Entity[]>([]);
   const viasAtualRef = useRef<Via[]>(vias ?? []);
@@ -1179,18 +1183,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          * posiciona o modelo e as unidades, portanto rotação, escala e offsets
          * continuam perfeitamente alinhados.
          *
-         * Arquivo antigo ou enviado já pronto pode não ter essa anotação. Nesse
-         * caso preservamos o retângulo anterior como fallback, em vez de deixar
-         * a fotogrametria atravessar o empreendimento.
+         * Arquivo antigo ou enviado já pronto pode não ter essa anotação. Ele
+         * não recebe recorte automático até ser reprocessado: usar sua caixa
+         * envolvente aqui produziria exatamente o quadrado preto indesejado.
          */
-        const contornos = caixa.contornos?.length
-          ? caixa.contornos
-          : [[
-              [caixa.min[0], caixa.min[1]],
-              [caixa.max[0], caixa.min[1]],
-              [caixa.max[0], caixa.max[1]],
-              [caixa.min[0], caixa.max[1]],
-            ] as Array<[number, number]>];
+        const contornos = caixa.contornos ?? [];
         for (const contorno of contornos) {
           const positions = contorno.map(([x, y]) => {
             // A folga mantém o comportamento do slider: escala a pegada a
@@ -1201,7 +1198,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           });
           if (positions.length >= 3) polygons.push(new ClippingPolygon({ positions }));
         }
-        diag.pegada = caixa.contornos?.length ? "malha" : "caixa";
+        diag.pegada = contornos.length ? "malha" : "ausente";
         diag.contornosPredio = contornos.length;
       }
 
@@ -3443,6 +3440,30 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     });
   }
 
+  /**
+   * Lê caixa/pegada e repacta o recorte quando terminar. A revalidação cobre
+   * Fast Refresh e GLB reprocessado no mesmo URL, sem martelar a rede a cada
+   * movimento do modelo.
+   */
+  function garantirMedicaoGlb(url: string, revalidar = false) {
+    if (medicaoGlbEmCursoRef.current.has(url)) return;
+    if (revalidar) {
+      if (pegadaRevalidadaRef.current.has(url)) return;
+      pegadaRevalidadaRef.current.add(url);
+    } else if (caixaGlbRef.current.has(url)) {
+      return;
+    }
+
+    medicaoGlbEmCursoRef.current.add(url);
+    if (!caixaGlbRef.current.has(url)) caixaGlbRef.current.set(url, null);
+    void medirGlb(url)
+      .then((caixa) => {
+        caixaGlbRef.current.set(url, caixa);
+        aplicarRecorteTerreno();
+      })
+      .finally(() => medicaoGlbEmCursoRef.current.delete(url));
+  }
+
   async function loadModel(b: Building3D, node: BuildingNode) {
     const v = viewerRef.current;
     if (!v || !b.modelUrl) return;
@@ -3450,16 +3471,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     node.loadingUrl = url;
     marcarCarregamento(b.id, true);
 
-    // Mede a geometria em paralelo: e uma requisicao independente (so o
-    // cabecalho do arquivo) e o resultado so e necessario se o recorte estiver
-    // ligado. Uma vez por URL.
-    if (!caixaGlbRef.current.has(url)) {
-      caixaGlbRef.current.set(url, null); // reserva, para nao medir duas vezes
-      void medirGlb(url).then((caixa) => {
-        caixaGlbRef.current.set(url, caixa);
-        if (caixa) aplicarRecorteTerreno();
-      });
-    }
+    // Mede em paralelo; a geometria não precisa esperar a pegada para aparecer.
+    garantirMedicaoGlb(url);
 
     try {
       const gltf = await Model.fromGltfAsync({
@@ -6538,6 +6551,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   ]);
   useEffect(() => {
     if (!readyRef.current) return;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (recorteAtualRef.current && b?.modelUrl) {
+      const caixa = caixaGlbRef.current.get(b.modelUrl);
+      // Cobre uma medição sem pegada preservada pelo Fast Refresh ou um
+      // arquivo reprocessado no mesmo URL. O Set limita a uma tentativa.
+      if (!caixa?.contornos?.length) garantirMedicaoGlb(b.modelUrl, true);
+    }
     aplicarRecorteTerreno();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recorteChave, pronto]);
