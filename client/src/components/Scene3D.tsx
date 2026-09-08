@@ -390,6 +390,15 @@ interface Scene3DProps {
   /** Contorno alterado ao arrastar um pivô da área. */
   onAreaPontos?: (areaId: string, pontos: Superficie["pontos"]) => void;
   /**
+   * Como o arraste do pivo de area/corte se move por padrao.
+   *
+   * `altura` sobe e desce; `plano` anda no chao. Existe como PROP, e nao so
+   * como o atalho de Shift que ja havia, porque um modificador escondido nao se
+   * descobre: quem nao o conhece conclui que o pivo so faz uma das duas coisas.
+   * O Shift continua valendo, agora invertendo o modo escolhido aqui.
+   */
+  modoPivoArea?: "altura" | "plano";
+  /**
    * Ferramenta ativa do gizmo, como em qualquer editor 3D: só a alça da
    * ferramenta escolhida aparece. Com as cinco alças na tela ao mesmo tempo,
    * acertar a certa era loteria.
@@ -677,7 +686,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
-    superficies = null, areaEditandoId = null, onAreaPontos,
+    superficies = null, areaEditandoId = null, onAreaPontos, modoPivoArea = "altura",
     unidadePlantaId = null, onUnidadePlanta,
   },
   ref,
@@ -771,6 +780,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   areaEditandoRef.current = areaEditandoId;
   const onAreaPontosRef = useRef(onAreaPontos);
   onAreaPontosRef.current = onAreaPontos;
+  // Lida no meio do arraste, entao precisa da ref e nao da prop.
+  const modoPivoAreaRef = useRef(modoPivoArea);
+  modoPivoAreaRef.current = modoPivoArea;
   /**
    * Caixas das unidades por REF.
    *
@@ -5552,8 +5564,31 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const axisD = Ellipsoid.WGS84.geodeticSurfaceNormal(axisO, new Cartesian3());
     const ray = v.camera.getPickRay(pos);
     if (!ray) return false;
-    const modo: "altura" | "plano" = modRef.current.shift ? "plano" : "altura";
+    /**
+     * O modo vem do PAINEL, e o Shift apenas inverte o que estiver escolhido.
+     *
+     * Antes só existia o Shift: mover no plano era um atalho que não aparecia
+     * em lugar nenhum da tela, e quem não o conhecesse concluía que o pivô só
+     * subia e descia. Com o modo explícito, arrastar para o lado é um botão; o
+     * Shift continua valendo para quem já o usa e para alternar sem largar o
+     * mouse.
+     */
+    const base = modoPivoAreaRef.current;
+    const modo: "altura" | "plano" = modRef.current.shift
+      ? (base === "altura" ? "plano" : "altura")
+      : base;
     const noPlano = modo === "plano" ? rayGroundPoint(ray, axisO, axisD) : undefined;
+    /**
+     * Cair para "altura" quando o plano não resolve era SILENCIOSO: o pivô
+     * subia no lugar de andar, e parecia que o modo não existia. Só acontece em
+     * câmera quase rasante, quando o raio corre paralelo ao plano do chão — e aí
+     * o certo é dizer para inclinar a câmera, não trocar o gesto por baixo.
+     */
+    if (modo === "plano" && !noPlano) {
+      onGizmoInfoRef.current?.(
+        "Câmera rasante demais para mover no plano — incline para baixo e tente de novo.",
+      );
+    }
     areaDragRef.current = {
       areaId: area.id,
       index,
@@ -5594,7 +5629,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       onAreaPontosRef.current?.(drag.areaId, pontos);
       onGizmoInfoRef.current?.(
         `Área · vértice ${drag.index + 1}: movendo no plano `
-        + `(${Cartesian3.magnitude(delta).toFixed(2)} m)`,
+        + `(${Cartesian3.magnitude(delta).toFixed(2)} m) · Shift volta para altura`,
       );
       return;
     }

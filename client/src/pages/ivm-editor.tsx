@@ -435,6 +435,14 @@ export default function IvmEditorPage() {
   /** Superfície com os pivôs de altura visíveis no 3D. */
   const [areaAlturaId, setAreaAlturaId] = useState<string | null>(null);
   /**
+   * Como o pivo de area/corte se move ao ser arrastado.
+   *
+   * Nao vai para o projeto: e preferencia de gesto de quem esta editando, nao
+   * dado do empreendimento. Fica aqui em cima porque as duas secoes (superficie
+   * e corte) usam o mesmo botao e o mesmo pivo.
+   */
+  const [modoPivoArea, setModoPivoArea] = useState<"altura" | "plano">("altura");
+  /**
    * O item do entorno ABERTO no painel — um só, via ou superfície.
    *
    * Existe porque a lista mostrava os controles de TODOS os itens ao mesmo
@@ -2390,6 +2398,7 @@ export default function IvmEditorPage() {
           onUnidadePlanta={setPlantaUnidade}
           superficies={superficies}
           areaEditandoId={areaAlturaId}
+          modoPivoArea={modoPivoArea}
           onAreaPontos={(areaId, pontos) => patchArea(areaId, { pontos })}
           onSelectUnit={(uid, mods) => {
             const u = unidades.find((x) => x.id === uid);
@@ -3337,14 +3346,41 @@ export default function IvmEditorPage() {
                               }`}>
                               {areaAlturaId === area.id ? "Concluir ajuste" : "Ajustar no 3D"}
                             </button>
+                            {/* O modo do arraste como BOTAO, e nao so como Shift: um
+                                modificador escondido nao se descobre, e quem nao o
+                                conhecesse concluia que o pivo so subia e descia. */}
+                            {areaAlturaId === area.id && (
+                              <div>
+                                <label className="mb-0.5 block text-[10px] text-white/45">
+                                  Arrastar o pivô
+                                </label>
+                                <div className="flex gap-1">
+                                  {([
+                                    ["altura", "↕ Altura"],
+                                    ["plano", "↔ Lados"],
+                                  ] as const).map(([id, rotulo]) => (
+                                    <button key={id}
+                                      onClick={() => setModoPivoArea(id)}
+                                      className={`flex-1 rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                        modoPivoArea === id
+                                          ? "border-lime-400/60 bg-lime-400/15 text-lime-200"
+                                          : "border-white/10 text-white/55 hover:border-white/25"
+                                      }`}>
+                                      {rotulo}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             <NumIn label="Folga do corte (m)" v={area.folgaCorte ?? 0}
                               step={0.1} casas={2}
                               onChange={(x) => patchArea(area.id, {
                                 folgaCorte: Math.max(-5, Math.min(5, x)),
                               })} />
                             <p className="text-[9px] leading-relaxed text-white/30">
-                              Arraste o pivô <b className="text-lime-300">verde</b> para
-                              cima e para baixo. <b>Shift</b> arrasta no plano do chão.
+                              Arraste o pivô <b className="text-lime-300">verde</b> no
+                              modo escolhido acima. <b>Shift</b> inverte o modo sem
+                              largar o mouse.
                             </p>
                           </>
                         )}
@@ -3523,14 +3559,41 @@ export default function IvmEditorPage() {
                                     }`}>
                                     {areaAlturaId === area.id ? "Concluir ajuste" : "Ajustar no 3D"}
                                   </button>
+                                  {/* O modo do arraste como BOTAO, e nao so como Shift: um
+                                      modificador escondido nao se descobre, e quem nao o
+                                      conhecesse concluia que o pivo so subia e descia. */}
+                                  {areaAlturaId === area.id && (
+                                    <div>
+                                      <label className="mb-0.5 block text-[10px] text-white/45">
+                                        Arrastar o pivô
+                                      </label>
+                                      <div className="flex gap-1">
+                                        {([
+                                          ["altura", "↕ Altura"],
+                                          ["plano", "↔ Lados"],
+                                        ] as const).map(([id, rotulo]) => (
+                                          <button key={id}
+                                            onClick={() => setModoPivoArea(id)}
+                                            className={`flex-1 rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                              modoPivoArea === id
+                                                ? "border-lime-400/60 bg-lime-400/15 text-lime-200"
+                                                : "border-white/10 text-white/55 hover:border-white/25"
+                                            }`}>
+                                            {rotulo}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
                                   <NumIn label="Folga do corte (m)" v={area.folgaCorte ?? 0}
                                     step={0.1} casas={2}
                                     onChange={(x) => patchArea(area.id, {
                                       folgaCorte: Math.max(-5, Math.min(5, x)),
                                     })} />
                                   <p className="text-[9px] leading-relaxed text-white/30">
-                                    Arraste o pivô <b className="text-lime-300">verde</b> para
-                                    cima e para baixo. <b>Shift</b> arrasta no plano do chão.
+                                    Arraste o pivô <b className="text-lime-300">verde</b> no
+                                    modo escolhido acima. <b>Shift</b> inverte o modo sem
+                                    largar o mouse.
                                   </p>
                                 </>
                               )}
