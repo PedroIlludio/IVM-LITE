@@ -430,6 +430,22 @@ interface Scene3DProps {
    * quem ACABOU de subir o arquivo no editor saber por que ele sumiu.
    */
   onMapaErro?: (msg: string) => void;
+  /**
+   * Em que pé está a pegada usada para recortar a fotogrametria.
+   *
+   * Existe porque a ausência da silhueta é um NÃO-EVENTO na tela: sem a
+   * anotação `ivmFootprintV1` o recorte simplesmente não desenha nada, e não
+   * há como distinguir "não recortou" de "recortou e ficou igual". Antes havia
+   * o retângulo da caixa como último recurso; ele foi removido justamente por
+   * produzir o quadrado que a silhueta veio evitar, e com ele foi embora o
+   * único sinal visível de que faltava contorno.
+   *
+   * - `medindo`   — o cabeçalho do GLB ainda está sendo lido;
+   * - `ok`        — silhueta encontrada e aplicada;
+   * - `sem-pegada`— o arquivo carregou, mas não traz `ivmFootprintV1`;
+   * - `ilegivel`  — não deu para ler o cabeçalho do arquivo.
+   */
+  onRecortePegada?: (estado: "medindo" | "ok" | "sem-pegada" | "ilegivel") => void;
 }
 
 /**
@@ -657,7 +673,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     cidade = true, fotogrametria = true, mapaBase = null, sombras = "sempre",
     orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
-    gizmoMapa = false, onMapaTransform, onMapaErro, corteArea = null,
+    gizmoMapa = false, onMapaTransform, onMapaErro, onRecortePegada, corteArea = null,
     plantaPavimento = null,
     recorteTerreno = null, previewRecorte = false, vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
@@ -730,6 +746,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const caixaGlbRef = useRef<Map<string, CaixaGlb | null>>(new Map());
   /** Evita duas leituras concorrentes do cabeçalho do mesmo GLB. */
   const medicaoGlbEmCursoRef = useRef<Set<string>>(new Set());
+  /**
+   * Último estado de pegada avisado ao editor.
+   *
+   * `aplicarRecorteTerreno` roda a cada mudança de câmera, via ou seleção;
+   * avisar sempre viraria um `setState` por quadro. Só a TRANSIÇÃO interessa.
+   */
+  const pegadaAvisadaRef = useRef<string | null>(null);
+  const onRecortePegadaRef = useRef(onRecortePegada);
+  onRecortePegadaRef.current = onRecortePegada;
   /** URLs antigas em memória são revalidadas uma vez em busca da pegada. */
   const pegadaRevalidadaRef = useRef<Set<string>>(new Set());
   /** Entidades das vias desenhadas. */
@@ -1172,6 +1197,27 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       }
       diag.suportado = true;
       const polygons: ClippingPolygon[] = [];
+
+      /**
+       * Diz ao editor por que o recorte do prédio saiu (ou não saiu).
+       *
+       * Sem isto a falta da silhueta é indistinguível de tudo certo: nos dois
+       * casos a tela fica igual. Quem acabou de ligar o recorte precisa saber
+       * que o modelo é antigo e pede reimportação — não adivinhar.
+       */
+      if (recortaPredio && b?.modelUrl) {
+        const medindo = medicaoGlbEmCursoRef.current.has(b.modelUrl);
+        const estado = medindo
+          ? "medindo"
+          : !caixa
+            ? "ilegivel"
+            : caixa.contornos?.length ? "ok" : "sem-pegada";
+        diag.pegadaEstado = estado;
+        if (pegadaAvisadaRef.current !== estado) {
+          pegadaAvisadaRef.current = estado;
+          onRecortePegadaRef.current?.(estado);
+        }
+      }
 
       if (recortaPredio && b && node && caixa) {
         const folga = cfg?.folga ?? 1;
@@ -3459,6 +3505,16 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     void medirGlb(url)
       .then((caixa) => {
         caixaGlbRef.current.set(url, caixa);
+        /**
+         * Sai da lista de "em curso" ANTES de reaplicar, não no `finally`.
+         *
+         * O recorte consulta este conjunto para distinguir "ainda estou lendo o
+         * cabeçalho" de "li e não havia silhueta". Reaplicando de dentro do
+         * `then`, com a URL ainda marcada, a cena se via medindo para sempre — e
+         * o aviso de modelo sem contorno nunca aparecia, que é exatamente o
+         * silêncio que ele existe para quebrar.
+         */
+        medicaoGlbEmCursoRef.current.delete(url);
         aplicarRecorteTerreno();
       })
       .finally(() => medicaoGlbEmCursoRef.current.delete(url));

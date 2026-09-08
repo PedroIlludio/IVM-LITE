@@ -420,6 +420,14 @@ export default function IvmEditorPage() {
       /* modo privado: vale só para esta sessão */
     }
   }, [chavePreviewRecorte, previewRecorte]);
+  /**
+   * Estado da silhueta que recorta a fotogrametria — ver `onRecortePegada`.
+   *
+   * Guardado aqui porque a falta dela não aparece na cena: sem contorno o
+   * recorte não desenha nada, e "não recortou" fica igual a "recortou certo".
+   */
+  const [recortePegada, setRecortePegada] =
+    useState<"medindo" | "ok" | "sem-pegada" | "ilegivel" | null>(null);
   /** Via com o traçado aberto para edição no mapa. */
   const [tracandoVia, setTracandoVia] = useState<string | null>(null);
   /** Superfície com o contorno em desenho no mapa 2D. */
@@ -2359,6 +2367,7 @@ export default function IvmEditorPage() {
             c.recorteTerreno ? { ...c.recorteTerreno, preview: previewRecorte } : null
           }
           previewRecorte={previewRecorte}
+          onRecortePegada={setRecortePegada}
           vias={vias}
           corVia={entorno.corVia}
           viaEditandoId={viaAlturaId}
@@ -2726,8 +2735,43 @@ export default function IvmEditorPage() {
                   <p className="text-[10px] leading-relaxed text-white/25">
                     <b>100%</b> é o contorno do modelo. Abaixo disso o buraco
                     encolhe para dentro dele; acima, sobra terreno recortado em
-                    volta. Arquivos antigos sem contorno usam a caixa.
+                    volta.
                   </p>
+
+                  {/* A falta de contorno não aparece na cena: o recorte
+                      simplesmente não desenha. Sem este aviso, o sintoma é
+                      "liguei e não aconteceu nada", sem pista do motivo. */}
+                  {(recortePegada === "sem-pegada" || recortePegada === "ilegivel") && (
+                    <div className="space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                      <p className="text-[11px] font-semibold text-amber-300">
+                        {recortePegada === "sem-pegada"
+                          ? "Este modelo não tem contorno — o recorte não sai."
+                          : "Não foi possível ler o contorno deste modelo."}
+                      </p>
+                      <p className="text-[10px] leading-relaxed text-white/60">
+                        {recortePegada === "sem-pegada" ? (
+                          <>
+                            A silhueta é calculada sobre a malha <b>durante a
+                            importação</b> e gravada dentro do <code>.glb</code>.
+                            GLBs enviados prontos, ou importados antes deste
+                            recurso, não a possuem. <b>Reimporte a pasta</b> (ou
+                            reenvie o <code>.glb</code>) para gerá-la.
+                          </>
+                        ) : (
+                          <>
+                            O arquivo não respondeu à leitura do cabeçalho. Se
+                            ele está num domínio externo, o servidor precisa
+                            liberar CORS e requisições <code>Range</code>.
+                          </>
+                        )}
+                      </p>
+                      <p className="text-[10px] leading-relaxed text-white/40">
+                        Enquanto isso o recorte fica desligado de propósito: usar
+                        a caixa do modelo devolveria o quadrado que o contorno
+                        veio corrigir.
+                      </p>
+                    </div>
+                  )}
 
                   {/* A pré-visualização é temporária e não é gravada: ela existe
                       para conferir, não para trabalhar com o buraco aberto. */}
