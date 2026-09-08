@@ -11,11 +11,6 @@ vite.config.ts.*
 # Os PROJETOS em data/projects/ ficam versionados de propósito.
 client/public/uploads/
 
-# Pasta glTF em transito na importacao (.gltf + .bin + texturas cruas).
-# E copia temporaria de trabalho: o servidor apaga ao fim da conversao, e o que
-# interessa e o GLB gerado em client/public/uploads.
-data/gltf-import/
-
 # GLBs originais/pesados (fonte). O modelo otimizado versionado fica em
 # client/public/models/. Não commitar os brutos de centenas de MB.
 glb/

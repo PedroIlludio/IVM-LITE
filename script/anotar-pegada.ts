@@ -23,7 +23,7 @@ import { ALL_EXTENSIONS } from "@gltf-transform/extensions";
 import draco3d from "draco3dgltf";
 import { promises as fs } from "fs";
 import path from "path";
-import { anotarPegadaGlb, IVM_FOOTPRINT_KEY } from "./glb-footprint";
+import { anotarPegadaGlb, IVM_FOOTPRINT_KEY } from "../shared/glb-footprint";
 import { sanearGlb } from "../server/sanearGlb";
 
 function mb(bytes: number): string {

@@ -5,13 +5,16 @@
  * não sabia converter subia só o `.gltf`, que abre sem geometria e sem textura
  * nenhuma — o modelo some ou vira uma casca cinza, sem erro que explique.
  *
- * Aqui a pasta inteira sobe e o servidor devolve UM `.glb` com tudo embutido
- * (`server/gltfImport.ts`). Do ponto de vista do resto do editor não mudou
- * nada: o que volta é a mesma URL de sempre, para o mesmo campo de sempre.
+ * A conversão acontece NO NAVEGADOR (`gltf-worker.ts`). Já morou no `server/`,
+ * e por isso não existia no site publicado: o deploy é serverless, e função
+ * serverless não recebe 417 MB de upload nem fica minutos com 1,6 GB de RAM.
+ * Como o produto é web, a conversão precisava ser web — não uma tarefa que só
+ * roda na máquina de quem edita.
  *
- * Este módulo faz a parte do navegador: achar o `.gltf`, descobrir quais
- * arquivos ele realmente usa, mandá-los e acompanhar a conversão.
+ * Este módulo faz a parte de fora: achar o `.gltf` na seleção, descobrir quais
+ * arquivos ele realmente usa e conduzir o worker.
  */
+import type { PedidoConversao, RespostaConversao } from "./gltf-worker";
 
 /**
  * Atributos que transformam um `<input type="file">` em seletor de PASTA.
@@ -30,18 +33,22 @@ export const ATRIBUTOS_PASTA = { webkitdirectory: "", directory: "" } as unknown
 /** Um passo do processo, para a tela dizer o que está acontecendo. */
 export interface ProgressoPasta {
   texto: string;
-  /** 0..1 quando dá para saber; ausente na conversão, que não tem medida. */
+  /** 0..1 enquanto os arquivos são lidos; ausente durante a conversão. */
   fracao?: number;
 }
 
 export interface ResultadoPasta {
-  /** URL do GLB gerado, servida por `client/public/uploads`. */
-  url: string;
+  /** O `.glb` pronto, para seguir pelo mesmo upload de sempre. */
+  arquivo: File;
   bytes: number;
-  /** Resumo do que saiu ("203 malhas, 115 materiais... — 23.8 MB"). */
+  /** Resumo do que saiu ("203 malhas, 115 materiais... — 26.9 MB"). */
   resumo: string;
   /** Arquivos que o `.gltf` cita e não vieram na pasta. */
   faltando: string[];
+  /** Consertos aplicados para o Cesium não quebrar (ver `glb-sanear`). */
+  correcoes: string[];
+  /** Quantas silhuetas foram gravadas para o recorte da fotogrametria. */
+  contornos: number;
 }
 
 /** O que o `<input webkitdirectory>` entregou, resumido. */
@@ -77,209 +84,103 @@ export function lerEscolhaPasta(lista: FileList | File[]): EscolhaPasta {
 }
 
 /**
- * Lista os arquivos que o `.gltf` realmente usa, na ordem em que devem subir.
+ * Caminhos relativos AO `.gltf`, não à raiz da seleção.
  *
- * Só o que está citado em `buffers`/`images` vai junto. A pasta de exportação
- * costuma vir com sobras — mapas de outra versão, `.max`, prints — e mandar
- * tudo dobraria o tempo de upload de um modelo de centenas de MB sem mudar uma
- * vírgula no resultado.
- *
- * As URIs são resolvidas RELATIVAS AO `.gltf`, não à raiz da seleção: quem
- * escolhe a pasta `GLTF_Sesi` em vez de `GLTF_Sesi/Teste1` não deve receber um
- * modelo sem textura por causa disso.
+ * Quem escolhe a pasta `GLTF_Sesi` em vez de `GLTF_Sesi/Teste1` não deve
+ * receber um modelo sem textura por causa disso: as URIs do `.gltf` são
+ * relativas a ele, então é dele que o caminho tem de partir.
  */
-async function arquivosUsados(
-  gltf: File,
-  todos: File[],
-): Promise<{ enviar: { file: File; rel: string }[]; ausentes: string[]; nomeGltf: string }> {
-  const json = JSON.parse(await gltf.text()) as {
-    buffers?: { uri?: string }[];
-    images?: { uri?: string }[];
-  };
-
+function relativosAoGltf(gltf: File, todos: File[]): {
+  arquivos: { rel: string; file: File }[];
+  nomeGltf: string;
+} {
   const dir = caminho(gltf).split("/").slice(0, -1).join("/");
   const prefixo = dir ? `${dir}/` : "";
-  const nomeGltf = caminho(gltf).slice(prefixo.length);
-
-  // Índice por caminho relativo ao `.gltf`, em minúsculas: o `.gltf` escreve
-  // `Grass001_2K-JPG_Color.jpg` e o arquivo no disco pode estar em outra caixa.
-  const porRel = new Map<string, { file: File; rel: string }>();
+  const arquivos: { rel: string; file: File }[] = [];
   for (const f of todos) {
     const p = caminho(f);
     if (prefixo && !p.startsWith(prefixo)) continue;
     const rel = p.slice(prefixo.length);
-    if (rel) porRel.set(rel.toLowerCase(), { file: f, rel });
+    if (rel) arquivos.push({ rel, file: f });
   }
-
-  const enviar = new Map<string, { file: File; rel: string }>();
-  const ausentes: string[] = [];
-  enviar.set(nomeGltf.toLowerCase(), { file: gltf, rel: nomeGltf });
-
-  for (const item of [...(json.buffers ?? []), ...(json.images ?? [])]) {
-    const uri = item.uri;
-    // `data:` já está embutido no próprio `.gltf`; não há arquivo a mandar.
-    if (!uri || /^data:/i.test(uri)) continue;
-    const cru = uri.replace(/\\/g, "/");
-    let decodificada = cru;
-    try {
-      decodificada = decodeURIComponent(cru);
-    } catch {
-      /* percent-encoding inválido: fica só com o texto cru */
-    }
-    const achado = porRel.get(cru.toLowerCase()) ?? porRel.get(decodificada.toLowerCase());
-    if (achado) enviar.set(achado.rel.toLowerCase(), achado);
-    else ausentes.push(uri);
-  }
-
-  // O `.gltf` primeiro, e o resto do menor para o maior: o `.bin` gigante fica
-  // por último, então uma pasta errada falha em segundos em vez de minutos.
-  const ordenados = Array.from(enviar.values()).sort((a, b) =>
-    a.file === gltf ? -1 : b.file === gltf ? 1 : a.file.size - b.file.size,
-  );
-  return { enviar: ordenados, ausentes, nomeGltf };
+  return { arquivos, nomeGltf: caminho(gltf).slice(prefixo.length) };
 }
-
-/**
- * Erro de quem NÃO tem a rota: o site publicado.
- *
- * A conversão mora em `server/` + `script/`, e o `.vercelignore` exclui as duas
- * pastas — o deploy sobe só as funções de `api/`. Então `/api/local/gltf-import`
- * responde a página 404 da hospedagem, em HTML. Sem este caso o editor mostrava
- * esse HTML cru ("The page could not be found NOT_FOUND gru1::..."), que não
- * diz a única coisa que importa: isto não roda aqui.
- */
-const SO_LOCAL =
-  "A importação de pasta só existe no servidor de desenvolvimento local "
-  + "(npm run dev). No site publicado, envie um .glb pronto pelo botão de upload.";
-
-async function json<T>(r: Response): Promise<T> {
-  if (!r.ok) {
-    const tipo = r.headers.get("content-type") ?? "";
-    if (r.status === 404 && !tipo.includes("json")) throw new Error(SO_LOCAL);
-    const corpo = await r.text().catch(() => "");
-    let msg = corpo;
-    try {
-      msg = (JSON.parse(corpo) as { error?: string }).error ?? corpo;
-    } catch {
-      // Resposta não-JSON (proxy, HTML de erro): o corpo inteiro é ruído.
-      msg = `HTTP ${r.status}`;
-    }
-    throw new Error(msg || `HTTP ${r.status}`);
-  }
-  return r.json() as Promise<T>;
-}
-
-/**
- * A importação de pasta está disponível neste ambiente?
- *
- * `import.meta.env.DEV` é resolvido pelo Vite na build: no pacote publicado ele
- * vira `false` em tempo de compilação. É a mesma fronteira do `.vercelignore`,
- * então não há como as duas respostas divergirem.
- */
-export const IMPORTAR_PASTA_DISPONIVEL = import.meta.env.DEV;
 
 export interface OpcoesPasta {
-  /** Compactar a geometria (Draco). Desligue só para depurar. */
-  draco?: boolean;
-  /** Converter as texturas para WebP. */
-  webp?: boolean;
-  /** Lado máximo das texturas, em pixels. */
+  /** Lado máximo das texturas de COR. */
   maxTextura?: number;
+  /** Lado máximo das texturas de DADO (normal, roughness, occlusion). */
+  maxTexturaDados?: number;
+  /** Qualidade WebP das texturas de cor, 0..1. */
+  qualidadeCor?: number;
+  /** Passo de quantização dos mapas de dado — ver `comprimirTexturas`. */
+  passoDados?: number;
   /** Nome-base do arquivo gerado. */
   nome?: string;
 }
 
 /**
- * Sobe a pasta e converte. Resolve com a URL do GLB pronto.
+ * Converte a pasta e resolve com o `.glb` pronto, em memória.
  *
- * O upload é UM ARQUIVO POR REQUISIÇÃO, em série. Um `multipart` de 400 MB
- * exigiria montar o corpo inteiro na memória do navegador antes de mandar, e
- * seria tudo ou nada: o `.bin` falhando no fim jogaria fora as 70 texturas que
- * já tinham subido. Em série, cada arquivo é um passo visível e o progresso é
- * real, não estimado.
+ * Não sobe nada: quem envia é o editor, pelo MESMO caminho de upload do `.glb`
+ * manual. É isso que faz a importação funcionar tanto no modo local quanto no
+ * Supabase sem nenhum ramo especial — o que sai daqui é um arquivo comum.
  */
-export async function importarPastaGltf(
+export function importarPastaGltf(
   escolha: EscolhaPasta,
   opcoes: OpcoesPasta,
   aoProgredir: (p: ProgressoPasta) => void,
 ): Promise<ResultadoPasta> {
-  const { gltf, arquivos } = escolha;
-  if (!gltf) throw new Error("nenhum arquivo .gltf na pasta escolhida");
+  const { gltf, arquivos: todos } = escolha;
+  if (!gltf) return Promise.reject(new Error("nenhum arquivo .gltf na pasta escolhida"));
 
-  aoProgredir({ texto: "Lendo a pasta..." });
-  const { enviar, ausentes, nomeGltf } = await arquivosUsados(gltf, arquivos);
+  const { arquivos, nomeGltf } = relativosAoGltf(gltf, todos);
 
-  const { sid } = await json<{ sid: string }>(
-    await fetch("/api/local/gltf-import", { method: "POST" }),
-  );
-
-  try {
-    const total = enviar.reduce((s, a) => s + a.file.size, 0);
-    let subiu = 0;
-    for (const { file, rel } of enviar) {
-      aoProgredir({
-        texto: `Enviando ${rel} (${(file.size / 1024 / 1024).toFixed(1)} MB)...`,
-        fracao: total ? subiu / total : 0,
-      });
-      await json(
-        await fetch(
-          `/api/local/gltf-import/${sid}/arquivo?path=${encodeURIComponent(rel)}`,
-          { method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: file },
-        ),
-      );
-      subiu += file.size;
-    }
-
-    aoProgredir({ texto: "Convertendo...", fracao: 1 });
-    await json(
-      await fetch(`/api/local/gltf-import/${sid}/empacotar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gltf: nomeGltf,
-          nome: opcoes.nome ?? gltf.name,
-          draco: opcoes.draco !== false,
-          webp: opcoes.webp !== false,
-          maxTextura: opcoes.maxTextura ?? 2048,
-        }),
-      }),
-    );
-
-    // A conversão de um modelo grande passa dos minutos. Consultar de 1,5 em
-    // 1,5 s dá um texto que se move sem encher o servidor de requisição.
-    for (;;) {
-      await new Promise((r) => setTimeout(r, 1500));
-      const e = await json<{
-        fase: string;
-        texto: string;
-        pronto: boolean;
-        erro?: string;
-        url?: string;
-        bytes?: number;
-        faltando?: string[];
-        segundos: number;
-      }>(await fetch(`/api/local/gltf-import/${sid}/estado`));
-
-      if (!e.pronto) {
-        aoProgredir({ texto: `${e.texto} (${e.segundos}s)` });
-        continue;
-      }
-      if (e.erro || !e.url) throw new Error(e.erro || "a conversão não gerou arquivo");
-      return {
-        url: e.url,
-        bytes: e.bytes ?? 0,
-        resumo: e.texto,
-        // O servidor só sabe o que o `.gltf` pediu e ele não achou no disco; o
-        // navegador sabe o que nem chegou a subir. Os dois casos são a mesma
-        // notícia para quem exportou, então vão juntos.
-        faltando: Array.from(new Set(ausentes.concat(e.faltando ?? []))),
-      };
-    }
-  } catch (erro) {
-    // Sessão abandonada deixaria centenas de MB em `data/gltf-import`.
-    await fetch(`/api/local/gltf-import/${sid}`, { method: "DELETE" }).catch(() => {
-      /* o servidor limpa sozinho ao fim da conversão; aqui é só capricho */
+  return new Promise<ResultadoPasta>((resolver, rejeitar) => {
+    const worker = new Worker(new URL("./gltf-worker.ts", import.meta.url), {
+      type: "module",
     });
-    throw erro;
-  }
+    const encerrar = () => worker.terminate();
+
+    worker.onmessage = (ev: MessageEvent<RespostaConversao>) => {
+      const m = ev.data;
+      if (m.tipo === "passo") {
+        aoProgredir({ texto: m.texto });
+        return;
+      }
+      encerrar();
+      if (m.tipo === "erro") {
+        rejeitar(new Error(m.texto));
+        return;
+      }
+      const base = (opcoes.nome ?? gltf.name).replace(/\.(gltf|glb)$/i, "");
+      resolver({
+        arquivo: new File([m.bytes as BlobPart], `${base}.glb`, {
+          type: "model/gltf-binary",
+        }),
+        bytes: m.bytes.byteLength,
+        resumo: m.resumo,
+        faltando: m.faltando,
+        correcoes: m.correcoes,
+        contornos: m.contornos,
+      });
+    };
+
+    worker.onerror = (e) => {
+      encerrar();
+      // `e.message` vem vazio em erro de carregamento do módulo do worker; o
+      // texto genérico ao menos diz onde olhar.
+      rejeitar(new Error(e.message || "o conversor não pôde ser carregado"));
+    };
+
+    aoProgredir({ texto: "Preparando a conversão..." });
+    worker.postMessage({
+      arquivos,
+      nomeGltf,
+      maxTextura: opcoes.maxTextura ?? 2048,
+      maxTexturaDados: opcoes.maxTexturaDados ?? 1024,
+      qualidadeCor: opcoes.qualidadeCor ?? 0.85,
+      passoDados: opcoes.passoDados ?? 8,
+    } satisfies PedidoConversao);
+  });
 }

@@ -3,7 +3,6 @@ import { createServer, type Server } from "http";
 import { registerVision3DRoutes } from "./vision3dRoutes";
 import { registerUnidadesRoutes } from "./unidadesRoutes";
 import { registerProjectsRoutes } from "./projectsRoutes";
-import { registerGltfImportRoutes } from "./gltfImport";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -114,7 +113,6 @@ export async function registerRoutes(
   registerVision3DRoutes(app);
   registerUnidadesRoutes(app);
   registerProjectsRoutes(app);
-  registerGltfImportRoutes(app);
 
   return httpServer;
 }
