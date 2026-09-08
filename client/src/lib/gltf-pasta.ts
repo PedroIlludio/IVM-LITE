@@ -139,19 +139,44 @@ async function arquivosUsados(
   return { enviar: ordenados, ausentes, nomeGltf };
 }
 
+/**
+ * Erro de quem NÃO tem a rota: o site publicado.
+ *
+ * A conversão mora em `server/` + `script/`, e o `.vercelignore` exclui as duas
+ * pastas — o deploy sobe só as funções de `api/`. Então `/api/local/gltf-import`
+ * responde a página 404 da hospedagem, em HTML. Sem este caso o editor mostrava
+ * esse HTML cru ("The page could not be found NOT_FOUND gru1::..."), que não
+ * diz a única coisa que importa: isto não roda aqui.
+ */
+const SO_LOCAL =
+  "A importação de pasta só existe no servidor de desenvolvimento local "
+  + "(npm run dev). No site publicado, envie um .glb pronto pelo botão de upload.";
+
 async function json<T>(r: Response): Promise<T> {
   if (!r.ok) {
+    const tipo = r.headers.get("content-type") ?? "";
+    if (r.status === 404 && !tipo.includes("json")) throw new Error(SO_LOCAL);
     const corpo = await r.text().catch(() => "");
     let msg = corpo;
     try {
       msg = (JSON.parse(corpo) as { error?: string }).error ?? corpo;
     } catch {
-      /* resposta não-JSON (proxy, HTML de erro): mostra o texto cru */
+      // Resposta não-JSON (proxy, HTML de erro): o corpo inteiro é ruído.
+      msg = `HTTP ${r.status}`;
     }
     throw new Error(msg || `HTTP ${r.status}`);
   }
   return r.json() as Promise<T>;
 }
+
+/**
+ * A importação de pasta está disponível neste ambiente?
+ *
+ * `import.meta.env.DEV` é resolvido pelo Vite na build: no pacote publicado ele
+ * vira `false` em tempo de compilação. É a mesma fronteira do `.vercelignore`,
+ * então não há como as duas respostas divergirem.
+ */
+export const IMPORTAR_PASTA_DISPONIVEL = import.meta.env.DEV;
 
 export interface OpcoesPasta {
   /** Compactar a geometria (Draco). Desligue só para depurar. */

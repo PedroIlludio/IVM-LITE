@@ -27,7 +27,9 @@ import {
 } from "@/lib/pavimentos";
 import { plantasDeTipologia, plantasOrfas } from "@/lib/tipologias";
 import { sanearGlb } from "@/lib/glb-sanear";
-import { ATRIBUTOS_PASTA, importarPastaGltf, lerEscolhaPasta } from "@/lib/gltf-pasta";
+import {
+  ATRIBUTOS_PASTA, IMPORTAR_PASTA_DISPONIVEL, importarPastaGltf, lerEscolhaPasta,
+} from "@/lib/gltf-pasta";
 import {
   COR_VIA_PADRAO, LARGURA_VIA_PADRAO, comprimentoDaVia, densificarVia,
   densificarViaComCotas,
@@ -2755,11 +2757,23 @@ export default function IvmEditorPage() {
                             importação</b> e gravada dentro do <code>.glb</code>.
                             GLBs enviados prontos, ou importados antes deste
                             recurso, não a possuem — e reenviar o mesmo arquivo
-                            não a cria.
-                            {" "}<b>Reimporte a pasta</b> pelo botão de pasta;
-                            se você já não tem a pasta, rode{" "}
-                            <code>npm run pegada -- caminho/modelo.glb</code> e
-                            reenvie o arquivo <code>.pegada.glb</code> gerado.
+                            não a cria.{" "}
+                            {IMPORTAR_PASTA_DISPONIVEL ? (
+                              <>
+                                <b>Reimporte a pasta</b> pelo botão de pasta; se você
+                                já não tem a pasta, rode{" "}
+                                <code>npm run pegada -- caminho/modelo.glb</code> e
+                                reenvie o <code>.pegada.glb</code> gerado.
+                              </>
+                            ) : (
+                              <>
+                                O cálculo roda no servidor local: na sua máquina, use{" "}
+                                <code>npm run pegada -- caminho/modelo.glb</code> (ou
+                                reimporte a pasta) e <b>reenvie aqui</b> o{" "}
+                                <code>.pegada.glb</code> gerado — o upload de{" "}
+                                <code>.glb</code> funciona normalmente neste site.
+                              </>
+                            )}
                           </>
                         ) : (
                           <>
@@ -3421,13 +3435,18 @@ export default function IvmEditorPage() {
                     className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
                     <Upload className="h-3 w-3" />
                   </button>
-                  <button onClick={() => pastaRef.current?.click()} disabled={importandoPasta}
-                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
-                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
-                    {importandoPasta
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <FolderUp className="h-3 w-3" />}
-                  </button>
+                  {/* A conversao mora em `server/` + `script/`, que o
+                      `.vercelignore` nao publica: no site publicado esta rota
+                      responde 404. Melhor nao oferecer do que oferecer quebrado. */}
+                  {IMPORTAR_PASTA_DISPONIVEL && (
+                    <button onClick={() => pastaRef.current?.click()} disabled={importandoPasta}
+                      title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                      className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                      {importandoPasta
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <FolderUp className="h-3 w-3" />}
+                    </button>
+                  )}
                   <input ref={glbRef} type="file" accept=".glb" className="hidden"
                     onChange={async (e) => {
                       const f = e.target.files?.[0];
@@ -3457,9 +3476,21 @@ export default function IvmEditorPage() {
                   </p>
                 ) : (
                   <p className="mt-1 text-[10px] leading-relaxed text-white/30">
-                    A <b>pasta</b> aceita a exportação crua do 3ds Max (<code>.gltf</code> +{" "}
-                    <code>.bin</code> + texturas) e devolve um <code>.glb</code> único, já
-                    texturizado e compactado. O envio direto espera um <code>.glb</code> pronto.
+                    {IMPORTAR_PASTA_DISPONIVEL ? (
+                      <>
+                        A <b>pasta</b> aceita a exportação crua do 3ds Max
+                        (<code>.gltf</code> + <code>.bin</code> + texturas) e devolve um{" "}
+                        <code>.glb</code> único, já texturizado, compactado e com o
+                        contorno para o recorte. O envio direto espera um{" "}
+                        <code>.glb</code> pronto.
+                      </>
+                    ) : (
+                      <>
+                        Aqui só entra <code>.glb</code> pronto. A importação de pasta
+                        converte no servidor e não existe no site publicado — para
+                        usá-la, rode o editor localmente (<code>npm run dev</code>).
+                      </>
+                    )}
                   </p>
                 )}
               </div>
@@ -3503,13 +3534,18 @@ export default function IvmEditorPage() {
                     className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
                     <Upload className="h-3 w-3" />
                   </button>
-                  <button onClick={() => mapaPastaRef.current?.click()} disabled={importandoPasta}
-                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
-                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
-                    {importandoPasta
-                      ? <Loader2 className="h-3 w-3 animate-spin" />
-                      : <FolderUp className="h-3 w-3" />}
-                  </button>
+                  {/* A conversao mora em `server/` + `script/`, que o
+                      `.vercelignore` nao publica: no site publicado esta rota
+                      responde 404. Melhor nao oferecer do que oferecer quebrado. */}
+                  {IMPORTAR_PASTA_DISPONIVEL && (
+                    <button onClick={() => mapaPastaRef.current?.click()} disabled={importandoPasta}
+                      title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                      className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                      {importandoPasta
+                        ? <Loader2 className="h-3 w-3 animate-spin" />
+                        : <FolderUp className="h-3 w-3" />}
+                    </button>
+                  )}
                   <input ref={mapaPastaRef} type="file" multiple className="hidden" {...ATRIBUTOS_PASTA}
                     onChange={async (e) => {
                       // COPIA antes de limpar: `value = ""` esvazia o proprio
