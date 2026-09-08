@@ -443,6 +443,15 @@ export default function IvmEditorPage() {
    */
   const [modoPivoArea, setModoPivoArea] = useState<"altura" | "plano">("altura");
   /**
+   * Previa SO de vias, superficies e cortes manuais.
+   *
+   * Separada de `previewRecorte`, que acende tambem o recorte automatico do
+   * predio. Antes eram a mesma chave: ligar a previa para ajustar um corte
+   * manual acendia o buraco automatico junto, e os dois ficavam sobrepostos —
+   * bem no caso em que o corte manual existe porque o automatico nao serve.
+   */
+  const [previewAreas, setPreviewAreas] = useState(false);
+  /**
    * O item do entorno ABERTO no painel — um só, via ou superfície.
    *
    * Existe porque a lista mostrava os controles de TODOS os itens ao mesmo
@@ -2386,6 +2395,7 @@ export default function IvmEditorPage() {
             c.recorteTerreno ? { ...c.recorteTerreno, preview: previewRecorte } : null
           }
           previewRecorte={previewRecorte}
+          previewAreas={previewAreas}
           onRecortePegada={setRecortePegada}
           vias={vias}
           corVia={entorno.corVia}
@@ -3010,8 +3020,11 @@ export default function IvmEditorPage() {
                     <div className="mt-1.5 space-y-1">
                       <button
                         onClick={async () => {
-                          if (previewRecorte) {
+                          // Medir precisa do terreno NO LUGAR; qualquer uma
+                          // das prévias abre o buraco e a medição cai no vazio.
+                          if (previewRecorte || previewAreas) {
                             setPreviewRecorte(false);
+                            setPreviewAreas(false);
                             setSaveMsg("Recorte ocultado. Aguarde o terreno reaparecer e clique novamente para criar os pivôs.");
                             return;
                           }
@@ -3031,7 +3044,7 @@ export default function IvmEditorPage() {
                             })),
                           });
                           setViaAlturaId(via.id);
-                          setPreviewRecorte(true);
+                          setPreviewAreas(true);
                           const min = Math.min(...cotas);
                           const max = Math.max(...cotas);
                           setSaveMsg(`Cotas medidas: ${min.toFixed(1)} a ${max.toFixed(1)} m (salve para aplicar)`);
@@ -3061,7 +3074,7 @@ export default function IvmEditorPage() {
                               setTracandoArea(null);
                               setAreaAlturaId(null);
                               setViaAlturaId(ativar ? via.id : null);
-                              if (ativar) setPreviewRecorte(true);
+                              if (ativar) setPreviewAreas(true);
                             }}
                             className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
                               viaAlturaId === via.id
@@ -3304,8 +3317,9 @@ export default function IvmEditorPage() {
                       <div className="mt-1.5 space-y-1">
                         <button
                           onClick={async () => {
-                            if (previewRecorte) {
+                            if (previewRecorte || previewAreas) {
                               setPreviewRecorte(false);
+                              setPreviewAreas(false);
                               setSaveMsg("Recorte ocultado. Espere o terreno reaparecer e clique de novo para medir.");
                               return;
                             }
@@ -3319,7 +3333,7 @@ export default function IvmEditorPage() {
                               pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
                             });
                             setAreaAlturaId(area.id);
-                            setPreviewRecorte(true);
+                            setPreviewAreas(true);
                             setSaveMsg(`Cotas medidas: ${Math.min(...cotas).toFixed(1)} a ${Math.max(...cotas).toFixed(1)} m (salve para aplicar)`);
                           }}
                           className="w-full rounded-[3px] bg-teal-500 py-1 text-[10px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
@@ -3337,7 +3351,7 @@ export default function IvmEditorPage() {
                                 setTracandoArea(null);
                                 setViaAlturaId(null);
                                 setAreaAlturaId(ativar ? area.id : null);
-                                if (ativar) setPreviewRecorte(true);
+                                if (ativar) setPreviewAreas(true);
                               }}
                               className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
                                 areaAlturaId === area.id
@@ -3410,6 +3424,23 @@ export default function IvmEditorPage() {
                   próprio modelo. Use quando o recorte automático não pegar a
                   área certa.
                 </p>
+
+                {/* Os dois recortes são independentes e SOMAM. Quem desenhou um
+                    corte à mão quase sempre o fez porque o automático não
+                    servia; deixá-los ligados juntos empilha dois buracos. */}
+                {cortes.length > 0 && c.recorteTerreno && (
+                  <div className="mb-2 space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                    <p className="text-[10px] leading-relaxed text-amber-200/90">
+                      O <b>recorte automático</b> também está ligado. Os dois se
+                      somam na vitrine, um por cima do outro.
+                    </p>
+                    <button
+                      onClick={() => setConfig({ recorteTerreno: undefined })}
+                      className="w-full rounded-[3px] border border-amber-400/50 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/15">
+                      Desligar o recorte automático
+                    </button>
+                  </div>
+                )}
 
                 <button
                   onClick={() => {
@@ -3524,6 +3555,12 @@ export default function IvmEditorPage() {
                             <div className="mt-1.5 space-y-1.5 rounded-[3px] border border-white/[0.06] p-1.5">
                               <button
                                 onClick={async () => {
+                                  if (previewRecorte || previewAreas) {
+                                    setPreviewRecorte(false);
+                                    setPreviewAreas(false);
+                                    setSaveMsg("Recorte ocultado. Espere o terreno reaparecer e clique de novo para medir.");
+                                    return;
+                                  }
                                   setSaveMsg(`Medindo o terreno de ${area.nome || "corte"}...`);
                                   const cotas = await sceneRef.current?.medirCotas(area.pontos);
                                   if (!cotas) {
@@ -3534,7 +3571,7 @@ export default function IvmEditorPage() {
                                     pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
                                   });
                                   setAreaAlturaId(area.id);
-                                  setPreviewRecorte(true);
+                                  setPreviewAreas(true);
                                   setSaveMsg(`Cotas medidas: ${Math.min(...cotas).toFixed(1)} a ${Math.max(...cotas).toFixed(1)} m (salve para aplicar)`);
                                 }}
                                 className="w-full rounded-[3px] bg-teal-500 py-1 text-[10px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
@@ -3550,7 +3587,7 @@ export default function IvmEditorPage() {
                                       setTracandoArea(null);
                                       setViaAlturaId(null);
                                       setAreaAlturaId(ativar ? area.id : null);
-                                      if (ativar) setPreviewRecorte(true);
+                                      if (ativar) setPreviewAreas(true);
                                     }}
                                     className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
                                       areaAlturaId === area.id

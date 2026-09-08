@@ -360,6 +360,14 @@ interface Scene3DProps {
   /** Preview temporário compartilhado pelo recorte da base e das vias. */
   previewRecorte?: boolean;
   /**
+   * Prévia SÓ de vias, superfícies e cortes manuais.
+   *
+   * Separada de `previewRecorte` porque o recorte automático do prédio e os
+   * cortes desenhados à mão são recursos independentes: ver um não deveria
+   * acender o outro. Ver `aplicarRecorteTerreno`.
+   */
+  previewAreas?: boolean;
+  /**
    * Vias desenhadas sobre a fotogrametria, traçadas no mapa em lat/lng.
    *
    * Sem perfil ficam drapejadas. Com perfil, cada seção tem duas alturas
@@ -684,7 +692,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
     gizmoMapa = false, onMapaTransform, onMapaErro, onRecortePegada, corteArea = null,
     plantaPavimento = null,
-    recorteTerreno = null, previewRecorte = false, vias = null, corVia,
+    recorteTerreno = null, previewRecorte = false, previewAreas = false,
+    vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
     superficies = null, areaEditandoId = null, onAreaPontos, modoPivoArea = "altura",
     unidadePlantaId = null, onUnidadePlanta,
@@ -740,6 +749,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    */
   const previewRecorteRef = useRef(previewRecorte);
   previewRecorteRef.current = previewRecorte;
+  const previewAreasRef = useRef(previewAreas);
+  previewAreasRef.current = previewAreas;
   /**
    * `?recorteDebug=1` na URL: escreve no console por que o recorte cortou ou não
    * e pinta a textura de distância do Cesium sobre a cena (vermelho = fora do
@@ -1172,15 +1183,32 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // A via é um recurso independente do recorte da base do prédio. Antes,
     // desligar `recorteTerreno` desligava também TODAS as vias, embora elas
     // tivessem traçado, largura e cotas válidos.
-    const podeVisualizar = !editRef.current || previewRecorteRef.current || !!cfg?.preview;
-    const recortaPredio = !!cfg && podeVisualizar;
-    const recortaVias = podeVisualizar;
+    /**
+     * DUAS pré-visualizações, não uma.
+     *
+     * O recorte automático (a silhueta do GLB) e os cortes desenhados à mão são
+     * recursos independentes, e antes compartilhavam a mesma chave: ligar a
+     * prévia para ajustar um corte manual acendia junto o buraco automático, e
+     * os dois apareciam sobrepostos. Pior num caso em que o corte manual existe
+     * justamente porque o automático não serve.
+     *
+     * `previewRecorte` continua acendendo os dois — é o botão histórico, que
+     * significa "quero ver o recorte inteiro". `previewAreas` acende só vias,
+     * superfícies e cortes, e é o que os botões dessas seções usam.
+     *
+     * Na vitrine (`!editRef.current`) tudo vale, como sempre: lá quem decide o
+     * que existe é a configuração salva, não a prévia.
+     */
+    const preverTudo = !editRef.current || previewRecorteRef.current || !!cfg?.preview;
+    const recortaPredio = !!cfg && preverTudo;
+    const recortaVias = preverTudo || previewAreasRef.current;
     /** Diagnóstico do `?recorteDebug=1`: preenchido ao longo da função. */
     const diag: Record<string, unknown> = {
       editMode: !!editRef.current,
       previewRecorte: previewRecorteRef.current,
+      previewAreas: previewAreasRef.current,
       cfgPreview: !!cfg?.preview,
-      podeVisualizar, recortaPredio, recortaVias,
+      preverTudo, recortaPredio, recortaVias,
       vias: (viasAtualRef.current ?? []).length,
       viasComAltura: 0, quadsDeVia: 0, poligonos: 0,
     };
@@ -6645,6 +6673,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const recorteChave = JSON.stringify([
     recorteTerreno ?? null,
     previewRecorte,
+    // Sem isto, ligar a prévia das áreas não reaplicava o recorte: a chave não
+    // mudava e o efeito nem rodava.
+    previewAreas ?? false,
     editMode ?? false,
     selectedId,
     /**
