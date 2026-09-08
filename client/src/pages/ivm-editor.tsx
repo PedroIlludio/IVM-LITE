@@ -2754,8 +2754,12 @@ export default function IvmEditorPage() {
                             A silhueta é calculada sobre a malha <b>durante a
                             importação</b> e gravada dentro do <code>.glb</code>.
                             GLBs enviados prontos, ou importados antes deste
-                            recurso, não a possuem. <b>Reimporte a pasta</b> (ou
-                            reenvie o <code>.glb</code>) para gerá-la.
+                            recurso, não a possuem — e reenviar o mesmo arquivo
+                            não a cria.
+                            {" "}<b>Reimporte a pasta</b> pelo botão de pasta;
+                            se você já não tem a pasta, rode{" "}
+                            <code>npm run pegada -- caminho/modelo.glb</code> e
+                            reenvie o arquivo <code>.pegada.glb</code> gerado.
                           </>
                         ) : (
                           <>

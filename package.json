@@ -8,7 +8,8 @@
     "build": "tsx script/build.ts",
     "start": "cross-env NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
-    "test:ux:mobile": "playwright test tests/mobile-ux.spec.ts"
+    "test:ux:mobile": "playwright test tests/mobile-ux.spec.ts",
+    "pegada": "node --max-old-space-size=8192 node_modules/tsx/dist/cli.mjs script/anotar-pegada.ts"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.4",
