@@ -998,6 +998,16 @@ export default function IvmEditorPage() {
     setVias((atual) => atual.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   }
   const superficies: Superficie[] = entorno.superficies ?? [];
+  /**
+   * As duas listas moram no MESMO array, separadas só por `somenteCorte`.
+   *
+   * Superfície e corte compartilham tudo o que é trabalhoso — contorno no mapa,
+   * medição de cotas, pivôs, folga — e diferem apenas no desenho final. Guardar
+   * em arrays distintos duplicaria a persistência, o histórico e o recorte para
+   * ganhar nada; separar na tela é o que o usuário precisa, e é aqui.
+   */
+  const areasPintadas = superficies.filter((s) => !s.somenteCorte);
+  const cortes = superficies.filter((s) => s.somenteCorte);
   /** Mesmo cuidado do `setVias`: a lista vem de dentro do atualizador. */
   function setSuperficies(next: Superficie[] | ((atual: Superficie[]) => Superficie[])) {
     registrarHistorico();
@@ -3098,7 +3108,7 @@ export default function IvmEditorPage() {
               pivô manual, recorte da fotogrametria), com contorno fechado
               livre em vez de fita de largura constante. */}
           {tab === "local" && (
-            <Section title={`Superfícies (${superficies.length})`} aberta={false}>
+            <Section title={`Superfícies (${areasPintadas.length})`} aberta={false}>
               <div>
                 <p className="mb-2 text-[9px] leading-relaxed text-white/30">
                   Gramado, pátio, espelho d'água. Substituem o borrão da
@@ -3120,13 +3130,13 @@ export default function IvmEditorPage() {
                   Nova superfície
                 </button>
 
-                {!superficies.length && (
+                {!areasPintadas.length && (
                   <p className="mt-1.5 rounded-[3px] border border-dashed border-white/10 px-2 py-3 text-center text-[10px] text-white/30">
                     Nenhuma superfície ainda.
                   </p>
                 )}
 
-                {superficies.map((area) => {
+                {areasPintadas.map((area) => {
                   const aberto = abertoEntorno?.tipo === "area" && abertoEntorno.id === area.id;
                   const temCota = area.pontos.length >= 3
                     && area.pontos.every((p) => Number.isFinite(p.altura));
@@ -3343,6 +3353,192 @@ export default function IvmEditorPage() {
                     </div>
                     )}
                   </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
+          {/* CORTE MANUAL: a mesma máquina da superfície (contorno no mapa,
+              cota medida uma vez, pivô que sobe, desce e anda no plano), mas
+              sem pintar piso nenhum. Existe porque o recorte automático nasce
+              da silhueta do GLB — cobre exatamente a geometria e depende de o
+              arquivo trazer a anotação. Quando esse recorte não serve, este
+              aqui é o controle na mão. */}
+          {tab === "local" && (
+            <Section title={`Cortes manuais (${cortes.length})`} aberta={false}>
+              <div>
+                <p className="mb-2 text-[9px] leading-relaxed text-white/30">
+                  Abre um buraco na fotogrametria com o contorno que você
+                  desenhar, e não pinta nada por cima — quem ocupa o lugar é o
+                  próprio modelo. Use quando o recorte automático não pegar a
+                  área certa.
+                </p>
+
+                <button
+                  onClick={() => {
+                    const id = genId("corte");
+                    setSuperficies((atual) => [
+                      ...atual,
+                      { id, tipo: "grama", pontos: [], somenteCorte: true },
+                    ]);
+                    setAbertoEntorno({ tipo: "area", id });
+                    setTracandoVia(null);
+                    setViaAlturaId(null);
+                    setAreaAlturaId(null);
+                    setTracandoArea(id);
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-amber-300">
+                  <Scissors className="h-3.5 w-3.5" />
+                  Novo corte manual
+                </button>
+
+                {!cortes.length && (
+                  <p className="mt-1.5 rounded-[3px] border border-dashed border-white/10 px-2 py-3 text-center text-[10px] text-white/30">
+                    Nenhum corte manual ainda.
+                  </p>
+                )}
+
+                {cortes.map((area) => {
+                  const aberto = abertoEntorno?.tipo === "area" && abertoEntorno.id === area.id;
+                  const temCota = area.pontos.length >= 3
+                    && area.pontos.every((p) => Number.isFinite(p.altura));
+                  const tracando = tracandoArea === area.id;
+                  const ajustando = areaAlturaId === area.id;
+                  return (
+                    <div key={area.id}
+                      className={`mt-1.5 overflow-hidden rounded-[4px] border transition-colors ${
+                        tracando || ajustando
+                          ? "border-amber-400/60 ring-1 ring-amber-400/25"
+                          : aberto ? "border-white/20" : "border-white/[0.08]"
+                      }`}>
+                      <LinhaEntorno
+                        cor="#ffb020"
+                        nome={area.nome}
+                        vazio="Corte manual"
+                        aberto={aberto}
+                        ativo={tracando || ajustando}
+                        onClick={() => abrirEntorno("area", area.id)}
+                        selos={
+                          <>
+                            {tracando && <SeloEntorno tom="ativo">contornando</SeloEntorno>}
+                            {ajustando && <SeloEntorno tom="ativo">ajustando</SeloEntorno>}
+                            {!tracando && !ajustando && (
+                              area.pontos.length < 3
+                                ? <SeloEntorno tom="pendente">sem contorno</SeloEntorno>
+                                : temCota
+                                  ? <SeloEntorno tom="pronto">recortando</SeloEntorno>
+                                  : <SeloEntorno tom="pendente">sem cota</SeloEntorno>
+                            )}
+                          </>
+                        }
+                      />
+
+                      {aberto && (
+                        <div className="border-t border-white/[0.06] p-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <input value={area.nome ?? ""} placeholder="Sem nome"
+                              onChange={(e) => patchArea(area.id, { nome: e.target.value })}
+                              className={`${CAMPO} min-w-0 flex-1`} />
+                            <button onClick={() => {
+                                setTracandoVia(null);
+                                setViaAlturaId(null);
+                                setAreaAlturaId(null);
+                                setTracandoArea(tracando ? null : area.id);
+                              }}
+                              title="Desenhar o contorno no mapa"
+                              className={`shrink-0 rounded-[3px] p-1 ${
+                                tracando ? "bg-amber-400 text-[#0a0a0a]" : "text-white/40 hover:bg-white/10 hover:text-white"
+                              }`}>
+                              <Crosshair className="h-3 w-3" />
+                            </button>
+                            <button onClick={() => {
+                                setSuperficies((atual) => atual.filter((x) => x.id !== area.id));
+                                if (tracandoArea === area.id) setTracandoArea(null);
+                                if (areaAlturaId === area.id) setAreaAlturaId(null);
+                              }}
+                              className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-red-500/15 hover:text-red-300">
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+
+                          {tracando && (
+                            <div className="mt-1.5">
+                              <p className="mb-1 rounded-[3px] bg-amber-400/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-200/80">
+                                Clique no mapa marcando os cantos. O contorno fecha
+                                sozinho do último ponto ao primeiro — não repita o
+                                inicial. <b>Botão direito</b> num ponto remove.
+                              </p>
+                              <MapaEntorno
+                                centro={{ lat: c.lat ?? emp.lat, lng: c.lng ?? emp.lng }}
+                                pois={[]}
+                                cor="#ffb020"
+                                fechado
+                                tracado={area.pontos}
+                                editandoTracado
+                                onTracado={(pts) => patchArea(area.id, {
+                                  pontos: pts.map((p) => ({ lat: p.lat, lng: p.lng })),
+                                })}
+                                className="h-56 w-full overflow-hidden rounded-[4px]"
+                              />
+                            </div>
+                          )}
+
+                          {area.pontos.length >= 3 && (
+                            <div className="mt-1.5 space-y-1.5 rounded-[3px] border border-white/[0.06] p-1.5">
+                              <button
+                                onClick={async () => {
+                                  setSaveMsg(`Medindo o terreno de ${area.nome || "corte"}...`);
+                                  const cotas = await sceneRef.current?.medirCotas(area.pontos);
+                                  if (!cotas) {
+                                    setSaveMsg("Erro: não consegui medir o terreno. Aproxime a câmera da área, espere os tiles e tente de novo.");
+                                    return;
+                                  }
+                                  patchArea(area.id, {
+                                    pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
+                                  });
+                                  setAreaAlturaId(area.id);
+                                  setPreviewRecorte(true);
+                                  setSaveMsg(`Cotas medidas: ${Math.min(...cotas).toFixed(1)} a ${Math.max(...cotas).toFixed(1)} m (salve para aplicar)`);
+                                }}
+                                className="w-full rounded-[3px] bg-teal-500 py-1 text-[10px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
+                                {temCota ? "Remedir o terreno" : "Medir terreno e criar pivôs"}
+                              </button>
+
+                              {temCota && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      const ativar = areaAlturaId !== area.id;
+                                      setTracandoVia(null);
+                                      setTracandoArea(null);
+                                      setViaAlturaId(null);
+                                      setAreaAlturaId(ativar ? area.id : null);
+                                      if (ativar) setPreviewRecorte(true);
+                                    }}
+                                    className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                      areaAlturaId === area.id
+                                        ? "border-amber-400/60 bg-amber-400/15 text-amber-200"
+                                        : "border-white/10 text-white/60 hover:border-white/25"
+                                    }`}>
+                                    {areaAlturaId === area.id ? "Concluir ajuste" : "Ajustar no 3D"}
+                                  </button>
+                                  <NumIn label="Folga do corte (m)" v={area.folgaCorte ?? 0}
+                                    step={0.1} casas={2}
+                                    onChange={(x) => patchArea(area.id, {
+                                      folgaCorte: Math.max(-5, Math.min(5, x)),
+                                    })} />
+                                  <p className="text-[9px] leading-relaxed text-white/30">
+                                    Arraste o pivô <b className="text-lime-300">verde</b> para
+                                    cima e para baixo. <b>Shift</b> arrasta no plano do chão.
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>

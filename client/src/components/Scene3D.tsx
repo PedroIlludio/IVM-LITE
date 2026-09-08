@@ -1590,25 +1590,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         ? pts.map((p, i) => Cartesian3.fromDegrees(p.lng, p.lat, alturas[i]))
         : Cartesian3.fromDegreesArray(pts.flatMap((p) => [p.lng, p.lat]));
 
-      areasRef.current.push(v.entities.add({
-        id: `area:${area.id}`,
-        polygon: alturas
-          ? {
-              hierarchy: new PolygonHierarchy(contorno),
-              perPositionHeight: true,
-              // Mesma saia da via, e pelo mesmo motivo: o recorte é uma coluna
-              // vertical, então debaixo da área não sobra terreno. Sem a parede
-              // se enxerga o vazio pela beirada.
-              extrudedHeight: Math.min(...alturas) - PROFUNDIDADE_VIA,
-              material,
-              shadows: ShadowMode.RECEIVE_ONLY,
-            }
-          : {
-              hierarchy: new PolygonHierarchy(contorno),
-              classificationType: ClassificationType.CESIUM_3D_TILE,
-              material,
-            },
-      }));
+      /**
+       * CORTE MANUAL não pinta: ele só abre o buraco.
+       *
+       * O recorte em si não sai daqui — quem o monta é `aplicarRecorteTerreno`,
+       * a partir das cotas, e isso vale igual para os dois casos. O que se pula
+       * é apenas o polígono desenhado. Debaixo do empreendimento quem preenche
+       * o vazio é o próprio GLB; pintar piso ali só poria uma superfície
+       * disputando espaço com o modelo.
+       *
+       * A borda branca e os pivôs continuam, senão o corte viraria invisível no
+       * editor e não haveria o que arrastar.
+       */
+      if (!area.somenteCorte) {
+        areasRef.current.push(v.entities.add({
+          id: `area:${area.id}`,
+          polygon: alturas
+            ? {
+                hierarchy: new PolygonHierarchy(contorno),
+                perPositionHeight: true,
+                // Mesma saia da via, e pelo mesmo motivo: o recorte é uma coluna
+                // vertical, então debaixo da área não sobra terreno. Sem a parede
+                // se enxerga o vazio pela beirada.
+                extrudedHeight: Math.min(...alturas) - PROFUNDIDADE_VIA,
+                material,
+                shadows: ShadowMode.RECEIVE_ONLY,
+              }
+            : {
+                hierarchy: new PolygonHierarchy(contorno),
+                classificationType: ClassificationType.CESIUM_3D_TILE,
+                material,
+              },
+        }));
+      }
 
       if (editRef.current) {
         areasRef.current.push(v.entities.add({
@@ -1623,7 +1637,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
                 ),
             width: 2,
             clampToGround: !alturas,
-            material: new ColorMaterialProperty(Color.WHITE.withAlpha(0.7)),
+            // O corte é a única área sem preenchimento: sem uma cor própria na
+            // borda, ele fica indistinguível de uma superfície ainda sem piso.
+            material: new ColorMaterialProperty(
+              area.somenteCorte
+                ? Color.fromCssColorString("#ffb020").withAlpha(0.9)
+                : Color.WHITE.withAlpha(0.7),
+            ),
           },
         }));
       }
@@ -1924,6 +1944,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         tilesetRef.current = tileset;
         readyRef.current = true;
         setPronto(true);
+
+        /**
+         * Sob `?recorteDebug=1`, o viewer fica alcançável pelo console.
+         *
+         * Recorte e superfícies só se conferem olhando o que foi realmente
+         * desenhado — quais entidades existem, quais polígonos entraram na
+         * coleção. Pelo log dá para saber o que a função DECIDIU; só pelo viewer
+         * dá para saber o que ela FEZ. Preso à mesma bandeira do log, então não
+         * existe para quem abre a vitrine.
+         */
+        if (recorteDebugRef.current) {
+          (window as unknown as Record<string, unknown>).__ivmViewer = viewer;
+        }
 
         /**
          * Um GLB de terceiros não pode derrubar a vitrine.
