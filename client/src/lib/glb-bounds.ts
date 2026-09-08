@@ -12,18 +12,21 @@ import { Matrix4, Cartesian3, Quaternion, Matrix3 } from "cesium";
  * de qualquer vértice. Vale inclusive para malha comprimida com Draco: a
  * compressão troca o `bufferView`, o accessor continua declarando os extremos.
  *
- * LIMITE CONHECIDO: isto dá uma CAIXA, não a silhueta. A forma real do prédio
- * não está nos metadados — num GLB agrupado por material (o caso comum de
- * exportação), cada malha atravessa o empreendimento inteiro e a união das
- * caixas devolve o mesmo retângulo. A silhueta só existe nos vértices
- * comprimidos, e decodificá-los no navegador custaria segundos e centenas de MB.
+ * A silhueta real não faz parte do padrão glTF. Por isso o importador calcula a
+ * projeção dos triângulos uma única vez, antes de compactar, e a grava em
+ * `scene.extras.ivmFootprintV1`. Este leitor recupera a anotação junto do mesmo
+ * cabeçalho. GLBs antigos continuam devolvendo apenas a caixa como fallback.
  */
 
 /** Caixa alinhada aos eixos, no referencial do modelo como o Cesium o usa. */
 export interface CaixaGlb {
   min: [number, number, number];
   max: [number, number, number];
+  /** Silhuetas horizontais reais, gravadas pelo importador em `scene.extras`. */
+  contornos?: Array<Array<[number, number]>>;
 }
+
+const IVM_FOOTPRINT_KEY = "ivmFootprintV1";
 
 const MAGIC_GLTF = 0x46546c67; // "glTF"
 const CHUNK_JSON = 0x4e4f534a; // "JSON"
@@ -46,10 +49,36 @@ interface AccessorGltf {
 
 interface DocGltf {
   scene?: number;
-  scenes?: { nodes?: number[] }[];
+  scenes?: { nodes?: number[]; extras?: Record<string, unknown> }[];
   nodes?: NoGltf[];
   meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
   accessors?: AccessorGltf[];
+}
+
+/** Aceita apenas contornos finitos e com tamanho seguro vindos do arquivo. */
+function lerContornos(doc: DocGltf): Array<Array<[number, number]>> | undefined {
+  const cru = doc.scenes?.[doc.scene ?? 0]?.extras?.[IVM_FOOTPRINT_KEY];
+  if (!Array.isArray(cru) || cru.length > 64) return undefined;
+  const contornos: Array<Array<[number, number]>> = [];
+  for (const anel of cru) {
+    if (!Array.isArray(anel) || anel.length < 3 || anel.length > 4096) continue;
+    const pontos: Array<[number, number]> = [];
+    for (const ponto of anel) {
+      if (!Array.isArray(ponto) || ponto.length < 2) {
+        pontos.length = 0;
+        break;
+      }
+      const x = Number(ponto[0]);
+      const y = Number(ponto[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        pontos.length = 0;
+        break;
+      }
+      pontos.push([x, y]);
+    }
+    if (pontos.length >= 3) contornos.push(pontos);
+  }
+  return contornos.length ? contornos : undefined;
 }
 
 /**
@@ -203,5 +232,5 @@ export async function medirGlb(url: string): Promise<CaixaGlb | null> {
   const raizes = doc.scenes?.[doc.scene ?? 0]?.nodes ?? doc.nodes.map((_, i) => i);
   for (const raiz of raizes) visitar(raiz, Matrix4.IDENTITY.clone(), 0);
 
-  return achou ? { min, max } : null;
+  return achou ? { min, max, contornos: lerContornos(doc) } : null;
 }

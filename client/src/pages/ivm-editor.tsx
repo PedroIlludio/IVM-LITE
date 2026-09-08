@@ -2708,7 +2708,7 @@ export default function IvmEditorPage() {
 
               <label className="flex items-center gap-1.5 text-[11px] text-white/60">
                 <input type="checkbox" checked={!!c.recorteTerreno}
-                  onChange={(e) => setConfig({ recorteTerreno: e.target.checked ? { folga: 1.1 } : undefined })}
+                  onChange={(e) => setConfig({ recorteTerreno: e.target.checked ? { folga: 1 } : undefined })}
                   className="accent-teal-400" />
                 Recortar na vitrine publicada
               </label>
@@ -2717,17 +2717,16 @@ export default function IvmEditorPage() {
                 <>
                   {/* Em PORCENTAGEM, não em multiplicador: "110%" se lê de
                       imediato, "1,1×" pede uma conta. E a faixa desce abaixo de
-                      100% porque a caixa do GLB costuma ser MAIOR que a
-                      construção — marquise, beiral e platibanda inflam os
-                      extremos, e o recorte acaba comendo calçada. */}
+                      100% para permitir compensar marquise, beiral e platibanda
+                      que avancem além da área que deve ser removida. */}
                   <Slider label="Tamanho do recorte"
-                    v={Math.round((c.recorteTerreno.folga ?? 1.1) * 100)}
+                    v={Math.round((c.recorteTerreno.folga ?? 1) * 100)}
                     min={50} max={200} step={1} suffix="%"
                     onChange={(v) => setConfig({ recorteTerreno: { folga: v / 100 } })} />
                   <p className="text-[10px] leading-relaxed text-white/25">
-                    <b>100%</b> é a caixa do modelo exata. Abaixo disso o buraco
-                    encolhe para dentro dela; acima, sobra terreno recortado em
-                    volta.
+                    <b>100%</b> é o contorno do modelo. Abaixo disso o buraco
+                    encolhe para dentro dele; acima, sobra terreno recortado em
+                    volta. Arquivos antigos sem contorno usam a caixa.
                   </p>
 
                   {/* A pré-visualização é temporária e não é gravada: ela existe
@@ -2758,10 +2757,10 @@ export default function IvmEditorPage() {
                   )}
 
                   <p className="text-[10px] leading-relaxed text-white/25">
-                    A pegada é <b>medida no GLB</b> a cada carga, então acompanha
-                    troca de modelo e de encaixe sozinha. É a <b>caixa</b> do
-                    modelo, não a silhueta: a forma real do prédio não existe nos
-                    metadados do arquivo.
+                    A pegada é <b>calculada sobre a malha</b> durante a importação
+                    e acompanha troca de modelo e de encaixe sozinha. O navegador
+                    lê o contorno pronto sem precisar decodificar novamente toda
+                    a geometria.
                     {!c.modelUrl && (
                       <span className="text-amber-300"> Sem modelo 3D não há o que medir — o recorte não acontece.</span>
                     )}

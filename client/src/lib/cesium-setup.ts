@@ -352,7 +352,30 @@ export async function createVision3DViewer(
   // suaves são o extra que sai primeiro — são um segundo passe de filtragem.
   viewer.shadowMap.softShadows = q.sombraSuave;
   viewer.shadowMap.size = q.sombraTam;
-  viewer.shadowMap.maximumDistance = 6000;
+  /**
+   * Alcance e bias calibrados para cenas de arquitetura.
+   *
+   * O valor antigo espalhava os 2048 px do mapa de sombra por 6 km. Num GLB
+   * de BIM muito triangulado (o SESI tem mais de 10 milhões de vértices), a
+   * profundidade de uma parede e a da própria sombra caíam no mesmo intervalo:
+   * cada triângulo alternava entre iluminado e sombreado ao mover a câmera —
+   * o "shadow acne" que parecia a parede piscando.
+   *
+   * Dois quilômetros ainda cobrem com folga o empreendimento e sua vizinhança,
+   * mas entregam 3x mais precisão que 6 km. O normal offset continua ligado e
+   * o bias de primitivas sobe para os mesmos valores conservadores que o
+   * próprio Cesium usa no terreno. Isso afasta a comparação da superfície o
+   * bastante para estabilizar faces coplanares sem desligar as sombras solares.
+   */
+  viewer.shadowMap.maximumDistance = 2000;
+  viewer.shadowMap.normalOffset = true;
+  const primitiveBias = (viewer.shadowMap as unknown as {
+    _primitiveBias?: { normalOffsetScale: number; depthBias: number };
+  })._primitiveBias;
+  if (primitiveBias) {
+    primitiveBias.normalOffsetScale = 0.5;
+    primitiveBias.depthBias = 0.0001;
+  }
   viewer.shadowMap.enabled = q.sombras;
   viewer.shadowMap.darkness = 0.45;
 

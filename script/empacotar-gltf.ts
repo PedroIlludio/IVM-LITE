@@ -33,6 +33,7 @@ import sharp from "sharp";
 import { promises as fs } from "fs";
 import path from "path";
 import { sanearGlb } from "../server/sanearGlb";
+import { anotarPegadaGlb } from "./glb-footprint";
 
 interface Opcoes {
   dir: string;
@@ -40,7 +41,14 @@ interface Opcoes {
   saida: string;
   draco: boolean;
   webp: boolean;
+  /** Lado maximo das texturas de COR (baseColor, emissive). */
   maxTextura: number;
+  /** Lado maximo das texturas de DADO (normal, roughness, occlusion). */
+  maxTexturaDados: number;
+  /** Qualidade WebP das texturas de cor (1-100). */
+  qualidadeCor: number;
+  /** Forca do pre-processamento nearLossless das texturas de dado (1-100). */
+  qualidadeDados: number;
 }
 
 /** Uma linha JSON por passo — o servidor lê isto e mostra no editor. */
@@ -144,6 +152,9 @@ async function main(): Promise<void> {
     draco: args.get("draco") !== "0",
     webp: args.get("webp") !== "0",
     maxTextura: Number(args.get("maxTextura") ?? 2048),
+    maxTexturaDados: Number(args.get("maxTexturaDados") ?? 1024),
+    qualidadeCor: Number(args.get("qualidadeCor") ?? 85),
+    qualidadeDados: Number(args.get("qualidadeDados") ?? 40),
   };
   if (!op.dir || !op.gltf || !op.saida) throw new Error("faltam --dir/--gltf/--saida");
 
@@ -185,16 +196,104 @@ async function main(): Promise<void> {
   passo("limpando", "Removendo dados duplicados e não usados...");
   await doc.transform(dedup(), prune());
 
+  /**
+   * Guarda a silhueta horizontal REAL antes de comprimir a geometria.
+   *
+   * O cliente consegue ler `scene.extras` só pelo cabeçalho JSON do GLB. Assim
+   * ele recorta a fotogrametria sob a planta côncava do modelo sem precisar
+   * baixar e decodificar milhões de vértices novamente em cada visita.
+   */
+  passo("pegada", "Medindo o contorno real da implantação...");
+  const pegada = anotarPegadaGlb(doc);
+  passo(
+    "pegada",
+    pegada.length
+      ? `Contorno da implantação pronto (${pegada.length} área(s)).`
+      : "Não foi possível medir o contorno; será usada a caixa do modelo.",
+  );
+
   if (op.webp) {
+    /**
+     * COR e DADO são comprimidos de formas diferentes, e isto não é capricho.
+     *
+     * WebP com perdas converte RGB para YUV e SUBAMOSTRA O CROMA (4:2:0): os
+     * canais R e B ficam com metade da resolução do G. Para cor isso é
+     * imperceptível — o olho enxerga muito menos detalhe de cor que de brilho.
+     *
+     * Só que num normal map R/G/B não são cor: são X/Y/Z da direção da
+     * superfície. Subamostrar dois deles inclina a normal pixel a pixel, e a
+     * malha ganha um granulado que não existe no modelo. O mesmo vale para
+     * roughness e occlusion, que guardam medida nos canais.
+     *
+     * Medido no `granite_base_specks_norm` deste projeto (erro médio por canal,
+     * contra o original na mesma resolução):
+     *
+     *   lossy q80    R 12.35  G 7.52  B 9.36    1567 KB
+     *   lossy q100   R 11.31  G 6.37  B 8.15    3235 KB
+     *   nearLossless R  0.50  G 0.50  B 0.50    3698 KB
+     *
+     * Repare que subir a qualidade quase não ajuda: a subamostragem é
+     * estrutural no modo com perdas, não um efeito de quantização. O conserto
+     * não é comprimir menos, é não usar o modo com perdas nesses mapas.
+     */
+    const cor = /baseColorTexture|emissiveTexture/;
+    const dado = /normalTexture|metallicRoughnessTexture|occlusionTexture/;
+
     passo(
       "texturas",
-      `Convertendo ${raiz.listTextures().length} textura(s) para WebP (máx. ${op.maxTextura}px)...`,
+      `Convertendo ${raiz.listTextures().length} textura(s) para WebP `
+      + `(cor até ${op.maxTextura}px, dados até ${op.maxTexturaDados}px)...`,
     );
     await doc.transform(
       textureCompress({
         encoder: sharp,
         targetFormat: "webp",
+        slots: cor,
         resize: [op.maxTextura, op.maxTextura],
+        quality: op.qualidadeCor,
+      }),
+    );
+    /**
+     * Os mapas de dado pagam o preço em bytes, então compensam na resolução: a
+     * 1024 e sem dano de croma eles ficam melhores do que a 2048 com ele — e
+     * cabem. É o mesmo motivo de `maxTexturaDados` existir separado.
+     */
+    await doc.transform(
+      textureCompress({
+        encoder: sharp,
+        targetFormat: "webp",
+        slots: dado,
+        resize: [op.maxTexturaDados, op.maxTexturaDados],
+        /**
+         * `nearLossless` usa o pipeline SEM PERDAS do WebP, so com um
+         * pre-processamento que agrupa valores parecidos. Nao ha conversao para
+         * YUV, entao nao ha subamostragem de croma — que e o ponto todo.
+         *
+         * A 40 o pre-processamento e forte e o arquivo fica em ~2/3 do que
+         * ficaria a 90, com erro maximo por canal ainda em 2 de 255 (medido nos
+         * normais deste projeto). Contra 16 do modo com perdas, e a diferenca
+         * entre uma superficie lisa e uma granulada.
+         */
+        nearLossless: true,
+        quality: op.qualidadeDados,
+      }),
+    );
+    /**
+     * Sobras: textura que nao caiu em nenhum dos dois grupos.
+     *
+     * `specularTexture` e afins vem de extensao de material e nao batem com os
+     * padroes acima — sem esta passada elas ficavam como chegaram, e uma delas
+     * saiu do 3ds Max com 3072px em JPEG: ocupando VRAM a toa num slot que quase
+     * sempre e uma cor chapada. `formats` limita a quem ainda nao virou WebP,
+     * entao nada e recomprimido duas vezes.
+     */
+    await doc.transform(
+      textureCompress({
+        encoder: sharp,
+        targetFormat: "webp",
+        formats: /jpeg|png/,
+        resize: [op.maxTextura, op.maxTextura],
+        quality: op.qualidadeCor,
       }),
     );
   }

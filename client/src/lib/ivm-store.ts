@@ -215,16 +215,14 @@ export interface ProjectConfig {
    * obra, ou o prédio antigo. O GLB novo entra por cima e os dois disputam o
    * mesmo espaço. Recortando, o terreno abre e o empreendimento encaixa limpo.
    *
-   * NÃO guarda a pegada: ela é MEDIDA no GLB a cada carga (ver `medirGlb`), do
-   * arquivo que estiver configurado. Assim acompanha sozinha qualquer troca de
-   * modelo ou de encaixe, e funciona num projeto recém-criado — não depende de
-   * torre calibrada nem de nada desenhado à mão.
-   *
-   * É uma CAIXA, não a silhueta do prédio: a forma real não existe nos
-   * metadados do glTF. Ver o comentário em `glb-bounds.ts`.
+   * A caixa e a pegada são MEDIDAS no GLB a cada carga (ver `medirGlb`), do
+   * arquivo que estiver configurado. O importador grava em `scene.extras` a
+   * silhueta calculada sobre os triângulos reais; assim o navegador lê só o
+   * cabeçalho e não precisa decodificar a malha novamente. GLBs antigos, sem a
+   * anotação, continuam funcionando com a caixa como fallback.
    */
   recorteTerreno?: {
-    /** Sobra em volta da pegada (1 = exatamente a caixa do modelo). */
+    /** Sobra em volta da pegada (1 = exatamente o contorno do modelo). */
     folga?: number;
   };
   /** Vias desenhadas sobre a fotogrametria (traçadas no mapa, em lat/lng). */

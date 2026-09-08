@@ -1170,18 +1170,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const polygons: ClippingPolygon[] = [];
 
       if (recortaPredio && b && node && caixa) {
-        const folga = cfg?.folga ?? 1.1;
+        const folga = cfg?.folga ?? 1;
         const cx = (caixa.min[0] + caixa.max[0]) / 2;
         const cy = (caixa.min[1] + caixa.max[1]) / 2;
-        const hx = ((caixa.max[0] - caixa.min[0]) / 2) * folga;
-        const hy = ((caixa.max[1] - caixa.min[1]) / 2) * folga;
-        // Os quatro cantos, em metros do modelo, levados ao mundo pela MESMA
-        // função que posiciona as caixas das unidades — assim o recorte não
-        // pode divergir de onde o prédio realmente está.
-        const positions = ([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]] as const).map(
-          ([dx, dy]) => poseNoModelo(b, node.groundHeight, cx + dx, cy + dy, 0, 0).position,
-        );
-        polygons.push(new ClippingPolygon({ positions }));
+        /**
+         * GLBs importados pela plataforma trazem a silhueta horizontal real em
+         * `scene.extras`. Cada ponto é levado ao mundo pela MESMA função que
+         * posiciona o modelo e as unidades, portanto rotação, escala e offsets
+         * continuam perfeitamente alinhados.
+         *
+         * Arquivo antigo ou enviado já pronto pode não ter essa anotação. Nesse
+         * caso preservamos o retângulo anterior como fallback, em vez de deixar
+         * a fotogrametria atravessar o empreendimento.
+         */
+        const contornos = caixa.contornos?.length
+          ? caixa.contornos
+          : [[
+              [caixa.min[0], caixa.min[1]],
+              [caixa.max[0], caixa.min[1]],
+              [caixa.max[0], caixa.max[1]],
+              [caixa.min[0], caixa.max[1]],
+            ] as Array<[number, number]>];
+        for (const contorno of contornos) {
+          const positions = contorno.map(([x, y]) => {
+            // A folga mantém o comportamento do slider: escala a pegada a
+            // partir do centro geral do modelo, inclusive em formas côncavas.
+            const px = cx + (x - cx) * folga;
+            const py = cy + (y - cy) * folga;
+            return poseNoModelo(b, node.groundHeight, px, py, 0, 0).position;
+          });
+          if (positions.length >= 3) polygons.push(new ClippingPolygon({ positions }));
+        }
+        diag.pegada = caixa.contornos?.length ? "malha" : "caixa";
+        diag.contornosPredio = contornos.length;
       }
 
       /**

@@ -124,7 +124,11 @@ function converter(
   gltf: string,
   saida: string,
   arquivoSaida: string,
-  opcoes: { draco: boolean; webp: boolean; maxTextura: number },
+  opcoes: {
+    draco: boolean; webp: boolean;
+    maxTextura: number; maxTexturaDados: number;
+    qualidadeCor: number; qualidadeDados: number;
+  },
 ): void {
   const estado = trabalhos.get(sid)!;
   const filho = spawn(
@@ -139,6 +143,9 @@ function converter(
       `--draco=${opcoes.draco ? 1 : 0}`,
       `--webp=${opcoes.webp ? 1 : 0}`,
       `--maxTextura=${opcoes.maxTextura}`,
+      `--maxTexturaDados=${opcoes.maxTexturaDados}`,
+      `--qualidadeCor=${opcoes.qualidadeCor}`,
+      `--qualidadeDados=${opcoes.qualidadeDados}`,
     ],
     { cwd: process.cwd(), windowsHide: true },
   );
@@ -291,6 +298,11 @@ export function registerGltfImportRoutes(app: Express) {
       // 512 é o menor tamanho que ainda lê como textura, 4096 o teto que a
       // maioria das placas aceita sem reamostrar.
       maxTextura: Math.min(4096, Math.max(512, Number(b.maxTextura) || 2048)),
+      // Mapas de dado vao a metade da resolucao de cor de proposito: sem dano
+      // de croma eles ficam melhores a 1024 do que a 2048 com ele, e cabem.
+      maxTexturaDados: Math.min(4096, Math.max(256, Number(b.maxTexturaDados) || 1024)),
+      qualidadeCor: Math.min(100, Math.max(40, Number(b.qualidadeCor) || 85)),
+      qualidadeDados: Math.min(100, Math.max(10, Number(b.qualidadeDados) || 40)),
     });
     res.json({ ok: true });
   });
