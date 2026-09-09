@@ -745,7 +745,10 @@ function EmpreendimentoDetail({
               com texto, seta e contador — um formulário de navegação sobre a
               cena 3D, que é o que o visitante veio ver. */}
           {vista === "menu" && (
-            <div className={`v-in v-gaveta pointer-events-auto ${gavetaHorizontal ? "v-gaveta-h" : ""}`}>
+            <div
+              className={`v-in v-gaveta pointer-events-auto ${gavetaHorizontal ? "v-gaveta-h" : ""}`}
+              data-testid={gavetaHorizontal ? "categorias-scroll-mobile" : undefined}
+            >
               {([
                 {
                   /* Primeira da fila: é a apresentação do empreendimento, e

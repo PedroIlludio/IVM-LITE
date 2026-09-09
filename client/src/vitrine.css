@@ -556,6 +556,9 @@
 .vitrine .v-gaveta-h {
   flex-direction: row;
   gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -588,6 +591,10 @@
   font-size: 10.5px;
   color: var(--v-ink-3);
 }
+
+/* A troca ficha → cena só existe onde a ficha cobre o viewport inteiro. */
+.vitrine .v-unit-scene-cta,
+.vitrine .v-mobile-unit-stage { display: none; }
 
 
 /* Barra de rolagem discreta, na tinta clara. */
@@ -838,10 +845,16 @@
   .vitrine .v-mobile-sheet-detail { height: min(76dvh, 720px); }
 
   .vitrine .v-gaveta-h {
+    /* O Viewport do Radix usa uma mesa interna que cresce com o conteúdo.
+       Sem a largura explícita o trilho também crescia, em vez de rolar, e o
+       último destino ficava para fora da folha. */
+    width: calc(100vw - 2rem);
+    max-width: calc(100vw - 2rem);
     justify-content: flex-start;
-    padding-bottom: 8px;
+    padding: 0 max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
     scroll-padding-inline: 16px;
     overscroll-behavior-x: contain;
+    touch-action: pan-x;
     -webkit-overflow-scrolling: touch;
   }
   .vitrine .v-gaveta-h .v-gaveta-item {
@@ -860,6 +873,29 @@
     padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
     border: 0;
+  }
+
+  .vitrine .v-unit-info-hidden-mobile,
+  .vitrine.v-unit-info-hidden-mobile { display: none !important; }
+
+  .vitrine .v-unit-scene-cta { display: block; }
+  .vitrine .v-mobile-unit-stage {
+    display: flex;
+    position: absolute;
+    right: max(12px, env(safe-area-inset-right));
+    bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
+    left: max(12px, env(safe-area-inset-left));
+    z-index: 80;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.94);
+    box-shadow: var(--v-sh-3);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
   }
 
   .vitrine .v-unit-search .v-card button[title*="Favorit"],

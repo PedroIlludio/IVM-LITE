@@ -64,6 +64,10 @@ interface BuscadorUnidades3DProps {
   onModo?: (m: ModoFoco) => void;
   /** Unidades que passam no filtro — a página usa para montar as caixas. */
   onFiltrar?: (ids: string[]) => void;
+  /** Oculta lista e ficha apenas no celular, deixando a unidade visível na cena. */
+  mobileSceneOpen?: boolean;
+  /** Alterna da ficha cheia para a cena 3D no celular. */
+  onMostrarCenaMobile?: () => void;
 }
 
 const STATUSES: UnidadeStatus[] = ["disponivel", "reservada", "vendida"];
@@ -114,6 +118,8 @@ export default function BuscadorUnidades3D({
   onSelecionar,
   onModo,
   onFiltrar,
+  mobileSceneOpen = false,
+  onMostrarCenaMobile,
 }: BuscadorUnidades3DProps) {
   /**
    * Área, quartos, suítes e vagas resolvidos ANTES de qualquer leitura: a
@@ -501,7 +507,7 @@ export default function BuscadorUnidades3D({
         faz a tela parecer feita de blocos soltos: o painel vira mais uma
         caixa sobre a cena, em vez de uma coluna de leitura.
       */}
-      <div className="v-unit-search v-scroll absolute inset-y-0 left-0 z-40 flex w-[380px] max-w-full flex-col bg-[var(--v-surface)] shadow-[var(--v-sh-3)]">
+      <div className={`v-unit-search v-scroll absolute inset-y-0 left-0 z-40 flex w-[380px] max-w-full flex-col bg-[var(--v-surface)] shadow-[var(--v-sh-3)] ${mobileSceneOpen ? "v-unit-info-hidden-mobile" : ""}`}>
         <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
           <div className="min-w-0">
             <h2 className="v-title text-[22px]">Unidades</h2>
@@ -664,7 +670,12 @@ export default function BuscadorUnidades3D({
           favorita={favoritos.has(popup.id)}
           onFavoritar={() => alternarFavorito(popup.id)}
           onAmpliar={(url) => setLightbox(url)}
-          onVerNo3D={(como) => escolher(popup, como)}
+          onVerNo3D={(como) => {
+            escolher(popup, como);
+            onMostrarCenaMobile?.();
+          }}
+          onMostrarCenaMobile={onMostrarCenaMobile}
+          mobileSceneOpen={mobileSceneOpen}
           onMostrarTodas={mostrarTodas}
           /**
            * O ✕ DESFAZ a escolha; não apenas esconde o cartão.
@@ -774,7 +785,8 @@ function CardUnidade({
  */
 function PopupUnidade({
   u, tipologia, imagem, planta, torres, modo, favorita, contato, nomeEmpreendimento,
-  onFavoritar, onAmpliar, onVerNo3D, onMostrarTodas, onClose,
+  onFavoritar, onAmpliar, onVerNo3D, onMostrarCenaMobile, mobileSceneOpen,
+  onMostrarTodas, onClose,
 }: {
   u: Unidade;
   tipologia?: Tipologia;
@@ -789,6 +801,8 @@ function PopupUnidade({
   onFavoritar: () => void;
   onAmpliar: (url: string) => void;
   onVerNo3D: (como: "volume" | "corte" | "vista") => void;
+  onMostrarCenaMobile?: () => void;
+  mobileSceneOpen: boolean;
   /** Desfaz corte, isolamento e enquadramento — volta ao prédio inteiro. */
   onMostrarTodas: () => void;
   onClose: () => void;
@@ -858,7 +872,7 @@ function PopupUnidade({
   const cor = corStatus(u.status);
 
   return (
-    <aside className="v-unit-popup vitrine fixed inset-y-0 right-0 z-[90] w-[390px] max-w-full border-l border-[var(--v-line)] bg-[var(--v-surface)] shadow-[-18px_0_45px_rgba(25,28,31,0.14)] animate-in slide-in-from-right duration-300">
+    <aside className={`v-unit-popup vitrine fixed inset-y-0 right-0 z-[90] w-[390px] max-w-full border-l border-[var(--v-line)] bg-[var(--v-surface)] shadow-[-18px_0_45px_rgba(25,28,31,0.14)] animate-in slide-in-from-right duration-300 ${mobileSceneOpen ? "v-unit-info-hidden-mobile" : ""}`}>
       <div className="v-in v-scroll h-full overflow-y-auto">
         <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
           <div className="min-w-0">
@@ -908,6 +922,20 @@ function PopupUnidade({
         {tipologia?.descricao && (
           <p className="v-muted px-6 pt-4 text-[13px] leading-relaxed">{tipologia.descricao}</p>
         )}
+
+        {/* No celular a ficha ocupa o viewport inteiro. Este gesto troca a
+            leitura dos dados pela unidade isolada na cena. */}
+        <div className="v-unit-scene-cta px-6 pt-5">
+          <button
+            type="button"
+            data-testid="btn-ver-unidade-3d"
+            onClick={onMostrarCenaMobile}
+            className="v-btn-primary flex h-12 w-full items-center justify-center gap-2 rounded-[var(--v-r-sm)]"
+          >
+            <Eye className="h-4 w-4" />
+            Ver unidade {u.numero} em 3D
+          </button>
+        </div>
 
         <div className="flex gap-2 px-6 pt-5">
           {modo === "volume" ? (

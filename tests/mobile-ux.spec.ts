@@ -32,6 +32,18 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await page.getByTestId("btn-voltar-categoria").click();
   expect((await painel.boundingBox())!.height).toBeLessThan(viewport.height * 0.25);
 
+  // O trilho é realmente rolável e o último destino pode entrar inteiro na tela.
+  const categorias = page.getByTestId("categorias-scroll-mobile");
+  await expect(categorias).toBeVisible();
+  expect(await categorias.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  await categorias.evaluate((el) => el.scrollTo({ left: el.scrollWidth, behavior: "instant" }));
+  await expect.poll(() => categorias.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
+  const ultimaCategoria = categorias.locator(".v-gaveta-item").last();
+  const caixaCategorias = await categorias.boundingBox();
+  const caixaUltimaCategoria = await ultimaCategoria.boundingBox();
+  expect(caixaUltimaCategoria!.x + caixaUltimaCategoria!.width)
+    .toBeLessThanOrEqual(caixaCategorias!.x + caixaCategorias!.width + 1);
+
   // Galeria é um overlay verdadeiro: sem vazamento horizontal e com saída.
   await page.getByTestId("cat-galeria").click();
   const galeria = page.getByTestId("media-overlay");
@@ -55,6 +67,26 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   const popup = page.locator(".v-unit-popup");
   await expect(popup).toBeVisible();
   expect((await popup.boundingBox())!.width).toBe(viewport.width);
+
+  // A ficha cheia sai de cena sob demanda, mas continua montada para voltar ao
+  // mesmo apartamento e ao mesmo modo de visualização.
+  await page.getByTestId("btn-ver-unidade-3d").click();
+  await expect(busca).toBeHidden();
+  await expect(popup).toBeHidden();
+  const palcoUnidade = page.getByTestId("mobile-unit-stage");
+  await expect(palcoUnidade).toBeVisible();
+  await expect(palcoUnidade).toContainText(/Unidade .* pavimento/);
+  await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
+  await page.getByTestId("btn-voltar-info-unidade").click();
+  await expect(popup).toBeVisible();
+
+  // A ação de pavimento também entrega a cena imediatamente; antes ela mudava
+  // a câmera atrás da ficha cheia e parecia não funcionar.
+  await popup.getByRole("button", { name: "Vista do andar" }).click();
+  await expect(popup).toBeHidden();
+  await expect(palcoUnidade).toContainText("Vista do pavimento");
+  await page.getByTestId("btn-voltar-info-unidade").click();
+  await expect(popup).toBeVisible();
   await popup.locator('button[title="Fechar"]').click();
 
   await busca.locator('button[title="Fechar"]').click();

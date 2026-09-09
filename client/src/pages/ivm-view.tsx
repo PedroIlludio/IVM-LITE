@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw, MoreHorizontal, X } from "lucide-react";
+import { ArrowLeft, Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw, MoreHorizontal, X } from "lucide-react";
 import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D";
 import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
@@ -88,6 +88,8 @@ export default function IvmViewPage() {
   const [buscaMode, setBuscaMode] = useState(false);
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [unidadeSelId, setUnidadeSelId] = useState<string | null>(null);
+  /** No celular, alterna a ficha cheia pela cena sem perder a unidade escolhida. */
+  const [mobileUnitScene, setMobileUnitScene] = useState(false);
   /**
    * Como a unidade está sendo olhada — ver `ModoFoco`.
    *
@@ -411,6 +413,7 @@ export default function IvmViewPage() {
   function abrirUnidades(unidadeId?: string) {
     pararTour();
     setModoEntorno("3d");
+    setMobileUnitScene(false);
     setUnidadeSelId(unidadeId ?? null);
     // Antes de trocar de vista: a torre já aparece enquadrada quando a lista
     // abre, em vez de a câmera deslizar por baixo do painel depois.
@@ -499,6 +502,19 @@ export default function IvmViewPage() {
     });
     return boxes;
   }, [buscaMode, building, pavCfg, unidades, torres, filtradas, unidadeSelId]);
+
+  const unidadeEmCena = unidadeSelId
+    ? unidades.find((u) => u.id === unidadeSelId) ?? null
+    : null;
+
+  function mostrarCenaDaUnidadeNoMobile() {
+    if (typeof window === "undefined") return;
+    if (window.matchMedia(
+      "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)",
+    ).matches) {
+      setMobileUnitScene(true);
+    }
+  }
 
   /**
    * A experiência está pronta quando: o projeto chegou, a cena montou e — se o
@@ -907,8 +923,11 @@ export default function IvmViewPage() {
           onSelecionar={(u) => setUnidadeSelId(u?.id ?? null)}
           onModo={setModoFoco}
           onFiltrar={setFiltradas}
+          mobileSceneOpen={mobileUnitScene}
+          onMostrarCenaMobile={mostrarCenaDaUnidadeNoMobile}
           onClose={() => {
             setBuscaMode(false);
+            setMobileUnitScene(false);
             setUnidadeSelId(null);
             // Fechar a busca devolve a cena externa — e com ela a órbita.
             setModoFoco("volume");
@@ -929,6 +948,28 @@ export default function IvmViewPage() {
             setPanelOpen(true);
           }}
         />
+      )}
+
+      {project && buscaMode && mobileUnitScene && unidadeEmCena && (
+        <div className="v-mobile-unit-stage" data-testid="mobile-unit-stage">
+          <div className="min-w-0">
+            <span className="v-eyebrow block">
+              {modoFoco === "corte" ? "Vista do pavimento" : "Unidade em 3D"}
+            </span>
+            <strong className="v-title block truncate text-[15px]">
+              Unidade {unidadeEmCena.numero} · {unidadeEmCena.pavimento}º pavimento
+            </strong>
+          </div>
+          <button
+            type="button"
+            data-testid="btn-voltar-info-unidade"
+            onClick={() => setMobileUnitScene(false)}
+            className="v-btn shrink-0 gap-1.5 px-3"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Informações
+          </button>
+        </div>
       )}
 
       {/*
