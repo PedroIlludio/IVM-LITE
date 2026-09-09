@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
 import { ArrowLeft, Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw, MoreHorizontal, X } from "lucide-react";
 import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D";
@@ -23,11 +23,14 @@ import { buildUnitBoxes, volumeDaTorre } from "@/lib/unidades3d";
 import { tocarTour, vistaPrincipal, type TourHandle } from "@/lib/tour";
 import { plantasDoProjeto } from "@/lib/tipologias";
 import { niveisDe, alturaDaPlanta, type NivelDef } from "@/lib/pavimentos";
-import MapaEntorno from "@/components/MapaEntorno";
 import { CartaoPoi } from "@/components/CartaoPoi";
 import type { EditablePoi } from "@/lib/ivm-store";
 import { getSunReadout, getSunTimesLocal, localToUtc, seasonDate, type Season } from "@/lib/solar";
 import { ehAparelhoLeve } from "@/lib/cesium-setup";
+
+/* MapLibre pesa centenas de KB e só é necessário depois de abrir o Entorno.
+   O import dinâmico tira esse custo do carregamento inicial da vitrine. */
+const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
 
 /**
  * Página pública de um IVM Lite (projeto do Supabase): mesma experiência rica
@@ -190,9 +193,19 @@ export default function IvmViewPage() {
    * enquanto a folha está aberta.
    */
   const [folhaEmbaixo, setFolhaEmbaixo] = useState(false);
+  const [mobileViewport, setMobileViewport] = useState(false);
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 767px) and (orientation: portrait)");
     const ver = () => setFolhaEmbaixo(mq.matches);
+    ver();
+    mq.addEventListener("change", ver);
+    return () => mq.removeEventListener("change", ver);
+  }, []);
+  useEffect(() => {
+    const mq = window.matchMedia(
+      "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)",
+    );
+    const ver = () => setMobileViewport(mq.matches);
     ver();
     mq.addEventListener("change", ver);
     return () => mq.removeEventListener("change", ver);
@@ -637,7 +650,7 @@ export default function IvmViewPage() {
         ${brand.fontDisplay ? `.ivm-brand .font-serif { font-family: ${brand.fontDisplay}, serif; }` : ""}
       `}</style>
 
-      {apiKey && building && (
+      {apiKey && building && !(mobileViewport && modoEntorno === "mapa") && (
         <Scene3D
           /* Ver `recarregarCena`: trocar a chave é o que remonta a cena. */
           key={tentativaCena}
@@ -749,24 +762,30 @@ export default function IvmViewPage() {
         que ele tem de melhor, que é a escala do entorno.
       */}
       {project && modoEntorno === "mapa" && (
-        <div className="absolute inset-0 z-20">
-          <MapaEntorno
-            centro={{ lat: building?.lat ?? emps[0].lat, lng: building?.lng ?? emps[0].lng }}
-            nomeCentro={project.name}
-            pois={(project.data.empreendimento.pontosDeInteresse ?? []).map((p, i) => ({
-              id: p.id ?? `poi-${i}`,
-              name: p.name,
-              categoria: p.categoria,
-              lat: p.lat,
-              lng: p.lng,
-              rota: p.rota,
-            }))}
-            estiloCategorias={project.data.empreendimento.estiloCategoriaPoi}
-            cor={brandPrimary}
-            selecionadoId={poiEntornoId}
-            onSelecionar={setPoiEntornoId}
-            className="h-full w-full"
-          />
+        <div className="absolute inset-0 z-20" data-testid="mapa-entorno-viewport">
+          <Suspense fallback={
+            <div className="grid h-full w-full place-items-center bg-[var(--v-surface-3)]">
+              <Loader2 className="h-6 w-6 animate-spin text-[var(--v-ink-3)]" />
+            </div>
+          }>
+            <MapaEntorno
+              centro={{ lat: building?.lat ?? emps[0].lat, lng: building?.lng ?? emps[0].lng }}
+              nomeCentro={project.name}
+              pois={(project.data.empreendimento.pontosDeInteresse ?? []).map((p, i) => ({
+                id: p.id ?? `poi-${i}`,
+                name: p.name,
+                categoria: p.categoria,
+                lat: p.lat,
+                lng: p.lng,
+                rota: p.rota,
+              }))}
+              estiloCategorias={project.data.empreendimento.estiloCategoriaPoi}
+              cor={brandPrimary}
+              selecionadoId={poiEntornoId}
+              onSelecionar={setPoiEntornoId}
+              className="h-full w-full"
+            />
+          </Suspense>
         </div>
       )}
 
@@ -820,6 +839,15 @@ export default function IvmViewPage() {
             onModo: setModoEntorno,
             poiSelId: poiEntornoId,
             onPoiSel: setPoiEntornoId,
+            onAbrirMapaMobile: () => {
+              setPoiEntornoId(null);
+              // O mapa mobile libera o contexto WebGL do Cesium. Marcar a cena
+              // como pendente garante feedback correto quando o visitante voltar.
+              setReady(false);
+              setModeloPronto(false);
+              setModoEntorno("mapa");
+              setPanelOpen(false);
+            },
             onEntrarEntorno: () => {
               const cam = project?.data.config.cameraEntorno;
               if (!cam) return;
@@ -872,6 +900,7 @@ export default function IvmViewPage() {
           estilo={project.data.empreendimento.estiloCategoriaPoi}
           onFechar={() => setPoiEntornoId(null)}
           onFoto={setFotoAmpliada}
+          mostrarBasico={mobileViewport && modoEntorno === "mapa"}
         />
       )}
 
@@ -1076,9 +1105,23 @@ export default function IvmViewPage() {
       )}
 
       {!tilesError && !pavMode && !buscaMode && !panelOpen && (
-        <button onClick={() => setPanelOpen(true)} className="v-panel-trigger v-pill absolute left-4 top-4 z-40">
-          <Menu className="h-4 w-4" />
-          <span className="max-w-[42vw] truncate">{project?.name ?? "Detalhes"}</span>
+        <button
+          onClick={() => {
+            if (mobileViewport && modoEntorno === "mapa") {
+              setPoiEntornoId(null);
+              setModoEntorno("3d");
+            }
+            setPanelOpen(true);
+          }}
+          className="v-panel-trigger v-pill absolute left-4 top-4 z-40"
+          data-testid={mobileViewport && modoEntorno === "mapa" ? "btn-voltar-mapa-3d" : undefined}
+        >
+          {mobileViewport && modoEntorno === "mapa"
+            ? <ArrowLeft className="h-4 w-4" />
+            : <Menu className="h-4 w-4" />}
+          <span className="max-w-[42vw] truncate">
+            {mobileViewport && modoEntorno === "mapa" ? "Voltar ao 3D" : (project?.name ?? "Detalhes")}
+          </span>
         </button>
       )}
 
@@ -1107,7 +1150,7 @@ export default function IvmViewPage() {
         empreendimento surgia do nada segundos depois. Agora o modelo é parte
         da conta; um projeto sem `modelUrl` não espera por nada.
       */}
-      {carregando && !tilesError && !semChave && (
+      {carregando && modoEntorno !== "mapa" && !tilesError && !semChave && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--v-bg)]">
           <div className="w-[min(88vw,320px)] text-center">
             {brand.logoUrl ? (

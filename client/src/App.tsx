@@ -1,14 +1,18 @@
+import { lazy, Suspense } from "react";
 import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
-import AdminPage from "@/pages/admin";
-import IvmEditorPage from "@/pages/ivm-editor";
-import IvmViewPage from "@/pages/ivm-view";
-import MigrarPage from "@/pages/migrar";
+
+/* Cada rota baixa só a sua própria interface. Antes, abrir uma vitrine pública
+   também carregava o editor administrativo inteiro e suas ferramentas 3D. */
+const NotFound = lazy(() => import("@/pages/not-found"));
+const AdminPage = lazy(() => import("@/pages/admin"));
+const IvmEditorPage = lazy(() => import("@/pages/ivm-editor"));
+const IvmViewPage = lazy(() => import("@/pages/ivm-view"));
+const MigrarPage = lazy(() => import("@/pages/migrar"));
 
 function Router() {
   return (
@@ -68,7 +72,13 @@ function App() {
           que acabou de quebrar não chega a ninguém.
         */}
         <ErrorBoundary area="rota">
-          <Router />
+          <Suspense fallback={
+            <div className="grid min-h-[100dvh] place-items-center bg-slate-950 text-sm text-white/70">
+              Carregando…
+            </div>
+          }>
+            <Router />
+          </Suspense>
         </ErrorBoundary>
       </TooltipProvider>
     </QueryClientProvider>

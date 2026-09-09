@@ -87,9 +87,33 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(palcoUnidade).toContainText("Vista do pavimento");
   await page.getByTestId("btn-voltar-info-unidade").click();
   await expect(popup).toBeVisible();
+
+  // Depois de visitar o pavimento, "Ver unidade" precisa abandonar o corte e
+  // voltar ao enquadramento exclusivo do apartamento.
+  await page.getByTestId("btn-ver-unidade-3d").click();
+  await expect(palcoUnidade).toContainText("Unidade em 3D");
+  await page.getByTestId("btn-voltar-info-unidade").click();
+  await expect(popup).toBeVisible();
   await popup.locator('button[title="Fechar"]').click();
 
   await busca.locator('button[title="Fechar"]').click();
+  await expect(painel).toBeVisible();
+
+  // No celular, Entorno pula a lista e abre o mapa inteiro. Os pinos continuam
+  // abrindo a ficha do local, inclusive quando ela contém só os dados básicos.
+  await page.getByTestId("cat-entorno").click();
+  const mapa = page.getByTestId("mapa-entorno-viewport");
+  await expect(mapa).toBeVisible();
+  await expect(page.getByTestId("btn-voltar-mapa-3d")).toBeVisible();
+  await expect(page.locator(".maplibregl-map")).toHaveCSS("height", `${viewport.height}px`, { timeout: 30_000 });
+  const primeiroPoi = page.locator(".maplibregl-marker span").first();
+  await expect(primeiroPoi).toBeVisible({ timeout: 30_000 });
+  await primeiroPoi.click();
+  await expect(page.getByTestId("cartao-poi")).toBeVisible();
+  await page.getByTestId("btn-voltar-mapa-3d").click();
+  await expect(mapa).toBeHidden();
+  await expect(page.locator(".v-carregando")).toBeHidden({ timeout: 75_000 });
+  await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
   await expect(painel).toBeVisible();
 });
 

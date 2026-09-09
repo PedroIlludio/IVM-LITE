@@ -480,7 +480,10 @@ export default function MapaEntorno({
       {/* O container do MapLibre precisa existir e ter tamanho SEMPRE — se ele
           for trocado por uma mensagem de erro, a instância perde o elemento e
           nem uma nova tentativa funciona. Erro e carregando vão por cima. */}
-      <div ref={divRef} className="absolute inset-0" />
+      {/* Inline de propósito: quando o CSS do MapLibre chega por import
+          dinâmico, `.maplibregl-map { position: relative }` é injetado depois
+          do Tailwind e venceria `absolute`, reduzindo o canvas a 0 px. */}
+      <div ref={divRef} className="absolute inset-0" style={{ position: "absolute", inset: 0 }} />
       {erro && (
         <div className="absolute inset-0 z-[2] flex flex-col items-center justify-center gap-2 bg-[var(--v-surface-3)] p-6 text-center">
           <AlertTriangle className="h-5 w-5 text-[var(--v-ink-3)]" />

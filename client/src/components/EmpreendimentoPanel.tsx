@@ -140,6 +140,8 @@ export interface ControleEntorno {
    * dele.
    */
   onEntrarEntorno?: () => void;
+  /** No celular abre o mapa em tela cheia, sem a lista intermediária. */
+  onAbrirMapaMobile?: () => void;
 }
 
 function EmpreendimentoListItem({
@@ -304,6 +306,7 @@ function EmpreendimentoDetail({
   trilho,
   cidadeVisivel,
   gavetaHorizontal = false,
+  mobile = false,
 }: {
   emp: Empreendimento;
   onBack: () => void;
@@ -335,6 +338,8 @@ function EmpreendimentoDetail({
    * Em linha elas ocupam uma faixa e o resto é leitura.
    */
   gavetaHorizontal?: boolean;
+  /** Permite simplificar destinos que no celular ocupam o viewport inteiro. */
+  mobile?: boolean;
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
@@ -420,10 +425,11 @@ function EmpreendimentoDetail({
   // O mapa é uma subvisualização exclusiva de Entorno. Ao sair dessa seção,
   // devolve o palco ao 3D e limpa o destino que estava selecionado.
   useEffect(() => {
+    if (mobile) return;
     if (vista === "entorno" || modoEntorno !== "mapa") return;
     setModoEntorno("3d");
     setPoiSelId(null);
-  }, [vista, modoEntorno]);
+  }, [vista, modoEntorno, mobile]);
 
   /**
    * Sem cidade, o entorno é lido no MAPA.
@@ -796,6 +802,7 @@ function EmpreendimentoDetail({
                   icone: <MapPin className="w-6 h-6" />,
                   tem: (emp.pontosDeInteresse ?? []).length > 0,
                   n: (emp.pontosDeInteresse ?? []).length || undefined,
+                  abrir: mobile ? entorno?.onAbrirMapaMobile : undefined,
                 },
               ] as { id: string; rotulo: string; icone: React.ReactNode; tem: boolean; n?: number; abrir?: () => void }[])
                 .filter((c) => c.tem)
@@ -1419,6 +1426,7 @@ export default function EmpreendimentoPanel({
             trilho={false}
             cidadeVisivel={cidadeVisivel}
             gavetaHorizontal={retrato}
+            mobile
           />
         )}
       </div>
@@ -1523,6 +1531,7 @@ export default function EmpreendimentoPanel({
           onFechar={onToggle}
           trilho={noTrilho}
           cidadeVisivel={cidadeVisivel}
+          mobile={false}
         />
       )}
     </div>

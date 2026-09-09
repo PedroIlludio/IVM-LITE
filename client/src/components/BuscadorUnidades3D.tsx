@@ -674,7 +674,6 @@ export default function BuscadorUnidades3D({
             escolher(popup, como);
             onMostrarCenaMobile?.();
           }}
-          onMostrarCenaMobile={onMostrarCenaMobile}
           mobileSceneOpen={mobileSceneOpen}
           onMostrarTodas={mostrarTodas}
           /**
@@ -785,7 +784,7 @@ function CardUnidade({
  */
 function PopupUnidade({
   u, tipologia, imagem, planta, torres, modo, favorita, contato, nomeEmpreendimento,
-  onFavoritar, onAmpliar, onVerNo3D, onMostrarCenaMobile, mobileSceneOpen,
+  onFavoritar, onAmpliar, onVerNo3D, mobileSceneOpen,
   onMostrarTodas, onClose,
 }: {
   u: Unidade;
@@ -801,7 +800,6 @@ function PopupUnidade({
   onFavoritar: () => void;
   onAmpliar: (url: string) => void;
   onVerNo3D: (como: "volume" | "corte" | "vista") => void;
-  onMostrarCenaMobile?: () => void;
   mobileSceneOpen: boolean;
   /** Desfaz corte, isolamento e enquadramento — volta ao prédio inteiro. */
   onMostrarTodas: () => void;
@@ -929,7 +927,9 @@ function PopupUnidade({
           <button
             type="button"
             data-testid="btn-ver-unidade-3d"
-            onClick={onMostrarCenaMobile}
+            /* Sempre restaura o volume da unidade. Apenas esconder a ficha
+               preservava o corte do último "Vista do andar". */
+            onClick={() => onVerNo3D("volume")}
             className="v-btn-primary flex h-12 w-full items-center justify-center gap-2 rounded-[var(--v-r-sm)]"
           >
             <Eye className="h-4 w-4" />
