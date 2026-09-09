@@ -125,6 +125,25 @@ export interface Superficie {
   id: string;
   nome?: string;
   tipo: TipoSuperficie;
+  /**
+   * Marca a superfície criada para assentar o empreendimento.
+   *
+   * Não muda a geometria: ela continua usando o mesmo recorte, piso e saia das
+   * demais superfícies. A marca existe para o editor apresentar os controles de
+   * nivelamento com o nome certo e para futuras migrações distinguirem um
+   * gramado decorativo da peça que fecha o terreno sob o prédio.
+   */
+  plataforma?: boolean;
+  /** A plataforma nasceu da caixa do GLB antigo, não da silhueta real. */
+  contornoAproximado?: boolean;
+  /**
+   * Deslocamento coletivo já aplicado às cotas dos vértices, em metros.
+   *
+   * As alturas em `pontos` continuam absolutas e prontas para renderizar. Este
+   * valor é apenas a memória do controle "Subir/descer conjunto", permitindo
+   * calcular o delta entre duas edições sem acumular erro.
+   */
+  ajusteAltura?: number;
   /** Contorno fechado: o último ponto liga no primeiro, sem repeti-lo. */
   pontos: VerticeArea[];
   /**

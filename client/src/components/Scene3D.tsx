@@ -155,6 +155,22 @@ export interface Scene3DHandle {
    * cota.
    */
   medirCotas: (pontos: PontoGeo[]) => Promise<number[] | null>;
+  /**
+   * Contornos da implantação gravados no GLB, já convertidos para latitude e
+   * longitude com a transformação atual do empreendimento.
+   *
+   * A altura não é devolvida de propósito: a plataforma mede a fotogrametria
+   * antes de decidir em que cota ficará. `null` significa que o modelo ainda
+   * está sendo lido. Modelos antigos, sem `ivmFootprintV1`, devolvem a caixa da
+   * base marcada como aproximada; aqui ela é segura porque a plataforma também
+   * PREENCHE o recorte, em vez de deixar um quadrado vazio.
+   */
+  contornosDoModelo: () => {
+    contornos: PontoGeo[][];
+    aproximado: boolean;
+  } | null;
+  /** Cota absoluta do centro da base geométrica do GLB já transformado. */
+  cotaBaseDoModelo: () => number | null;
 }
 
 // A cor do POI vem de `lib/poi-icones`, a mesma fonte do mapa 2D e do editor.
@@ -1904,6 +1920,43 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     modelLocalFromLatLng: (buildingId, lat, lng) => modelLocalFromLatLng(buildingId, lat, lng),
     captureImage: (maxW = 240, quality = 0.6) => captureImage(maxW, quality),
     medirCotas: (pontos) => medirCotas(pontos),
+    contornosDoModelo: () => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      const caixa = b?.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
+      if (!b || !node || !caixa) return null;
+      const aproximado = !caixa.contornos?.length;
+      const contornos = caixa.contornos?.length
+        ? caixa.contornos
+        : [[
+            [caixa.min[0], caixa.min[1]],
+            [caixa.max[0], caixa.min[1]],
+            [caixa.max[0], caixa.max[1]],
+            [caixa.min[0], caixa.max[1]],
+          ] as Array<[number, number]>];
+
+      return { aproximado, contornos: contornos.map((contorno) => contorno.map(([x, y]) => {
+        const mundo = poseNoModelo(b, node.groundHeight, x, y, 0, 0).position;
+        const carto = Cartographic.fromCartesian(mundo);
+        return {
+          lat: CesiumMath.toDegrees(carto.latitude),
+          lng: CesiumMath.toDegrees(carto.longitude),
+        };
+      })) };
+    },
+    cotaBaseDoModelo: () => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      const caixa = b?.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
+      if (!b || !node || !caixa) return null;
+      const x = (caixa.min[0] + caixa.max[0]) / 2;
+      const y = (caixa.min[1] + caixa.max[1]) / 2;
+      const mundo = poseNoModelo(b, node.groundHeight, x, y, caixa.min[2], 0).position;
+      const carto = Cartographic.fromCartesian(mundo);
+      return Number.isFinite(carto.height) ? carto.height : null;
+    },
   }));
 
   /**
@@ -1922,8 +1975,26 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v || v.isDestroyed() || pontos.length < 2) return null;
     try {
       const sondas = pontos.map((p) => Cartesian3.fromDegrees(p.lng, p.lat, 3000));
+      /**
+       * A sonda quer a captura do Google, não o que nós pusemos sobre ela.
+       *
+       * Isto é especialmente importante para a plataforma criada pela pegada
+       * do GLB: seus pontos ficam exatamente sob fachadas, marquises e lajes.
+       * Sem exclusão, a altura medida pode ser a do telhado do empreendimento
+       * novo ou a da própria plataforma numa remedida.
+       */
+      const excluir: object[] = [];
+      for (const node of Array.from(nodesRef.current.values())) {
+        if (node.model) excluir.push(node.model);
+        if (node.box) excluir.push(node.box);
+      }
+      if (mapaModelRef.current) excluir.push(mapaModelRef.current);
+      excluir.push(...areasRef.current, ...viasRef.current);
       const timeout = new Promise<undefined>((r) => setTimeout(() => r(undefined), 15000));
-      const res = await Promise.race([v.scene.clampToHeightMostDetailed(sondas), timeout]);
+      const res = await Promise.race([
+        v.scene.clampToHeightMostDetailed(sondas, excluir),
+        timeout,
+      ]);
       if (!res || res.length !== pontos.length) return null;
       const cotas: number[] = [];
       for (const p of res) {
@@ -2543,7 +2614,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
     try {
       const timeout = new Promise<undefined>((r) => setTimeout(() => r(undefined), 8000));
-      const res = await Promise.race([v.scene.clampToHeightMostDetailed([probe]), timeout]);
+      const excluir = Array.from(nodesRef.current.values()).flatMap((n) => [
+        ...(n.model ? [n.model] : []),
+        ...(n.box ? [n.box] : []),
+      ]);
+      const res = await Promise.race([
+        v.scene.clampToHeightMostDetailed([probe], excluir),
+        timeout,
+      ]);
       const p = res && res[0];
       if (!p || !viewerRef.current) return;
       const carto = Cartographic.fromCartesian(p);

@@ -1053,6 +1053,55 @@ export default function IvmEditorPage() {
   function patchArea(id: string, patch: Partial<Superficie>) {
     setSuperficies((atual) => atual.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
+
+  /**
+   * Cria a plataforma usando a mesma silhueta que recorta a fotogrametria.
+   *
+   * A silhueta já vem transformada pelo Scene3D: posição, rotação, escala e
+   * offsets do empreendimento estão incorporados. As cotas ficam vazias até a
+   * medição explícita porque recortar antes de os tiles terminarem de carregar
+   * é justamente o que produz plataformas enterradas ou flutuando.
+   */
+  function criarPlataformaDoModelo() {
+    if (areasPintadas.some((s) => s.plataforma)) {
+      setSaveMsg("Já existe uma plataforma do empreendimento. Remova-a antes de gerar outra.");
+      return;
+    }
+    const implantacao = sceneRef.current?.contornosDoModelo();
+    if (!implantacao) {
+      setSaveMsg(
+        "O modelo ainda não disponibilizou a base. Espere o GLB terminar de carregar e tente novamente.",
+      );
+      return;
+    }
+    const contornos = implantacao.contornos.filter((anel) => anel.length >= 3);
+    if (!contornos.length) return;
+    const ids = contornos.map(() => genId("plataforma"));
+    const novas: Superficie[] = contornos.map((pontos, i) => ({
+      id: ids[i],
+      nome: contornos.length > 1 ? `Plataforma ${i + 1}` : "Plataforma do empreendimento",
+      tipo: "concreto",
+      plataforma: true,
+      contornoAproximado: implantacao.aproximado || undefined,
+      // O piso passa 35 cm sobre a borda da fotogrametria. Essa sobreposição
+      // esconde a rachadura que aparece quando corte e malha terminam juntos.
+      folgaCorte: -0.35,
+      ajusteAltura: 0,
+      pontos,
+    }));
+    setSuperficies((atual) => [...atual, ...novas]);
+    // A própria plataforma já recorta com uma borda menor que o piso. Manter o
+    // recorte automático junto abriria o buraco até a borda exata do GLB e
+    // anularia a sobreposição que esconde a emenda.
+    if (project?.data.config.recorteTerreno) setConfig({ recorteTerreno: undefined });
+    setAbertoEntorno({ tipo: "area", id: ids[0] });
+    setTracandoArea(null);
+    setAreaAlturaId(null);
+    setPreviewAreas(false);
+    setSaveMsg(implantacao.aproximado
+      ? "Plataforma retangular criada pela caixa do GLB antigo. Confira/redesenhe o contorno, depois meça o terreno."
+      : `${novas.length} plataforma(s) criada(s) pela silhueta do modelo. Agora meça o terreno e escolha a cota final.`);
+  }
   function patchTracadoVia(id: string, pontos: Via["pontos"]) {
     // Qualquer mudança horizontal invalida as alturas medidas anteriormente.
     setVias((atual) => atual.map((v) => (v.id === id
@@ -3130,14 +3179,46 @@ export default function IvmEditorPage() {
               pivô manual, recorte da fotogrametria), com contorno fechado
               livre em vez de fita de largura constante. */}
           {tab === "local" && (
-            <Section title={`Superfícies (${areasPintadas.length})`} aberta={false}>
+            <Section title={`Plataformas e superfícies (${areasPintadas.length})`} aberta={false}>
               <div>
                 <p className="mb-2 text-[9px] leading-relaxed text-white/30">
-                  Gramado, pátio, espelho d'água. Substituem o borrão da
-                  fotogrametria em volta do prédio por piso limpo e texturado.
+                  Recortam a fotogrametria e colocam piso com fechamento lateral
+                  no lugar. A plataforma pode seguir o relevo, ser nivelada e
+                  subir ou descer inteira para encontrar a base do prédio.
                 </p>
 
                 <button
+                  onClick={criarPlataformaDoModelo}
+                  className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-amber-300">
+                  <Box className="h-3.5 w-3.5" />
+                  Criar plataforma pela base do modelo
+                </button>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => {
+                      const id = genId("plataforma");
+                      setSuperficies((atual) => [...atual, {
+                        id,
+                        nome: "Plataforma do empreendimento",
+                        tipo: "concreto",
+                        plataforma: true,
+                        folgaCorte: -0.35,
+                        ajusteAltura: 0,
+                        pontos: [],
+                      }]);
+                      if (c.recorteTerreno) setConfig({ recorteTerreno: undefined });
+                      setAbertoEntorno({ tipo: "area", id });
+                      setTracandoVia(null);
+                      setViaAlturaId(null);
+                      setAreaAlturaId(null);
+                      setTracandoArea(id);
+                    }}
+                    className="flex items-center justify-center gap-1 rounded-[3px] border border-amber-400/35 px-2 py-1.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/10">
+                    <Crosshair className="h-3 w-3" />
+                    Desenhar plataforma
+                  </button>
+                  <button
                   onClick={() => {
                     const id = genId("area");
                     setSuperficies((atual) => [...atual, { id, tipo: "grama", pontos: [] }]);
@@ -3147,10 +3228,11 @@ export default function IvmEditorPage() {
                     setAreaAlturaId(null);
                     setTracandoArea(id);
                   }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-teal-500 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
-                  <Plus className="h-3.5 w-3.5" />
-                  Nova superfície
-                </button>
+                  className="flex items-center justify-center gap-1 rounded-[3px] border border-teal-400/35 px-2 py-1.5 text-[10px] font-semibold text-teal-200 hover:bg-teal-400/10">
+                    <Plus className="h-3 w-3" />
+                    Superfície livre
+                  </button>
+                </div>
 
                 {!areasPintadas.length && (
                   <p className="mt-1.5 rounded-[3px] border border-dashed border-white/10 px-2 py-3 text-center text-[10px] text-white/30">
@@ -3162,6 +3244,15 @@ export default function IvmEditorPage() {
                   const aberto = abertoEntorno?.tipo === "area" && abertoEntorno.id === area.id;
                   const temCota = area.pontos.length >= 3
                     && area.pontos.every((p) => Number.isFinite(p.altura));
+                  const cotasArea = area.pontos
+                    .map((p) => p.altura)
+                    .filter((h): h is number => typeof h === "number" && Number.isFinite(h));
+                  const cotaMedia = cotasArea.length
+                    ? cotasArea.reduce((s, h) => s + h, 0) / cotasArea.length
+                    : null;
+                  const desnivel = cotasArea.length
+                    ? Math.max(...cotasArea) - Math.min(...cotasArea)
+                    : null;
                   const tracando = tracandoArea === area.id;
                   const ajustando = areaAlturaId === area.id;
                   return (
@@ -3174,19 +3265,26 @@ export default function IvmEditorPage() {
                     <LinhaEntorno
                       cor={area.cor ?? area.tinta ?? COR_SUPERFICIE[area.tipo] ?? "#4e7c42"}
                       nome={area.nome}
-                      vazio={`Superfície de ${TIPOS_SUPERFICIE.find((t) => t.id === area.tipo)?.nome.toLowerCase() ?? "piso"}`}
+                      vazio={area.plataforma
+                        ? "Plataforma do empreendimento"
+                        : `Superfície de ${TIPOS_SUPERFICIE.find((t) => t.id === area.tipo)?.nome.toLowerCase() ?? "piso"}`}
                       aberto={aberto}
                       ativo={tracando || ajustando}
                       onClick={() => abrirEntorno("area", area.id)}
                       selos={
                         <>
+                          {area.contornoAproximado && !tracando && (
+                            <SeloEntorno tom="pendente">contorno aproximado</SeloEntorno>
+                          )}
                           {tracando && <SeloEntorno tom="ativo">contornando</SeloEntorno>}
                           {ajustando && <SeloEntorno tom="ativo">ajustando</SeloEntorno>}
                           {!tracando && !ajustando && (
                             area.pontos.length < 3
                               ? <SeloEntorno tom="pendente">sem contorno</SeloEntorno>
                               : temCota
-                                ? <SeloEntorno tom="pronto">recortando</SeloEntorno>
+                                ? <SeloEntorno tom="pronto">
+                                    {area.plataforma && (desnivel ?? 0) <= 0.02 ? "nivelada" : "recortando"}
+                                  </SeloEntorno>
                                 : <SeloEntorno tom="neutro">drapejada</SeloEntorno>
                           )}
                         </>
@@ -3195,6 +3293,13 @@ export default function IvmEditorPage() {
 
                     {aberto && (
                     <div className="border-t border-white/[0.06] p-1.5">
+                    {area.contornoAproximado && (
+                      <p className="mb-1.5 rounded-[3px] border border-amber-400/25 bg-amber-400/10 px-2 py-1.5 text-[9px] leading-relaxed text-amber-200/80">
+                        Este GLB não traz a silhueta real. A plataforma nasceu da
+                        caixa retangular do modelo; confira o limite no mapa e
+                        redesenhe se estiver cobrindo rua ou terreno vizinho.
+                      </p>
+                    )}
                     <div className="flex items-center gap-1.5">
                       <input value={area.nome ?? ""} placeholder="Sem nome"
                         onChange={(e) => patchArea(area.id, { nome: e.target.value })}
@@ -3241,6 +3346,8 @@ export default function IvmEditorPage() {
                             // não tem altura, e altura velha em posição nova
                             // mente.
                             pontos: pts.map((p) => ({ lat: p.lat, lng: p.lng })),
+                            ajusteAltura: 0,
+                            contornoAproximado: undefined,
                           })}
                           className="h-56 w-full overflow-hidden rounded-[4px]"
                         />
@@ -3331,6 +3438,7 @@ export default function IvmEditorPage() {
                             }
                             patchArea(area.id, {
                               pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
+                              ajusteAltura: 0,
                             });
                             setAreaAlturaId(area.id);
                             setPreviewAreas(true);
@@ -3344,6 +3452,78 @@ export default function IvmEditorPage() {
 
                         {area.pontos.every((p) => Number.isFinite(p.altura)) && (
                           <>
+                            <div className="space-y-1 rounded-[3px] border border-amber-400/20 bg-amber-400/[0.04] p-1.5">
+                              <NumIn
+                                label="Subir/descer conjunto (m)"
+                                v={area.ajusteAltura ?? 0}
+                                step={0.1}
+                                casas={2}
+                                onChange={(x) => {
+                                  const anterior = area.ajusteAltura ?? 0;
+                                  const proximo = Math.max(-100, Math.min(100, x));
+                                  const delta = proximo - anterior;
+                                  patchArea(area.id, {
+                                    ajusteAltura: proximo,
+                                    pontos: area.pontos.map((p) => ({
+                                      ...p,
+                                      altura: (p.altura as number) + delta,
+                                    })),
+                                  });
+                                  setPreviewAreas(true);
+                                }}
+                              />
+                              <div className={`grid gap-1 ${area.plataforma ? "grid-cols-2" : "grid-cols-1"}`}>
+                                <button
+                                  onClick={() => {
+                                    if (cotaMedia == null) return;
+                                    const cota = Math.round(cotaMedia * 100) / 100;
+                                    patchArea(area.id, {
+                                      ajusteAltura: 0,
+                                      pontos: area.pontos.map((p) => ({ ...p, altura: cota })),
+                                    });
+                                    setPreviewAreas(true);
+                                    setSaveMsg(`Superfície nivelada em ${cota.toFixed(2)} m.`);
+                                  }}
+                                  className="rounded-[3px] border border-white/10 py-1 text-[9px] font-semibold text-white/60 hover:border-white/25 hover:text-white">
+                                  Nivelar pela média
+                                </button>
+                                {area.plataforma && (
+                                  <button
+                                    onClick={() => {
+                                      const cota = sceneRef.current?.cotaBaseDoModelo();
+                                      if (cota == null) {
+                                        setSaveMsg("Ainda não consegui ler a base do GLB. Espere o modelo terminar de carregar e tente novamente.");
+                                        return;
+                                      }
+                                      if (cotaMedia != null && Math.abs(cota - cotaMedia) > 30) {
+                                        setSaveMsg(
+                                          `A base geométrica está ${(cota - cotaMedia).toFixed(1)} m longe do piso. O GLB pode conter subsolo ou a medição pode ter acertado um telhado; ajuste manualmente.`,
+                                        );
+                                        return;
+                                      }
+                                      // Três centímetros para baixo evitam z-fighting quando o
+                                      // GLB também traz uma laje exatamente na cota mínima.
+                                      const arredondada = Math.round((cota - 0.03) * 100) / 100;
+                                      patchArea(area.id, {
+                                        ajusteAltura: 0,
+                                        pontos: area.pontos.map((p) => ({ ...p, altura: arredondada })),
+                                      });
+                                      setPreviewAreas(true);
+                                      setSaveMsg(`Plataforma alinhada 3 cm abaixo da base geométrica do modelo: ${arredondada.toFixed(2)} m.`);
+                                    }}
+                                    className="rounded-[3px] border border-amber-400/35 py-1 text-[9px] font-semibold text-amber-200 hover:bg-amber-400/10">
+                                    Encostar no modelo
+                                  </button>
+                                )}
+                              </div>
+                              <p className="text-[9px] leading-relaxed text-white/35">
+                                Cota média <b className="text-white/60">{cotaMedia?.toFixed(2)} m</b>
+                                {desnivel != null && <> · desnível <b className="text-white/60">{desnivel.toFixed(2)} m</b></>}.
+                                {area.plataforma
+                                  ? " O recorte começa 35 cm para dentro do piso para esconder a emenda lateral."
+                                  : " Use folga negativa para o piso passar sobre a emenda lateral."}
+                              </p>
+                            </div>
                             <button
                               onClick={() => {
                                 const ativar = areaAlturaId !== area.id;
