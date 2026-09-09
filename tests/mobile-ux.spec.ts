@@ -77,6 +77,7 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(palcoUnidade).toBeVisible();
   await expect(palcoUnidade).toContainText(/Unidade .* pavimento/);
   await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
+  await expect(page.locator('img[title="Cesium ion"]')).toHaveCount(0);
   await page.getByTestId("btn-voltar-info-unidade").click();
   await expect(popup).toBeVisible();
 
@@ -109,9 +110,18 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   const primeiroPoi = page.locator(".maplibregl-marker span").first();
   await expect(primeiroPoi).toBeVisible({ timeout: 30_000 });
   await primeiroPoi.click();
-  await expect(page.getByTestId("cartao-poi")).toBeVisible();
+  const cartaoPoi = page.getByTestId("cartao-poi");
+  await expect(cartaoPoi).toBeVisible();
+  // O fit reserva o rodapé usado pelo cartão: o destino selecionado continua
+  // no pedaço visível do mapa, em vez de deslizar para baixo da ficha.
+  await page.waitForTimeout(900);
+  const caixaPoi = await primeiroPoi.boundingBox();
+  const caixaCartao = await cartaoPoi.boundingBox();
+  expect(caixaPoi!.y + caixaPoi!.height).toBeLessThan(caixaCartao!.y);
   await page.getByTestId("btn-voltar-mapa-3d").click();
   await expect(mapa).toBeHidden();
+  await expect(page.getByText("Carregando cena 3D…")).toBeVisible();
+  await expect(page.getByText(/Parado há/)).toHaveCount(0);
   await expect(page.locator(".v-carregando")).toBeHidden({ timeout: 75_000 });
   await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
   await expect(painel).toBeVisible();

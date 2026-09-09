@@ -107,6 +107,8 @@ export default function IvmViewPage() {
   const [acoesMoveisAbertas, setAcoesMoveisAbertas] = useState(false);
   /** Entorno: 3D ou mapa. Vive aqui porque o mapa ocupa o viewport. */
   const [modoEntorno, setModoEntorno] = useState<"3d" | "mapa">("3d");
+  /** Retorno do mapa usa uma espera curta, própria para o visitante. */
+  const [voltandoDoMapa, setVoltandoDoMapa] = useState(false);
   useEffect(() => {
     setAcoesMoveisAbertas(false);
   }, [pavMode, buscaMode, modoEntorno]);
@@ -536,6 +538,9 @@ export default function IvmViewPage() {
    */
   const temModelo = !!project?.data.config.modelUrl;
   const carregando = !project || !ready || (temModelo && !modeloPronto);
+  useEffect(() => {
+    if (!carregando) setVoltandoDoMapa(false);
+  }, [carregando]);
 
   /**
    * Segundos parado na tela de carregamento.
@@ -841,6 +846,7 @@ export default function IvmViewPage() {
             onPoiSel: setPoiEntornoId,
             onAbrirMapaMobile: () => {
               setPoiEntornoId(null);
+              setVoltandoDoMapa(false);
               // O mapa mobile libera o contexto WebGL do Cesium. Marcar a cena
               // como pendente garante feedback correto quando o visitante voltar.
               setReady(false);
@@ -1109,6 +1115,7 @@ export default function IvmViewPage() {
           onClick={() => {
             if (mobileViewport && modoEntorno === "mapa") {
               setPoiEntornoId(null);
+              setVoltandoDoMapa(true);
               setModoEntorno("3d");
             }
             setPanelOpen(true);
@@ -1151,8 +1158,16 @@ export default function IvmViewPage() {
         da conta; um projeto sem `modelUrl` não espera por nada.
       */}
       {carregando && modoEntorno !== "mapa" && !tilesError && !semChave && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-[var(--v-bg)]">
+        <div className={`absolute inset-0 flex items-center justify-center bg-[var(--v-bg)] ${voltandoDoMapa ? "z-[100]" : "z-30"}`}>
           <div className="w-[min(88vw,320px)] text-center">
+            {voltandoDoMapa ? (
+              <>
+                <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin text-[var(--v-accent)]" />
+                <p className="text-sm font-medium text-[var(--v-ink)]">Carregando cena 3D…</p>
+                <p className="mt-1 text-xs text-[var(--v-ink-3)]">Só um instante</p>
+              </>
+            ) : (
+              <>
             {brand.logoUrl ? (
               <img src={brand.logoUrl} alt={project?.name ?? ""} className="mx-auto mb-6 h-20 w-auto" />
             ) : (
@@ -1246,6 +1261,8 @@ export default function IvmViewPage() {
                   <span>Tentar de novo</span>
                 </button>
               </div>
+            )}
+              </>
             )}
           </div>
         </div>

@@ -1,5 +1,7 @@
 import {
   Viewer,
+  Credit,
+  CreditDisplay,
   ShadowMode,
   createGooglePhotorealistic3DTileset,
   GoogleMaps,
@@ -277,6 +279,12 @@ export async function createVision3DViewer(
   patchDegradedWebGL();
 
   const q = ajustesDoAparelho();
+
+  /* A aplicação acessa o Google Map Tiles diretamente pela chave abaixo; não
+     usa serviço nem conteúdo do Cesium ion. Retira apenas a marca padrão do
+     renderer. Os créditos Google e dos provedores dos tiles continuam sendo
+     inseridos pelo tileset e permanecem visíveis. */
+  CreditDisplay.cesiumCredit = new Credit("<span aria-hidden=\"true\"></span>", true);
 
   const viewer = new Viewer(container, {
     // preserveDrawingBuffer: sem isto o navegador descarta o buffer logo após

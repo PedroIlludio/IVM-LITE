@@ -374,7 +374,20 @@ export default function MapaEntorno({
     if (alvo) {
       const b = new LngLatBounds();
       linha.forEach((c) => b.extend(c));
-      map.fitBounds(b, { padding: 56, maxZoom: 15, duration: 700 });
+      const mobile = window.innerWidth < 768
+        || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+      /* No celular o cartão nasce embaixo e pode ocupar quase metade da tela.
+         Reservar essa área no fit mantém origem, destino e caminho no pedaço
+         visível do mapa; o teto menor também entrega o zoom-out pedido. */
+      const padding = mobile
+        ? {
+            top: Math.max(88, window.innerHeight * 0.11),
+            right: 42,
+            bottom: Math.min(460, window.innerHeight * 0.48),
+            left: 42,
+          }
+        : 56;
+      map.fitBounds(b, { padding, maxZoom: mobile ? 13.75 : 15, duration: 700 });
     }
   }, [pronto, selecionadoId, pois, centro.lat, centro.lng, cor, rotaCalculada]);
 
