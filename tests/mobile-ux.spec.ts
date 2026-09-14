@@ -144,7 +144,6 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await primeiroPoi.click();
   const cartaoPoi = page.getByTestId("cartao-poi");
   await expect(cartaoPoi).toBeVisible();
-  await expect(page.locator(".maplibregl-marker .animate-ping")).toHaveCount(2);
   // O fit reserva o rodapé usado pelo cartão: o destino selecionado continua
   // no pedaço visível do mapa, em vez de deslizar para baixo da ficha.
   await page.waitForTimeout(900);

@@ -80,14 +80,6 @@ function Pino({ categoria, estilo, ativo }: {
         cursor: "pointer",
       }}
     >
-      {ativo && (
-        <>
-          <span className="pointer-events-none absolute -inset-2 rounded-full border-2 animate-ping"
-            style={{ borderColor: cor, animationDuration: "1.8s" }} />
-          <span className="pointer-events-none absolute -inset-4 rounded-full border animate-ping"
-            style={{ borderColor: cor, animationDuration: "1.8s", animationDelay: "0.6s" }} />
-        </>
-      )}
       <Icone className="relative z-[1] text-white" style={{ width: ativo ? 17 : 13, height: ativo ? 17 : 13 }} />
     </span>
   );
@@ -378,8 +370,6 @@ export default function MapaEntorno({
     animacaoRota.current = null;
     inicioAnimacaoRota.current = null;
     const alvo = pois.find((p) => p.id === selecionadoId);
-    // Sem rota gravada, a linha reta ainda comunica direção e distância —
-    // melhor do que nada enquanto o traçado não foi calculado no editor.
     const chave = alvo ? [centro.lng, centro.lat, alvo.lng, alvo.lat].join(":") : "";
     const calculada = rotaCalculada?.chave === chave ? rotaCalculada.coordenadas : undefined;
     const linha: [number, number][] = alvo
@@ -387,7 +377,7 @@ export default function MapaEntorno({
         ? alvo.rota
         : calculada?.length
           ? calculada
-          : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]]
+          : []
       : [];
     const tracada = !!alvo?.rota?.length || !!calculada?.length;
     const dados = (coordenadas: [number, number][]) => ({
@@ -401,6 +391,8 @@ export default function MapaEntorno({
     if (srcBase && srcProgresso) {
       srcBase.setData(dados(linha));
       srcProgresso.setData(dados(editavel ? linha : []));
+      map.setPaintProperty("rota", "line-width", 5);
+      map.setPaintProperty("rota", "line-opacity", 0.9);
     } else {
       map.addSource("rota-base", { type: "geojson", data: dados(linha) });
       map.addLayer({
@@ -442,7 +434,13 @@ export default function MapaEntorno({
 
     if (alvo) {
       const b = new LngLatBounds();
-      linha.forEach((c) => b.extend(c));
+      // Enquanto o serviço calcula o caminho real, enquadra apenas os dois
+      // pontos. Nenhuma linha reta é desenhada: isto serve só para o destino
+      // não nascer escondido atrás do cartão no celular.
+      const pontosDoEnquadramento: [number, number][] = linha.length >= 2
+        ? linha
+        : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]];
+      pontosDoEnquadramento.forEach((c) => b.extend(c));
       const mobile = window.innerWidth < 768
         || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
       /* No celular o cartão nasce embaixo e pode ocupar quase metade da tela.
@@ -463,7 +461,7 @@ export default function MapaEntorno({
       // uma câmera em movimento torna a edição imprecisa. A condução animada é
       // uma apresentação da vitrine.
       if (!editavel && linha.length >= 2) {
-        const atraso = tracada ? duracaoVisaoGeral : 950;
+        const atraso = duracaoVisaoGeral;
         inicioAnimacaoRota.current = window.setTimeout(() => {
           const inicio = performance.now();
           const duracao = 1800;
@@ -482,8 +480,23 @@ export default function MapaEntorno({
             const suave = 1 - Math.pow(1 - bruto, 3);
             const source = map.getSource("rota") as GeoJSONSource | undefined;
             source?.setData(dados(trechoDaRota(linha, suave)));
-            if (bruto < 1) animacaoRota.current = requestAnimationFrame(quadro);
-            else animacaoRota.current = null;
+            if (bruto < 1) {
+              animacaoRota.current = requestAnimationFrame(quadro);
+              return;
+            }
+
+            // Depois de desenhada, a LINHA — e não o pino — continua pulsando.
+            // A variação é discreta para o mapa permanecer legível e não
+            // parecer que a rota está recalculando sem parar.
+            const pulsar = (tempo: number) => {
+              const onda = (Math.sin(tempo / 420) + 1) / 2;
+              if (map.getLayer("rota")) {
+                map.setPaintProperty("rota", "line-width", 4.8 + onda * 1.8);
+                map.setPaintProperty("rota", "line-opacity", 0.68 + onda * 0.27);
+              }
+              animacaoRota.current = requestAnimationFrame(pulsar);
+            };
+            animacaoRota.current = requestAnimationFrame(pulsar);
           };
           animacaoRota.current = requestAnimationFrame(quadro);
           inicioAnimacaoRota.current = null;
