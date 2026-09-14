@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Search, X, Eye, Maximize2, SlidersHorizontal,
   Heart, LayoutGrid, List, ChevronDown, ArrowUpDown, ArrowLeft,
-  MessageCircle, Phone, Mail, Columns2, Check,
+  MessageCircle, Phone, Mail, Columns2,
 } from "lucide-react";
 import { montarMensagemContato, type ContatoCfg } from "@/lib/ivm-store";
 import type { Scene3DHandle } from "@/components/Scene3D";
@@ -677,9 +677,7 @@ export default function BuscadorUnidades3D({
                 <CardUnidade key={u.id} u={u} torres={torres} imagem={imagemDe(u)}
                   compacto={visual === "grade"}
                   selecionada={sel?.id === u.id} favorita={favoritos.has(u.id)}
-                  modoComparacao={modoComparacao}
                   emComparacao={comparacaoIds.includes(u.id)}
-                  onComparar={() => alternarComparacao(u.id)}
                   onFavoritar={() => alternarFavorito(u.id)}
                   onClick={() => {
                     if (modoComparacao) alternarComparacao(u.id);
@@ -907,7 +905,7 @@ function ComparadorUnidades({ unidades, plantas, torres, onClose, onAmpliar }: {
 /** Card da unidade — o formato da referência: imagem, código, status e atributos. */
 function CardUnidade({
   u, torres, imagem, selecionada, favorita, onFavoritar, onClick, compacto,
-  modoComparacao, emComparacao, onComparar,
+  emComparacao,
 }: {
   u: Unidade;
   torres?: TorreDef[];
@@ -916,9 +914,7 @@ function CardUnidade({
   favorita: boolean;
   onFavoritar: () => void;
   onClick: () => void;
-  modoComparacao: boolean;
   emComparacao: boolean;
-  onComparar: () => void;
   compacto?: boolean;
 }) {
   const meta = STATUS_META[u.status];
@@ -985,18 +981,6 @@ function CardUnidade({
       >
         <Heart className="h-3.5 w-3.5" fill={favorita ? "currentColor" : "none"} />
       </button>
-
-      {modoComparacao && (
-        <button type="button" aria-label={`${emComparacao ? "Remover" : "Adicionar"} unidade ${u.numero} da comparação`}
-          aria-pressed={emComparacao} onClick={(e) => { e.stopPropagation(); onComparar(); }}
-          className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full border shadow-[var(--v-sh-1)] transition-colors ${
-            emComparacao
-              ? "border-[var(--v-accent)] bg-[var(--v-accent)] text-white"
-              : "border-[var(--v-line-2)] bg-white/90 text-transparent hover:text-[var(--v-ink-3)]"
-          }`}>
-          <Check className="h-3.5 w-3.5" />
-        </button>
-      )}
     </div>
   );
 }
