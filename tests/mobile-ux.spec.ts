@@ -53,6 +53,22 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByTestId("btn-media-close").click();
 
+  // Áreas comuns têm leitura visual antes do clique e apresentação imersiva
+  // verdadeira depois dele. O overlay cobre inclusive a folha e respeita a
+  // área segura do celular.
+  await page.getByTestId("cat-lazer").click();
+  const gradeAreas = page.getByTestId("areas-comuns-grid");
+  await expect(gradeAreas).toBeVisible();
+  const primeiroAmbiente = gradeAreas.locator('[data-testid^="area-comum-"]').first();
+  await expect(primeiroAmbiente).toBeVisible();
+  await primeiroAmbiente.click();
+  const ambiente = page.getByTestId("area-comum-viewer");
+  await expect(ambiente).toBeVisible();
+  expect((await ambiente.boundingBox())!.width).toBe(viewport.width);
+  expect((await ambiente.boundingBox())!.height).toBe(viewport.height);
+  await page.getByTestId("btn-close-area-comum").click();
+  await page.getByTestId("btn-voltar-categoria").click();
+
   // A busca não deixa uma faixa morta da cena na lateral no celular.
   await page.getByTestId("cat-unidades").click();
   const busca = page.locator(".v-unit-search");

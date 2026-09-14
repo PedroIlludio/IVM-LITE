@@ -1696,9 +1696,15 @@ export default function IvmEditorPage() {
    */
   const itemFotoRef = useRef<HTMLInputElement>(null);
   const aplicarFotoRef = useRef<((url: string) => void) | null>(null);
+  const itemVideoRef = useRef<HTMLInputElement>(null);
+  const aplicarVideoRef = useRef<((url: string) => void) | null>(null);
   function pedirFotoItem(_id: string, aplicar: (url: string) => void) {
     aplicarFotoRef.current = aplicar;
     itemFotoRef.current?.click();
+  }
+  function pedirVideoItem(_id: string, aplicar: (url: string) => void) {
+    aplicarVideoRef.current = aplicar;
+    itemVideoRef.current?.click();
   }
 
   /**
@@ -2684,6 +2690,16 @@ export default function IvmEditorPage() {
                   const url = await upload(f);
                   if (url) aplicar(url);
                 }} />
+              <input ref={itemVideoRef} type="file" accept="video/*" className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  const aplicar = aplicarVideoRef.current;
+                  aplicarVideoRef.current = null;
+                  if (!f || !aplicar) return;
+                  const url = await upload(f);
+                  if (url) aplicar(url);
+                }} />
 
               <Section title="Destaques">
                 <ListaRica
@@ -2700,6 +2716,7 @@ export default function IvmEditorPage() {
                   itens={lazer}
                   onItens={(n) => setEmp({ amenities: n })}
                   onEnviarFoto={pedirFotoItem}
+                  onEnviarVideo={pedirVideoItem}
                   vazio="Nenhum item de lazer ainda."
                   exemplo="Ex: Piscina com borda infinita"
                 />

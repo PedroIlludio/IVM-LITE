@@ -220,6 +220,8 @@ export interface ItemLista {
   titulo: string;
   descricao?: string;
   imagemUrl?: string;
+  /** Vídeo ambiente usado como fundo da apresentação imersiva do item. */
+  videoUrl?: string;
   /**
    * Foto 360 equirretangular do ambiente (proporção 2:1).
    *
@@ -346,6 +348,8 @@ export const itemListaSchema = z.object({
   titulo: z.string(),
   descricao: z.string().optional(),
   imagemUrl: z.string().optional(),
+  videoUrl: z.string().optional(),
+  panoramaUrl: z.string().optional(),
 });
 
 export const empreendimentoSchema = z.object({

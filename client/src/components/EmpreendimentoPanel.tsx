@@ -21,6 +21,7 @@ import {
   Ruler,
   Car,
   ArrowLeft,
+  ChevronLeft,
   ChevronRight,
   Maximize2,
   X,
@@ -44,6 +45,7 @@ import {
   Images,
   Waves,
   Film,
+  Play,
   Orbit,
   Layers3,
   ClipboardList,
@@ -343,6 +345,7 @@ function EmpreendimentoDetail({
 }) {
   const detailRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [areaComumId, setAreaComumId] = useState<string | null>(null);
   /**
    * Foto 360 aberta. Separado do lightbox porque não é a mesma coisa: o
    * lightbox é uma imagem ampliada, isto é um ambiente em que se entra — tela
@@ -375,6 +378,9 @@ function EmpreendimentoDetail({
   // empreendimento direto do código, sem passar por ele.
   const destaques = normalizarLista(emp.highlights);
   const lazer = normalizarLista(emp.amenities);
+  const titulosEmDestaque = new Set(destaques.map((h) => h.titulo.toLowerCase()));
+  const lazerVisivel = lazer.filter((a) => !titulosEmDestaque.has(a.titulo.toLowerCase()));
+  const lazerComMidia = lazerVisivel.filter((a) => a.imagemUrl || a.videoUrl);
 
   const setVista = onVista;
 
@@ -924,27 +930,23 @@ function EmpreendimentoDetail({
           </div>)}
 
           {vista === "lazer" && (<div className="v-in space-y-3">
-          {lazer.length > 0 && (() => {
-            // Um item que já é destaque não se repete na lista de lazer.
-            const jaEmDestaque = new Set(destaques.map((h) => h.titulo.toLowerCase()));
-            const filtered = lazer.filter((a) => !jaEmDestaque.has(a.titulo.toLowerCase()));
-            return filtered.length > 0 ? (
+          {lazerVisivel.length > 0 && (
               <div>
                 <SectionTitle>Áreas Comuns e Lazer</SectionTitle>
-                <div className="space-y-1">
-                  {filtered.map((a) => (
-                    <ItemDaLista
+                <div className="grid grid-cols-2 gap-2" data-testid="areas-comuns-grid">
+                  {lazerVisivel.map((a) => (
+                    <AreaComumCard
                       key={a.id}
                       item={a}
-                      icon={<CheckCircle2 className="w-3 h-3 text-[var(--v-accent)]/40 flex-shrink-0" />}
-                      onZoom={setLightboxImage}
-                      onPanorama={setPanorama}
+                      onOpen={() => {
+                        if (a.imagemUrl || a.videoUrl) setAreaComumId(a.id);
+                        else if (a.panoramaUrl) setPanorama({ url: a.panoramaUrl, titulo: a.titulo });
+                      }}
                     />
                   ))}
                 </div>
               </div>
-            ) : null;
-          })()}
+          )}
 
           </div>)}
 
@@ -1098,6 +1100,18 @@ function EmpreendimentoDetail({
         document.body
       )}
 
+      {areaComumId && lazerComMidia.length > 0 && (
+        <AreaComumViewer
+          itens={lazerComMidia}
+          initialId={areaComumId}
+          onClose={() => setAreaComumId(null)}
+          onPanorama={(item) => {
+            setAreaComumId(null);
+            if (item.panoramaUrl) setPanorama({ url: item.panoramaUrl, titulo: item.titulo });
+          }}
+        />
+      )}
+
       {panorama && createPortal(
         <div
           data-testid="panorama-overlay"
@@ -1202,6 +1216,144 @@ function InfoCard({
       </div>
       <p className="text-[15px] font-semibold leading-tight text-[var(--v-ink)]">{value}</p>
     </div>
+  );
+}
+
+/** Cartão visual da área comum, no mesmo vocabulário da grade da galeria. */
+function AreaComumCard({ item, onOpen }: { item: ItemLista; onOpen: () => void }) {
+  const temMidia = !!(item.imagemUrl || item.videoUrl || item.panoramaUrl);
+
+  if (!temMidia) {
+    return (
+      <div className="v-card col-span-2 flex items-center gap-2 px-3 py-2.5">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--v-accent)]" />
+        <span className="v-body-sm font-medium">{item.titulo}</span>
+      </div>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onOpen} data-testid={`area-comum-${item.id}`}
+      className="v-card group min-w-0 overflow-hidden p-0 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--v-accent)]"
+      aria-label={`Abrir ${item.titulo}`}>
+      <span className="relative block aspect-[4/3] overflow-hidden bg-[var(--v-surface-3)]">
+        {item.imagemUrl ? (
+          <img src={item.imagemUrl} alt="" loading="lazy"
+            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
+        ) : item.videoUrl ? (
+          <video src={item.videoUrl} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full items-center justify-center bg-[var(--v-accent-soft)]">
+            <Globe2 className="h-6 w-6 text-[var(--v-accent)]" />
+          </span>
+        )}
+        <span className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
+        {item.videoUrl && (
+          <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
+            <Play className="h-3 w-3 translate-x-px" fill="currentColor" />
+          </span>
+        )}
+        {item.panoramaUrl && <Selo360 />}
+      </span>
+      <span className="block px-2.5 py-2.5">
+        <span className="block truncate text-[12px] font-semibold text-[var(--v-ink)]">{item.titulo}</span>
+        {item.descricao && <span className="v-meta mt-1 block line-clamp-2 leading-relaxed">{item.descricao}</span>}
+      </span>
+    </button>
+  );
+}
+
+/** Apresentação imersiva de uma área comum, com imagem ou vídeo em movimento. */
+function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
+  itens: ItemLista[];
+  initialId: string;
+  onClose: () => void;
+  onPanorama: (item: ItemLista) => void;
+}) {
+  const initialIndex = Math.max(0, itens.findIndex((item) => item.id === initialId));
+  const [index, setIndex] = useState(initialIndex);
+  const item = itens[index] ?? itens[0];
+
+  useEffect(() => {
+    const anterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      if (e.key === "ArrowLeft") setIndex((i) => (i - 1 + itens.length) % itens.length);
+      if (e.key === "ArrowRight") setIndex((i) => (i + 1) % itens.length);
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => {
+      document.body.style.overflow = anterior;
+      window.removeEventListener("keydown", aoTeclar);
+    };
+  }, [itens.length, onClose]);
+
+  if (!item) return null;
+  const ir = (delta: number) => setIndex((i) => (i + delta + itens.length) % itens.length);
+
+  return createPortal(
+    <div className="vitrine fixed inset-0 z-[9999] overflow-hidden bg-black text-white animate-in fade-in duration-300"
+      data-testid="area-comum-viewer" role="dialog" aria-modal="true" aria-label={item.titulo}>
+      <div className="absolute inset-0" key={item.id}>
+        {item.videoUrl ? (
+          <video src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline
+            className="h-full w-full object-cover" data-testid="area-comum-video" />
+        ) : (
+          <img src={item.imagemUrl} alt={item.titulo} className="h-full w-full object-cover" />
+        )}
+      </div>
+
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-black/5 to-black/75 sm:bg-gradient-to-r sm:from-black/60 sm:via-black/10 sm:to-black/20" />
+
+      <div className="absolute inset-x-0 top-0 flex items-center justify-between px-4 pb-4 sm:px-6"
+        style={{ paddingTop: "max(16px, env(safe-area-inset-top))" }}>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/65">Áreas comuns e lazer</p>
+          <p className="mt-0.5 font-mono text-[10px] text-white/45">{String(index + 1).padStart(2, "0")} / {String(itens.length).padStart(2, "0")}</p>
+        </div>
+        <button type="button" onClick={onClose} aria-label="Fechar apresentação" data-testid="btn-close-area-comum"
+          className="grid h-10 w-10 place-items-center rounded-full border border-white/20 bg-black/25 text-white backdrop-blur-md transition-colors hover:bg-black/50">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 px-4 sm:bottom-auto sm:left-6 sm:right-auto sm:top-1/2 sm:w-[min(430px,38vw)] sm:-translate-y-1/2 sm:px-0"
+        style={{ paddingBottom: "max(84px, calc(env(safe-area-inset-bottom) + 72px))" }}>
+        <div className="border border-[var(--v-line)] bg-[var(--v-surface)] p-5 text-[var(--v-ink)] shadow-2xl sm:p-7">
+          <div className="mb-4 h-px w-10 bg-[var(--v-accent)]" />
+          <h2 className="font-serif text-[clamp(28px,4vw,48px)] leading-[1.05] tracking-tight">{item.titulo}</h2>
+          {item.descricao && <p className="mt-4 text-[13px] leading-relaxed text-[var(--v-ink-2)] sm:text-[14px]">{item.descricao}</p>}
+          {item.panoramaUrl && (
+            <button type="button" onClick={() => onPanorama(item)}
+              className="mt-5 inline-flex h-9 items-center gap-2 border border-[var(--v-line-2)] px-3 text-[11px] font-semibold uppercase tracking-[0.1em] transition-colors hover:border-[var(--v-accent)] hover:text-[var(--v-accent)]">
+              <Globe2 className="h-3.5 w-3.5" /> Explorar em 360°
+            </button>
+          )}
+        </div>
+      </div>
+
+      {itens.length > 1 && (
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 px-4"
+          style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
+          <button type="button" onClick={() => ir(-1)} aria-label="Ambiente anterior"
+            className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <div className="flex h-11 max-w-[min(58vw,360px)] items-center gap-1.5 overflow-hidden border border-white/20 bg-black/35 px-4 backdrop-blur-md">
+            {itens.map((it, i) => (
+              <button key={it.id} type="button" onClick={() => setIndex(i)} aria-label={`Abrir ${it.titulo}`}
+                className={`h-1.5 rounded-full transition-all ${i === index ? "w-7 bg-[var(--v-accent)]" : "w-1.5 bg-white/45 hover:bg-white/80"}`} />
+            ))}
+          </div>
+          <button type="button" onClick={() => ir(1)} aria-label="Próximo ambiente"
+            className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+    </div>,
+    document.body,
   );
 }
 
