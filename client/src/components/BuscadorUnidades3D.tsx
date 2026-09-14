@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import {
   Search, X, Eye, Maximize2, SlidersHorizontal,
   Heart, LayoutGrid, List, ChevronDown, ArrowUpDown, ArrowLeft,
-  MessageCircle, Phone, Mail,
+  MessageCircle, Phone, Mail, Columns2, Check,
 } from "lucide-react";
 import { montarMensagemContato, type ContatoCfg } from "@/lib/ivm-store";
 import type { Scene3DHandle } from "@/components/Scene3D";
@@ -187,6 +187,9 @@ export default function BuscadorUnidades3D({
   }, [favoritos, chaveFavoritos]);
   const [soFavoritos, setSoFavoritos] = useState(false);
   const [popup, setPopup] = useState<Unidade | null>(null);
+  const [modoComparacao, setModoComparacao] = useState(false);
+  const [comparacaoIds, setComparacaoIds] = useState<string[]>([]);
+  const [comparacaoAberta, setComparacaoAberta] = useState(false);
   const resultadosRef = useRef<HTMLDivElement>(null);
 
   /**
@@ -481,6 +484,20 @@ export default function BuscadorUnidades3D({
     });
   }
 
+  function alternarComparacao(id: string) {
+    setComparacaoIds((ids) => {
+      if (ids.includes(id)) return ids.filter((atual) => atual !== id);
+      // A terceira escolha substitui a mais antiga, facilitando experimentar
+      // alternativas sem desmontar a comparação inteira.
+      return ids.length < 2 ? [...ids, id] : [ids[1], id];
+    });
+  }
+
+  function sairDaComparacao() {
+    setModoComparacao(false);
+    setComparacaoIds([]);
+  }
+
   function limparFiltros() {
     setTorre("");
     setStatus("");
@@ -630,6 +647,19 @@ export default function BuscadorUnidades3D({
             <Heart className="h-3.5 w-3.5" fill={soFavoritos ? "currentColor" : "none"} />
             {favoritos.size > 0 && <span className="v-num text-[11px] font-semibold">{favoritos.size}</span>}
           </button>
+          {resultados.length >= 2 && (
+            <button onClick={() => modoComparacao ? sairDaComparacao() : setModoComparacao(true)}
+              title={modoComparacao ? "Cancelar comparação" : "Selecionar dois apartamentos para comparar"}
+              data-testid="btn-comparar-unidades"
+              className={`flex h-7 items-center gap-1 rounded-[6px] px-2 text-[11px] font-semibold transition-colors ${
+                modoComparacao
+                  ? "bg-[var(--v-accent-soft)] text-[var(--v-accent)]"
+                  : "text-[var(--v-ink-3)] hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]"
+              }`}>
+              <Columns2 className="h-3.5 w-3.5" />
+              {modoComparacao ? "Cancelar" : "Comparar"}
+            </button>
+          )}
           <button onClick={() => setVisual(visual === "lista" ? "grade" : "lista")}
             title={visual === "lista" ? "Ver em grade" : "Ver em lista"}
             className="grid h-7 w-7 place-items-center rounded-[6px] text-[var(--v-ink-3)] transition-colors hover:text-[var(--v-ink)]">
@@ -647,12 +677,35 @@ export default function BuscadorUnidades3D({
                 <CardUnidade key={u.id} u={u} torres={torres} imagem={imagemDe(u)}
                   compacto={visual === "grade"}
                   selecionada={sel?.id === u.id} favorita={favoritos.has(u.id)}
+                  modoComparacao={modoComparacao}
+                  emComparacao={comparacaoIds.includes(u.id)}
+                  onComparar={() => alternarComparacao(u.id)}
                   onFavoritar={() => alternarFavorito(u.id)}
-                  onClick={() => { escolher(u); setPopup(u); }} />
+                  onClick={() => {
+                    if (modoComparacao) alternarComparacao(u.id);
+                    else { escolher(u); setPopup(u); }
+                  }} />
               ))}
             </div>
           )}
         </div>
+
+        {modoComparacao && (
+          <div className="border-t border-[var(--v-line)] bg-[var(--v-surface)] px-5 py-3 shadow-[0_-10px_25px_rgba(25,28,31,0.08)]"
+            data-testid="barra-comparacao">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="text-[12px] font-medium text-[var(--v-ink)]">
+                {comparacaoIds.length === 0 ? "Escolha dois apartamentos" : comparacaoIds.length === 1 ? "Escolha mais um apartamento" : "Pronto para comparar"}
+              </p>
+              <span className="v-meta">{comparacaoIds.length} / 2</span>
+            </div>
+            <button type="button" disabled={comparacaoIds.length !== 2}
+              onClick={() => setComparacaoAberta(true)} data-testid="btn-abrir-comparacao"
+              className="v-btn-primary flex h-10 w-full items-center justify-center gap-2 rounded-[var(--v-r-sm)] disabled:cursor-not-allowed disabled:opacity-35">
+              <Columns2 className="h-4 w-4" /> Comparar apartamentos
+            </button>
+          </div>
+        )}
 
       </div>
 
@@ -689,6 +742,21 @@ export default function BuscadorUnidades3D({
         />
       )}
 
+      {comparacaoAberta && comparacaoIds.length === 2 && (() => {
+        const escolhidas = comparacaoIds
+          .map((id) => unidades.find((u) => u.id === id))
+          .filter((u): u is Unidade => !!u);
+        return escolhidas.length === 2 ? (
+          <ComparadorUnidades
+            unidades={escolhidas as [Unidade, Unidade]}
+            plantas={[plantaDe(escolhidas[0]), plantaDe(escolhidas[1])]}
+            torres={torres}
+            onClose={() => setComparacaoAberta(false)}
+            onAmpliar={(url) => setLightbox(url)}
+          />
+        ) : null;
+      })()}
+
       {lightbox &&
         createPortal(
           <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 backdrop-blur-sm"
@@ -701,9 +769,145 @@ export default function BuscadorUnidades3D({
   );
 }
 
+type LinhaComparacao = {
+  label: string;
+  valores: [string, string];
+  brutos: [string | number | undefined, string | number | undefined];
+  diferenca?: string;
+};
+
+/** Compara duas unidades em uma matriz alinhada e mantém as plantas lado a lado. */
+function ComparadorUnidades({ unidades, plantas, torres, onClose, onAmpliar }: {
+  unidades: [Unidade, Unidade];
+  plantas: [string | undefined, string | undefined];
+  torres?: TorreDef[];
+  onClose: () => void;
+  onAmpliar: (url: string) => void;
+}) {
+  const [a, b] = unidades;
+  const mostrar = (v: string | number | undefined, sufixo = "") => v == null || v === "" ? "—" : `${v}${sufixo}`;
+  const delta = (va?: number, vb?: number, formatar?: (n: number) => string) => {
+    if (va == null || vb == null || va === vb) return undefined;
+    const d = vb - va;
+    return `${d > 0 ? "+" : "−"}${formatar ? formatar(Math.abs(d)) : Math.abs(d)}`;
+  };
+  const linhas: LinhaComparacao[] = [
+    { label: "Tipologia", valores: [mostrar(a.tipologia), mostrar(b.tipologia)], brutos: [a.tipologia, b.tipologia] },
+    { label: "Preço", valores: [formatPreco(a.preco), formatPreco(b.preco)], brutos: [a.preco, b.preco], diferenca: delta(a.preco, b.preco, formatPreco) },
+    { label: "Área privativa", valores: [formatArea(a.areaPrivativa), formatArea(b.areaPrivativa)], brutos: [a.areaPrivativa, b.areaPrivativa], diferenca: delta(a.areaPrivativa, b.areaPrivativa, (n) => formatArea(n)) },
+    { label: "Área total", valores: [formatArea(a.areaTotal), formatArea(b.areaTotal)], brutos: [a.areaTotal, b.areaTotal], diferenca: delta(a.areaTotal, b.areaTotal, (n) => formatArea(n)) },
+    { label: "Quartos", valores: [mostrar(a.quartos), mostrar(b.quartos)], brutos: [a.quartos, b.quartos], diferenca: delta(a.quartos, b.quartos) },
+    { label: "Suítes", valores: [mostrar(a.suites), mostrar(b.suites)], brutos: [a.suites, b.suites], diferenca: delta(a.suites, b.suites) },
+    { label: "Vagas", valores: [mostrar(a.vagas), mostrar(b.vagas)], brutos: [a.vagas, b.vagas], diferenca: delta(a.vagas, b.vagas) },
+    { label: "Pavimento", valores: [mostrar(a.pavimento, "º"), mostrar(b.pavimento, "º")], brutos: [a.pavimento, b.pavimento], diferenca: delta(a.pavimento, b.pavimento, (n) => `${n} andar${n === 1 ? "" : "es"}`) },
+    { label: "Torre", valores: [torreLabel(a.torre, torres), torreLabel(b.torre, torres)], brutos: [a.torre, b.torre] },
+    { label: "Orientação", valores: [mostrar(a.orientacao), mostrar(b.orientacao)], brutos: [a.orientacao, b.orientacao] },
+    { label: "Disponibilidade", valores: [STATUS_META[a.status].label, STATUS_META[b.status].label], brutos: [a.status, b.status] },
+  ];
+  const diferem = (linha: LinhaComparacao) => linha.brutos[0] !== linha.brutos[1];
+  const totalDiferencas = linhas.filter(diferem).length + (plantas[0] !== plantas[1] ? 1 : 0);
+
+  useEffect(() => {
+    const anterior = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const aoTeclar = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", aoTeclar);
+    return () => {
+      document.body.style.overflow = anterior;
+      window.removeEventListener("keydown", aoTeclar);
+    };
+  }, [onClose]);
+
+  return createPortal(
+    <div className="vitrine fixed inset-0 z-[9999] overflow-hidden bg-[var(--v-bg)] animate-in fade-in duration-200"
+      data-testid="comparador-unidades" role="dialog" aria-modal="true" aria-label="Comparação de apartamentos">
+      <div className="flex h-full flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--v-line)] bg-[var(--v-surface)] px-4 py-3 sm:px-7 sm:py-4">
+          <div className="min-w-0">
+            <p className="v-eyebrow">Comparação de apartamentos</p>
+            <h2 className="v-title mt-1 truncate text-[20px] sm:text-[26px]">Unidade {a.numero} × Unidade {b.numero}</h2>
+            <p className="v-meta mt-0.5 sm:hidden">{totalDiferencas} {totalDiferencas === 1 ? "diferença encontrada" : "diferenças encontradas"}</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-3">
+            <span className="v-chip !hidden sm:!inline-flex">{totalDiferencas} {totalDiferencas === 1 ? "diferença" : "diferenças"}</span>
+            <button type="button" onClick={onClose} data-testid="btn-fechar-comparacao" aria-label="Fechar comparação"
+              className="v-icon-btn !h-10 !w-10 !bg-[var(--v-surface-3)] !shadow-none">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        <div className="v-scroll min-h-0 flex-1 overflow-y-auto">
+          <main className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-7 sm:py-7">
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:gap-4">
+              {unidades.map((u, i) => (
+                <div key={u.id} className="v-card overflow-hidden p-0">
+                  <div className="flex items-center justify-between gap-2 border-b border-[var(--v-line)] px-3 py-2.5 sm:px-4">
+                    <div className="min-w-0">
+                      <p className="v-title truncate text-[14px] sm:text-[17px]">Unidade {u.numero}</p>
+                      <p className="v-meta mt-0.5 truncate">{u.tipologia}</p>
+                    </div>
+                    <span className="v-chip !hidden sm:!inline-flex" style={{ color: STATUS_CLARO[u.status], background: STATUS_CLARO_FUNDO[u.status] }}>
+                      {STATUS_META[u.status].label}
+                    </span>
+                  </div>
+                  {plantas[i] ? (
+                    <button type="button" onClick={() => onAmpliar(plantas[i] as string)}
+                      aria-label={`Ampliar planta da unidade ${u.numero}`}
+                      className="group relative block aspect-[4/3] w-full bg-white sm:aspect-[16/10]">
+                      <img src={plantas[i]} alt={`Planta da unidade ${u.numero}`}
+                        className="h-full w-full object-contain p-2 sm:p-5" />
+                      <span className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[var(--v-ink)] opacity-0 shadow-[var(--v-sh-1)] transition-opacity group-hover:opacity-100 group-focus:opacity-100">
+                        <Maximize2 className="h-4 w-4" />
+                      </span>
+                    </button>
+                  ) : (
+                    <div className="v-faint grid aspect-[4/3] place-items-center bg-[var(--v-surface-3)] text-[11px] sm:aspect-[16/10]">Planta não cadastrada</div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className={`mb-4 rounded-[var(--v-r-sm)] border px-3 py-2 text-center text-[11px] font-medium ${
+              plantas[0] === plantas[1]
+                ? "border-[var(--v-line)] bg-[var(--v-surface)] text-[var(--v-ink-2)]"
+                : "border-[var(--v-accent)]/35 bg-[var(--v-accent-soft)] text-[var(--v-accent)]"
+            }`}>
+              {plantas[0] === plantas[1] ? "As duas unidades usam a mesma planta" : "As plantas são diferentes — toque em cada uma para ampliar"}
+            </div>
+
+            <section className="overflow-hidden rounded-[var(--v-r)] border border-[var(--v-line)] bg-[var(--v-surface)]" aria-label="Diferenças entre as unidades">
+              <div className="grid grid-cols-[minmax(82px,.72fr)_minmax(0,1fr)_minmax(0,1fr)] border-b border-[var(--v-line)] bg-[var(--v-surface-2)]">
+                <span className="v-eyebrow px-2 py-3 sm:px-4">Informação</span>
+                {[a, b].map((u) => <span key={u.id} className="v-eyebrow border-l border-[var(--v-line)] px-2 py-3 text-center sm:px-4">Unid. {u.numero}</span>)}
+              </div>
+              {linhas.map((linha) => {
+                const diferente = diferem(linha);
+                return (
+                  <div key={linha.label} data-different={diferente ? "1" : undefined}
+                    className={`grid grid-cols-[minmax(82px,.72fr)_minmax(0,1fr)_minmax(0,1fr)] border-b border-[var(--v-line)] last:border-b-0 ${diferente ? "bg-[var(--v-accent-soft)]/45" : ""}`}>
+                    <span className="v-meta flex items-center px-2 py-3 sm:px-4">{linha.label}</span>
+                    <span className="flex min-w-0 items-center justify-center border-l border-[var(--v-line)] px-2 py-3 text-center text-[12px] font-semibold text-[var(--v-ink)] sm:px-4 sm:text-[14px]">{linha.valores[0]}</span>
+                    <span className="flex min-w-0 flex-col items-center justify-center border-l border-[var(--v-line)] px-2 py-3 text-center text-[12px] font-semibold text-[var(--v-ink)] sm:px-4 sm:text-[14px]">
+                      {linha.valores[1]}
+                      {linha.diferenca && <small className="mt-0.5 text-[9px] font-semibold text-[var(--v-accent)] sm:text-[10px]">{linha.diferenca}</small>}
+                    </span>
+                  </div>
+                );
+              })}
+            </section>
+          </main>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /** Card da unidade — o formato da referência: imagem, código, status e atributos. */
 function CardUnidade({
   u, torres, imagem, selecionada, favorita, onFavoritar, onClick, compacto,
+  modoComparacao, emComparacao, onComparar,
 }: {
   u: Unidade;
   torres?: TorreDef[];
@@ -712,6 +916,9 @@ function CardUnidade({
   favorita: boolean;
   onFavoritar: () => void;
   onClick: () => void;
+  modoComparacao: boolean;
+  emComparacao: boolean;
+  onComparar: () => void;
   compacto?: boolean;
 }) {
   const meta = STATUS_META[u.status];
@@ -720,7 +927,11 @@ function CardUnidade({
     <div
       onClick={onClick}
       data-sel={selecionada ? "1" : undefined}
-      className={`v-card group relative cursor-pointer overflow-hidden ${compacto ? "" : "flex"}`}
+      data-compare={emComparacao ? "1" : undefined}
+      data-testid={`unidade-card-${u.id}`}
+      className={`v-card group relative cursor-pointer overflow-hidden ${compacto ? "" : "flex"} ${
+        emComparacao ? "ring-2 ring-[var(--v-accent)]" : ""
+      }`}
     >
       {/*
         A axonométrica ganhou peso: é ela que o cliente reconhece antes de ler
@@ -774,6 +985,18 @@ function CardUnidade({
       >
         <Heart className="h-3.5 w-3.5" fill={favorita ? "currentColor" : "none"} />
       </button>
+
+      {modoComparacao && (
+        <button type="button" aria-label={`${emComparacao ? "Remover" : "Adicionar"} unidade ${u.numero} da comparação`}
+          aria-pressed={emComparacao} onClick={(e) => { e.stopPropagation(); onComparar(); }}
+          className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-full border shadow-[var(--v-sh-1)] transition-colors ${
+            emComparacao
+              ? "border-[var(--v-accent)] bg-[var(--v-accent)] text-white"
+              : "border-[var(--v-line-2)] bg-white/90 text-transparent hover:text-[var(--v-ink-3)]"
+          }`}>
+          <Check className="h-3.5 w-3.5" />
+        </button>
+      )}
     </div>
   );
 }

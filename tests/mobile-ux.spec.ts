@@ -75,6 +75,22 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(busca).toBeVisible();
   expect((await busca.boundingBox())!.width).toBe(viewport.width);
 
+  // Duas unidades podem ser marcadas sem abrir suas fichas. A comparação
+  // mantém plantas e atributos alinhados e também ocupa o viewport inteiro.
+  await page.getByTestId("btn-comparar-unidades").click();
+  const cardsComparaveis = busca.locator('[data-testid^="unidade-card-"]');
+  await cardsComparaveis.nth(0).click();
+  await cardsComparaveis.nth(1).click();
+  await expect(page.getByTestId("barra-comparacao")).toContainText("2 / 2");
+  await page.getByTestId("btn-abrir-comparacao").click();
+  const comparador = page.getByTestId("comparador-unidades");
+  await expect(comparador).toBeVisible();
+  expect((await comparador.boundingBox())!.width).toBe(viewport.width);
+  expect((await comparador.boundingBox())!.height).toBe(viewport.height);
+  await expect(comparador.locator('[data-different="1"]')).not.toHaveCount(0);
+  await page.getByTestId("btn-fechar-comparacao").click();
+  await page.getByTestId("btn-comparar-unidades").click();
+
   // O detalhe da unidade também é tela cheia; meia gaveta lateral deixa a
   // ficha estreita demais e cria gesto acidental na cena que sobra ao lado.
   const primeiraUnidade = busca.locator(".v-card").first();
