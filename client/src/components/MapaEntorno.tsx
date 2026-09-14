@@ -71,7 +71,7 @@ function Pino({ categoria, estilo, ativo }: {
   const cor = corDaCategoriaPoi(categoria, estilo);
   return (
     <span
-      className="flex items-center justify-center rounded-full border-2 border-white transition-transform"
+      className="relative flex items-center justify-center rounded-full border-2 border-white transition-transform"
       style={{
         width: ativo ? 34 : 26,
         height: ativo ? 34 : 26,
@@ -80,9 +80,43 @@ function Pino({ categoria, estilo, ativo }: {
         cursor: "pointer",
       }}
     >
-      <Icone className="text-white" style={{ width: ativo ? 17 : 13, height: ativo ? 17 : 13 }} />
+      {ativo && (
+        <>
+          <span className="pointer-events-none absolute -inset-2 rounded-full border-2 animate-ping"
+            style={{ borderColor: cor, animationDuration: "1.8s" }} />
+          <span className="pointer-events-none absolute -inset-4 rounded-full border animate-ping"
+            style={{ borderColor: cor, animationDuration: "1.8s", animationDelay: "0.6s" }} />
+        </>
+      )}
+      <Icone className="relative z-[1] text-white" style={{ width: ativo ? 17 : 13, height: ativo ? 17 : 13 }} />
     </span>
   );
+}
+
+/** Recorta uma linha até uma fração do seu comprimento, sem saltar entre vértices. */
+function trechoDaRota(pontos: [number, number][], progresso: number): [number, number][] {
+  if (pontos.length < 2 || progresso >= 1) return pontos;
+  if (progresso <= 0) return [pontos[0], pontos[0]];
+  const tamanhos = pontos.slice(1).map((p, i) => Math.hypot(p[0] - pontos[i][0], p[1] - pontos[i][1]));
+  const total = tamanhos.reduce((s, n) => s + n, 0);
+  if (!total) return pontos;
+  let restante = total * progresso;
+  const trecho: [number, number][] = [pontos[0]];
+  for (let i = 0; i < tamanhos.length; i++) {
+    const tamanho = tamanhos[i];
+    if (restante >= tamanho) {
+      trecho.push(pontos[i + 1]);
+      restante -= tamanho;
+      continue;
+    }
+    const t = tamanho ? restante / tamanho : 0;
+    trecho.push([
+      pontos[i][0] + (pontos[i + 1][0] - pontos[i][0]) * t,
+      pontos[i][1] + (pontos[i + 1][1] - pontos[i][1]) * t,
+    ]);
+    break;
+  }
+  return trecho;
 }
 
 /**
@@ -104,6 +138,8 @@ export default function MapaEntorno({
   const divRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const marcadores = useRef<Map<string, { m: Marker; raiz: Root }>>(new Map());
+  const animacaoRota = useRef<number | null>(null);
+  const inicioAnimacaoRota = useRef<number | null>(null);
   /** Alças dos vértices do traçado, recriadas a cada mudança da lista. */
   const vertices = useRef<Marker[]>([]);
   const [pronto, setPronto] = useState(false);
@@ -171,11 +207,15 @@ export default function MapaEntorno({
       return;
     }
 
+    const mobileInicial = window.innerWidth < 768
+      || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
     const map = new MapLibreMap({
       container: div,
       style: ESTILO_POSITRON,
       center: [centro.lng, centro.lat],
-      zoom: 13.5,
+      // No desktop 13.5 mostrava bairros inteiros antes de qualquer escolha.
+      // A leitura inicial agora começa na escala do entorno imediato.
+      zoom: mobileInicial ? 13.8 : 15,
       attributionControl: { compact: true },
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
@@ -235,6 +275,8 @@ export default function MapaEntorno({
       .addTo(map);
 
     return () => {
+      if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
+      if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
       ro.disconnect();
       marcadores.current.forEach(({ m, raiz }) => {
         m.remove();
@@ -331,6 +373,10 @@ export default function MapaEntorno({
   useEffect(() => {
     const map = mapRef.current;
     if (!pronto || !map) return;
+    if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
+    if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
+    animacaoRota.current = null;
+    inicioAnimacaoRota.current = null;
     const alvo = pois.find((p) => p.id === selecionadoId);
     // Sem rota gravada, a linha reta ainda comunica direção e distância —
     // melhor do que nada enquanto o traçado não foi calculado no editor.
@@ -344,17 +390,31 @@ export default function MapaEntorno({
           : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]]
       : [];
     const tracada = !!alvo?.rota?.length || !!calculada?.length;
-    const dados = {
+    const dados = (coordenadas: [number, number][]) => ({
       type: "Feature" as const,
       properties: { tracada },
-      geometry: { type: "LineString" as const, coordinates: linha },
-    };
+      geometry: { type: "LineString" as const, coordinates: coordenadas },
+    });
 
-    const src = map.getSource("rota") as GeoJSONSource | undefined;
-    if (src) {
-      src.setData(dados);
+    const srcBase = map.getSource("rota-base") as GeoJSONSource | undefined;
+    const srcProgresso = map.getSource("rota") as GeoJSONSource | undefined;
+    if (srcBase && srcProgresso) {
+      srcBase.setData(dados(linha));
+      srcProgresso.setData(dados(editavel ? linha : []));
     } else {
-      map.addSource("rota", { type: "geojson", data: dados });
+      map.addSource("rota-base", { type: "geojson", data: dados(linha) });
+      map.addLayer({
+        id: "rota-base",
+        type: "line",
+        source: "rota-base",
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": cor,
+          "line-width": 9,
+          "line-opacity": 0.18,
+        },
+      });
+      map.addSource("rota", { type: "geojson", data: dados(editavel ? linha : []) });
       map.addLayer({
         id: "rota",
         type: "line",
@@ -369,6 +429,15 @@ export default function MapaEntorno({
           "line-dasharray": ["case", ["get", "tracada"], ["literal", [1, 0]], ["literal", [2, 1.6]]],
         },
       });
+    }
+
+    if (!alvo) {
+      if (!editavel) {
+        const mobile = window.innerWidth < 768
+          || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+        map.easeTo({ center: [centro.lng, centro.lat], zoom: mobile ? 13.8 : 15, duration: 700 });
+      }
+      return;
     }
 
     if (alvo) {
@@ -386,10 +455,49 @@ export default function MapaEntorno({
             bottom: Math.min(460, window.innerHeight * 0.48),
             left: 42,
           }
-        : 56;
-      map.fitBounds(b, { padding, maxZoom: mobile ? 13.75 : 15, duration: 700 });
+        : 32;
+      const duracaoVisaoGeral = editavel ? 500 : 650;
+      map.fitBounds(b, { padding, maxZoom: mobile ? 14.1 : 16.2, duration: duracaoVisaoGeral });
+
+      // No editor a rota precisa ficar estática: mover pinos e vértices durante
+      // uma câmera em movimento torna a edição imprecisa. A condução animada é
+      // uma apresentação da vitrine.
+      if (!editavel && linha.length >= 2) {
+        const atraso = tracada ? duracaoVisaoGeral : 950;
+        inicioAnimacaoRota.current = window.setTimeout(() => {
+          const inicio = performance.now();
+          const duracao = 1800;
+          const destino = linha[linha.length - 1];
+          // A câmera chega mais perto que a visão geral. No celular o teto é
+          // menor para o destino continuar acima do cartão inferior.
+          map.easeTo({
+            center: destino,
+            zoom: mobile ? Math.max(map.getZoom(), 14.6) : Math.max(map.getZoom(), 16),
+            duration: duracao,
+            easing: (t) => 1 - Math.pow(1 - t, 3),
+          });
+
+          const quadro = (agora: number) => {
+            const bruto = Math.min(1, (agora - inicio) / duracao);
+            const suave = 1 - Math.pow(1 - bruto, 3);
+            const source = map.getSource("rota") as GeoJSONSource | undefined;
+            source?.setData(dados(trechoDaRota(linha, suave)));
+            if (bruto < 1) animacaoRota.current = requestAnimationFrame(quadro);
+            else animacaoRota.current = null;
+          };
+          animacaoRota.current = requestAnimationFrame(quadro);
+          inicioAnimacaoRota.current = null;
+        }, atraso);
+      }
     }
-  }, [pronto, selecionadoId, pois, centro.lat, centro.lng, cor, rotaCalculada]);
+
+    return () => {
+      if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
+      if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
+      animacaoRota.current = null;
+      inicioAnimacaoRota.current = null;
+    };
+  }, [pronto, selecionadoId, pois, centro.lat, centro.lng, cor, rotaCalculada, editavel]);
 
   // --- Clique no mapa reposiciona o POI selecionado (só no editor) ------------
   useEffect(() => {
