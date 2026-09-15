@@ -812,16 +812,6 @@ export default function IvmViewPage() {
           }}
           isOpen={panelOpen}
           onToggle={() => setPanelOpen((o) => !o)}
-          onFlyToPoi={(lat, lng, poi) => {
-            pararTour();
-            /*
-              O enquadramento salvo vai junto, mas quem decide usá-lo é a cena:
-              ela mede se a coordenada gravada ainda descreve este ponto. Antes
-              a página o aplicava direto, e um enquadramento desatualizado
-              levava o visitante para longe do que ele clicou.
-            */
-            sceneRef.current?.flyToPoi(lat, lng, poi?.camera);
-          }}
           onVerUnidades={() => abrirUnidades()}
           onOpenPavimentos={() => {
             // Nível anterior fora: sair e voltar da vista de pavimentos deixava
@@ -853,12 +843,6 @@ export default function IvmViewPage() {
               setModeloPronto(false);
               setModoEntorno("mapa");
               setPanelOpen(false);
-            },
-            onEntrarEntorno: () => {
-              const cam = project?.data.config.cameraEntorno;
-              if (!cam) return;
-              pararTour();
-              sceneRef.current?.flyToCamera(cam, 1.6);
             },
           }}
           /* Sem cidade não há entorno a mostrar: a categoria some da gaveta. */

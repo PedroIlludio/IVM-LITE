@@ -5040,59 +5040,43 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // --- Câmeras ------------------------------------------------------------------
 
   /**
-   * Mantem a composicao vertical da camera salva, mas leva o centro real do
-   * predio para o eixo horizontal da lente.
+   * Faz a camera salva mirar o centro real do predio com o horizonte nivelado.
    *
-   * As cameras do editor guardam posicao + HPR absolutos, sem um `target`. Se o
-   * GLB tem o pivo fora do centro, esse erro fica gravado e reaparece em todas
-   * as resolucoes. Projetar a mira no plano perpendicular ao `up` original
-   * corrige apenas esquerda/direita, sem destruir a altura visual escolhida.
+   * As vistas guardam posicao + HPR, mas nao guardam um alvo. Reaplicar esse
+   * HPR literalmente conserva dois defeitos da captura: o pivo deslocado do
+   * GLB deixa o predio fora do centro e qualquer `roll` acidental inclina o
+   * mundo. A posicao continua sendo exatamente a escolhida no editor; somente
+   * a orientacao e reconstruida a partir do centro medido e da vertical local.
    */
-  function orientacaoComCentroHorizontal(cam: CameraView, alvo: Cartesian3) {
+  function orientacaoParaCentro(cam: CameraView, alvo: Cartesian3) {
     const destino = Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height);
-    const enu = Transforms.eastNorthUpToFixedFrame(destino);
-    // Mesma conversao usada internamente pelo `Camera.setView` do Cesium.
-    const hpr = new HeadingPitchRoll(
-      CesiumMath.toRadians(cam.heading) - CesiumMath.PI_OVER_TWO,
-      CesiumMath.toRadians(cam.pitch),
-      CesiumMath.toRadians(cam.roll),
-    );
-    const rotacao = Matrix3.fromQuaternion(Quaternion.fromHeadingPitchRoll(hpr), new Matrix3());
-    const acima = Matrix4.multiplyByPointAsVector(
-      enu,
-      Matrix3.getColumn(rotacao, 2, new Cartesian3()),
-      new Cartesian3(),
-    );
-    Cartesian3.normalize(acima, acima);
-
-    const ateAlvo = Cartesian3.normalize(
+    const direcao = Cartesian3.normalize(
       Cartesian3.subtract(alvo, destino, new Cartesian3()),
       new Cartesian3(),
     );
-    const componenteVertical = Cartesian3.dot(ateAlvo, acima);
-    const direcaoCentrada = Cartesian3.subtract(
-      ateAlvo,
-      Cartesian3.multiplyByScalar(acima, componenteVertical, new Cartesian3()),
+    // A normal elipsoidal e o "para cima" estavel deste lugar. Projeta-la no
+    // plano da lente produz um `up` perpendicular a mira, sem introduzir roll.
+    const vertical = Ellipsoid.WGS84.geodeticSurfaceNormal(alvo, new Cartesian3());
+    const acima = Cartesian3.subtract(
+      vertical,
+      Cartesian3.multiplyByScalar(
+        direcao,
+        Cartesian3.dot(vertical, direcao),
+        new Cartesian3(),
+      ),
       new Cartesian3(),
     );
-    // Quase exatamente acima/abaixo: nao existe horizontal confiavel a alinhar.
-    if (Cartesian3.magnitudeSquared(direcaoCentrada) < CesiumMath.EPSILON12) {
+    // Vista exatamente vertical: nao ha horizonte unico. Nesse caso heading
+    // continua definindo qual lado fica no topo, mas roll e sempre zerado.
+    if (Cartesian3.magnitudeSquared(acima) < CesiumMath.EPSILON12) {
       return {
         heading: CesiumMath.toRadians(cam.heading),
-        pitch: CesiumMath.toRadians(cam.pitch),
-        roll: CesiumMath.toRadians(cam.roll),
+        pitch: CesiumMath.toRadians(-90),
+        roll: 0,
       };
     }
-    Cartesian3.normalize(direcaoCentrada, direcaoCentrada);
-    const direita = Cartesian3.normalize(
-      Cartesian3.cross(direcaoCentrada, acima, new Cartesian3()),
-      new Cartesian3(),
-    );
-    const acimaCorrigido = Cartesian3.normalize(
-      Cartesian3.cross(direita, direcaoCentrada, new Cartesian3()),
-      new Cartesian3(),
-    );
-    return { direction: direcaoCentrada, up: acimaCorrigido };
+    Cartesian3.normalize(acima, acima);
+    return { direction: direcao, up: acima };
   }
 
   function flyToCamera(cam: CameraView, duration = 1.5, centralizarPredio = true) {
@@ -5101,15 +5085,17 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     soltarOrbita();
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
       ?? buildingsRef.current[0];
-    const esfera = centralizarPredio && b ? esferaRealDoPredio(b) : undefined;
+    // Durante a carga, o placeholder já oferece um alvo estável. Assim uma
+    // vista clicada cedo não reaplica roll nem espera o GLB para centralizar.
+    const esfera = centralizarPredio && b ? esferaDoPredio(b) : undefined;
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
       orientation: esfera
-        ? orientacaoComCentroHorizontal(cam, esfera.center)
+        ? orientacaoParaCentro(cam, esfera.center)
         : {
             heading: CesiumMath.toRadians(cam.heading),
             pitch: CesiumMath.toRadians(cam.pitch),
-            roll: CesiumMath.toRadians(cam.roll),
+            roll: 0,
           },
       duration,
     });

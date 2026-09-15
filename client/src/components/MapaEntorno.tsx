@@ -386,26 +386,18 @@ export default function MapaEntorno({
       geometry: { type: "LineString" as const, coordinates: coordenadas },
     });
 
-    const srcBase = map.getSource("rota-base") as GeoJSONSource | undefined;
+    // A antiga camada-base exibia o percurso inteiro apagado antes da
+    // animação. Além de antecipar o resultado, quando a rota ainda estava
+    // chegando ela podia parecer uma ligação reta entre os pontos.
+    if (map.getLayer("rota-base")) map.removeLayer("rota-base");
+    if (map.getSource("rota-base")) map.removeSource("rota-base");
+
     const srcProgresso = map.getSource("rota") as GeoJSONSource | undefined;
-    if (srcBase && srcProgresso) {
-      srcBase.setData(dados(linha));
+    if (srcProgresso) {
       srcProgresso.setData(dados(editavel ? linha : []));
       map.setPaintProperty("rota", "line-width", 5);
       map.setPaintProperty("rota", "line-opacity", 0.9);
     } else {
-      map.addSource("rota-base", { type: "geojson", data: dados(linha) });
-      map.addLayer({
-        id: "rota-base",
-        type: "line",
-        source: "rota-base",
-        layout: { "line-cap": "round", "line-join": "round" },
-        paint: {
-          "line-color": cor,
-          "line-width": 9,
-          "line-opacity": 0.18,
-        },
-      });
       map.addSource("rota", { type: "geojson", data: dados(editavel ? linha : []) });
       map.addLayer({
         id: "rota",
@@ -416,9 +408,6 @@ export default function MapaEntorno({
           "line-color": cor,
           "line-width": 5,
           "line-opacity": 0.9,
-          // Tracejado quando é linha reta: o visitante precisa saber que
-          // aquilo é direção, não o caminho que o carro faz.
-          "line-dasharray": ["case", ["get", "tracada"], ["literal", [1, 0]], ["literal", [2, 1.6]]],
         },
       });
     }

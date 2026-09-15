@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { Empreendimento, ItemLista, PontoDeInteresse } from "@shared/schema";
+import type { Empreendimento, ItemLista } from "@shared/schema";
 import { normalizarLista } from "@/lib/ivm-store";
 import MediaGallery, { type MediaTab } from "@/components/MediaGallery";
 import TourVirtual from "@/components/TourVirtual";
@@ -45,7 +45,6 @@ import {
   Images,
   Waves,
   Film,
-  Play,
   Orbit,
   Layers3,
   ClipboardList,
@@ -98,7 +97,6 @@ interface EmpreendimentoPanelProps {
   onSelect: (id: string | null) => void;
   isOpen: boolean;
   onToggle: () => void;
-  onFlyToPoi?: (lat: number, lng: number, poi?: PontoDeInteresse) => void;
   onOpenPavimentos?: () => void;
   /** Abre a experiência 3D de unidades com TODAS visíveis. */
   onVerUnidades?: () => void;
@@ -134,14 +132,6 @@ export interface ControleEntorno {
   onModo: (m: "3d" | "mapa") => void;
   poiSelId: string | null;
   onPoiSel: (id: string | null) => void;
-  /**
-   * A seção Entorno acabou de ser aberta.
-   *
-   * A página é quem tem a cena, então o enquadramento não pode ser aplicado
-   * daqui. Só o painel sabe QUANDO a seção abre — `vista` é estado interno
-   * dele.
-   */
-  onEntrarEntorno?: () => void;
   /** No celular abre o mapa em tela cheia, sem a lista intermediária. */
   onAbrirMapaMobile?: () => void;
 }
@@ -292,7 +282,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function EmpreendimentoDetail({
   emp,
   onBack,
-  onFlyToPoi,
   onOpenPavimentos,
   onVerUnidades,
   onSelectUnit,
@@ -312,7 +301,6 @@ function EmpreendimentoDetail({
 }: {
   emp: Empreendimento;
   onBack: () => void;
-  onFlyToPoi?: (lat: number, lng: number, poi?: PontoDeInteresse) => void;
   onOpenPavimentos?: () => void;
   /** Abre a experiência 3D de unidades com TODAS visíveis. */
   onVerUnidades?: () => void;
@@ -380,7 +368,6 @@ function EmpreendimentoDetail({
   const lazer = normalizarLista(emp.amenities);
   const titulosEmDestaque = new Set(destaques.map((h) => h.titulo.toLowerCase()));
   const lazerVisivel = lazer.filter((a) => !titulosEmDestaque.has(a.titulo.toLowerCase()));
-  const lazerComMidia = lazerVisivel.filter((a) => a.imagemUrl || a.videoUrl);
 
   const setVista = onVista;
 
@@ -466,7 +453,8 @@ function EmpreendimentoDetail({
     }
     if (entrouEntornoRef.current) return;
     entrouEntornoRef.current = true;
-    entorno?.onEntrarEntorno?.();
+    setPoiSelId(null);
+    setModoEntorno("mapa");
   }, [vista, entorno]);
 
   useEffect(() => {
@@ -801,7 +789,8 @@ function EmpreendimentoDetail({
                 {
                   id: "lazer", rotulo: "Áreas comuns e lazer",
                   icone: <Trees className="w-6 h-6" />,
-                  tem: lazer.length > 0, n: lazer.length || undefined,
+                  tem: lazerVisivel.length > 0, n: lazerVisivel.length || undefined,
+                  abrir: () => setAreaComumId(lazerVisivel[0]?.id ?? null),
                 },
                 {
                   id: "entorno", rotulo: "Entorno",
@@ -929,56 +918,7 @@ function EmpreendimentoDetail({
             )}
           </div>)}
 
-          {vista === "lazer" && (<div className="v-in space-y-3">
-          {lazerVisivel.length > 0 && (
-              <div>
-                <SectionTitle>Áreas Comuns e Lazer</SectionTitle>
-                <div className="grid grid-cols-2 gap-2" data-testid="areas-comuns-grid">
-                  {lazerVisivel.map((a) => (
-                    <AreaComumCard
-                      key={a.id}
-                      item={a}
-                      onOpen={() => {
-                        if (a.imagemUrl || a.videoUrl) setAreaComumId(a.id);
-                        else if (a.panoramaUrl) setPanorama({ url: a.panoramaUrl, titulo: a.titulo });
-                      }}
-                    />
-                  ))}
-                </div>
-              </div>
-          )}
-
-          </div>)}
-
           {vista === "entorno" && (<div className="v-in space-y-3">
-          {/*
-            Duas leituras do mesmo entorno: no 3D o ponto é um lugar na cena
-            (a câmera voa até ele); no mapa é uma distância percorrível — a
-            rota real, traçada da portaria até o ponto escolhido.
-          */}
-          <div className="v-seg">
-            {([["3d", "3D"], ["mapa", "Mapa"]] as const).map(([m, l]) => {
-              // O 3D depende da fotogrametria; o mapa, não.
-              const indisponivel = m === "3d" && !cidadeVisivel;
-              return (
-                <button key={m} onClick={() => setModoEntorno(m)}
-                  disabled={indisponivel}
-                  title={indisponivel ? "Mostre o entorno na cena para ver em 3D" : undefined}
-                  data-on={modoEntorno === m ? "1" : undefined}
-                  data-testid={`entorno-${m}`}
-                  className={indisponivel ? "opacity-40" : undefined}>
-                  {l}
-                </button>
-              );
-            })}
-          </div>
-
-          {modoEntorno === "mapa" && (
-            <p className="v-meta">
-              O mapa esta no lugar do 3D. Escolha um ponto abaixo para ver o caminho.
-            </p>
-          )}
-
           {emp.pontosDeInteresse && emp.pontosDeInteresse.length > 0 && (() => {
             const pontos = emp.pontosDeInteresse ?? [];
             /**
@@ -1028,21 +968,10 @@ function EmpreendimentoDetail({
                   <div
                     key={i}
                     data-testid={`poi-item-${i}`}
-                    data-sel={modoEntorno === "mapa" && poiSelId === id ? "1" : undefined}
+                    data-sel={poiSelId === id ? "1" : undefined}
                     className="v-card flex items-center justify-between gap-2 p-2.5 cursor-pointer"
                     onClick={() => {
-                      // No mapa o clique escolhe o destino da rota; no 3D ele
-                      // voa a câmera, como sempre fez.
-                      if (modoEntorno === "mapa") {
-                        setPoiSelId(poiSelId === id ? null : id);
-                        return;
-                      }
-                      // No 3D o ponto TAMBÉM passa a ficar selecionado: é o que
-                      // abre o cartão de detalhe no lado direito. Voar até o
-                      // lugar sem dizer o que ele é resolvia metade da pergunta
-                      // do visitante.
-                      setPoiSelId(id);
-                      onFlyToPoi?.(poi.lat, poi.lng, poi);
+                      setPoiSelId(poiSelId === id ? null : id);
                     }}
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -1100,9 +1029,9 @@ function EmpreendimentoDetail({
         document.body
       )}
 
-      {areaComumId && lazerComMidia.length > 0 && (
+      {areaComumId && lazerVisivel.length > 0 && (
         <AreaComumViewer
-          itens={lazerComMidia}
+          itens={lazerVisivel}
           initialId={areaComumId}
           onClose={() => setAreaComumId(null)}
           onPanorama={(item) => {
@@ -1219,50 +1148,6 @@ function InfoCard({
   );
 }
 
-/** Cartão visual da área comum, no mesmo vocabulário da grade da galeria. */
-function AreaComumCard({ item, onOpen }: { item: ItemLista; onOpen: () => void }) {
-  const temMidia = !!(item.imagemUrl || item.videoUrl || item.panoramaUrl);
-
-  if (!temMidia) {
-    return (
-      <div className="v-card col-span-2 flex items-center gap-2 px-3 py-2.5">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--v-accent)]" />
-        <span className="v-body-sm font-medium">{item.titulo}</span>
-      </div>
-    );
-  }
-
-  return (
-    <button type="button" onClick={onOpen} data-testid={`area-comum-${item.id}`}
-      className="v-card group min-w-0 overflow-hidden p-0 text-left transition-all hover:-translate-y-0.5 hover:border-[var(--v-accent)]"
-      aria-label={`Abrir ${item.titulo}`}>
-      <span className="relative block aspect-[4/3] overflow-hidden bg-[var(--v-surface-3)]">
-        {item.imagemUrl ? (
-          <img src={item.imagemUrl} alt="" loading="lazy"
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.05]" />
-        ) : item.videoUrl ? (
-          <video src={item.videoUrl} muted playsInline preload="metadata" className="h-full w-full object-cover" />
-        ) : (
-          <span className="flex h-full items-center justify-center bg-[var(--v-accent-soft)]">
-            <Globe2 className="h-6 w-6 text-[var(--v-accent)]" />
-          </span>
-        )}
-        <span className="absolute inset-0 bg-gradient-to-t from-black/55 via-transparent to-transparent" />
-        {item.videoUrl && (
-          <span className="absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm">
-            <Play className="h-3 w-3 translate-x-px" fill="currentColor" />
-          </span>
-        )}
-        {item.panoramaUrl && <Selo360 />}
-      </span>
-      <span className="block px-2.5 py-2.5">
-        <span className="block truncate text-[12px] font-semibold text-[var(--v-ink)]">{item.titulo}</span>
-        {item.descricao && <span className="v-meta mt-1 block line-clamp-2 leading-relaxed">{item.descricao}</span>}
-      </span>
-    </button>
-  );
-}
-
 /** Apresentação imersiva de uma área comum, com imagem ou vídeo em movimento. */
 function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
   itens: ItemLista[];
@@ -1299,8 +1184,12 @@ function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
         {item.videoUrl ? (
           <video src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline
             className="h-full w-full object-cover" data-testid="area-comum-video" />
-        ) : (
+        ) : item.imagemUrl ? (
           <img src={item.imagemUrl} alt={item.titulo} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_50%_35%,#34504d_0%,#15201f_42%,#090d0d_100%)]">
+            <Trees className="h-20 w-20 text-white/15" />
+          </div>
         )}
       </div>
 
@@ -1319,7 +1208,7 @@ function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
       </div>
 
       <div className="absolute inset-x-0 bottom-0 px-4 sm:bottom-auto sm:left-6 sm:right-auto sm:top-1/2 sm:w-[min(430px,38vw)] sm:-translate-y-1/2 sm:px-0"
-        style={{ paddingBottom: "max(84px, calc(env(safe-area-inset-bottom) + 72px))" }}>
+        style={{ paddingBottom: "max(104px, calc(env(safe-area-inset-bottom) + 92px))" }}>
         <div className="border border-[var(--v-line)] bg-[var(--v-surface)] p-5 text-[var(--v-ink)] shadow-2xl sm:p-7">
           <div className="mb-4 h-px w-10 bg-[var(--v-accent)]" />
           <h2 className="font-serif text-[clamp(28px,4vw,48px)] leading-[1.05] tracking-tight">{item.titulo}</h2>
@@ -1340,10 +1229,26 @@ function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
             className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
             <ChevronLeft className="h-4 w-4" />
           </button>
-          <div className="flex h-11 max-w-[min(58vw,360px)] items-center gap-1.5 overflow-hidden border border-white/20 bg-black/35 px-4 backdrop-blur-md">
+          <div className="v-scroll flex h-14 max-w-[calc(100vw-128px)] items-center gap-1 overflow-x-auto border border-white/20 bg-black/35 p-1 backdrop-blur-md sm:max-w-[min(68vw,760px)]">
             {itens.map((it, i) => (
               <button key={it.id} type="button" onClick={() => setIndex(i)} aria-label={`Abrir ${it.titulo}`}
-                className={`h-1.5 rounded-full transition-all ${i === index ? "w-7 bg-[var(--v-accent)]" : "w-1.5 bg-white/45 hover:bg-white/80"}`} />
+                aria-current={i === index ? "true" : undefined}
+                className={`flex h-12 w-12 shrink-0 items-center gap-2 overflow-hidden border text-left transition-colors sm:w-[112px] sm:pr-2 ${
+                  i === index
+                    ? "border-[var(--v-accent)] bg-black/65 text-white"
+                    : "border-transparent bg-black/20 text-white/65 hover:bg-black/50 hover:text-white"
+                }`}>
+                {it.imagemUrl ? (
+                  <img src={it.imagemUrl} alt="" className="h-full w-full shrink-0 object-cover sm:w-11" />
+                ) : (
+                  <span className="grid h-full w-full shrink-0 place-items-center bg-white/10 sm:w-11">
+                    <Trees className="h-4 w-4" />
+                  </span>
+                )}
+                <span className="hidden min-w-0 flex-1 truncate text-[10px] font-semibold sm:block">
+                  {it.titulo}
+                </span>
+              </button>
             ))}
           </div>
           <button type="button" onClick={() => ir(1)} aria-label="Próximo ambiente"
@@ -1467,7 +1372,6 @@ export default function EmpreendimentoPanel({
   onSelect,
   isOpen,
   onToggle,
-  onFlyToPoi,
   onOpenPavimentos,
   onVerUnidades,
   onSelectUnit,
@@ -1562,7 +1466,6 @@ export default function EmpreendimentoPanel({
           <EmpreendimentoDetail
             emp={selectedEmp}
             onBack={() => { onSelect(null); setMobileExpanded(false); }}
-            onFlyToPoi={onFlyToPoi}
             onOpenPavimentos={onOpenPavimentos}
             onVerUnidades={onVerUnidades}
             onSelectUnit={onSelectUnit}
@@ -1668,7 +1571,6 @@ export default function EmpreendimentoPanel({
         <EmpreendimentoDetail
           emp={selectedEmp}
           onBack={() => onSelect(null)}
-          onFlyToPoi={onFlyToPoi}
           onOpenPavimentos={onOpenPavimentos}
           onVerUnidades={onVerUnidades}
           onSelectUnit={onSelectUnit}
