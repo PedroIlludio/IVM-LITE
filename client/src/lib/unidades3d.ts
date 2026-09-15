@@ -1,4 +1,5 @@
 import type { TorreDef, TorreVolume, Unidade, UnidadeStatus } from "./unidades";
+import { STATUS_META } from "./unidades";
 import type { PavimentosCfg, NivelDef } from "./pavimentos";
 
 /**
@@ -44,20 +45,6 @@ export interface UnitBox {
 const FOLGA_X = 0.9;
 /** Fração da altura do nível ocupada pela caixa. */
 const FOLGA_Z = 0.78;
-
-/**
- * Paleta exclusiva da sobreposição 3D.
- *
- * As cores sólidas da interface ficam agressivas quando cobrem centenas de
- * janelas ao mesmo tempo. Aqui elas têm menos croma e luminosidade mais
- * próxima entre si: o status continua identificável sem transformar a fachada
- * em um mosaico de semáforo.
- */
-const STATUS_3D: Record<UnidadeStatus, string> = {
-  disponivel: "#229866",
-  reservada: "#c08c27",
-  vendida: "#c2504c",
-};
 
 /**
  * Volume padrão da torre `i` de `total`: divide a extensão do modelo em blocos
@@ -146,11 +133,11 @@ export function buildUnitBoxes({
       ...base,
       id: u.id,
       buildingId,
-      color: visivel ? STATUS_3D[u.status] : "#81909a",
+      color: visivel ? STATUS_META[u.status].cor : "#94a3b8",
       // Selecionar não altera o material da caixa: no Cesium, trocar a
       // transparência junto com o outline reconstrói a primitiva e podia fazê-la
       // desaparecer. O destaque é desenhado separadamente pelo Scene3D.
-      alpha: visivel ? opacidade : 0.025,
+      alpha: visivel ? opacidade : 0.05,
       outline: selecionada,
     };
   };
