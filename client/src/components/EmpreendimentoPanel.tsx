@@ -474,14 +474,14 @@ function EmpreendimentoDetail({
    */
   const temFicha =
     emp.terreno !== "-" || emp.torres !== "-" || emp.peDireito !== "-" ||
-    !!emp.unidades || !!emp.elevadores;
+    !!emp.unidades || !!emp.elevadores || (emp.pavimentos !== "-" && emp.pavimentos !== "");
 
   const FICHA_TECNICA = (
     <>
           {temFicha && (
             <div>
               <SectionTitle>Ficha Técnica</SectionTitle>
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {emp.terreno !== "-" && (
                   <InfoCard
                     icon={<Maximize2 className="w-3.5 h-3.5" />}
@@ -515,6 +515,13 @@ function EmpreendimentoDetail({
                     icon={<Building2 className="w-3.5 h-3.5" />}
                     label="Elevadores"
                     value={emp.elevadores}
+                  />
+                )}
+                {emp.pavimentos !== "-" && emp.pavimentos !== "" && (
+                  <InfoCard
+                    icon={<Layers3 className="w-3.5 h-3.5" />}
+                    label="Pavimentos"
+                    value={emp.pavimentos}
                   />
                 )}
               </div>
@@ -616,7 +623,7 @@ function EmpreendimentoDetail({
       {/* O fundo creme é da LEITURA (categoria aberta). No trilho ele seria
           uma faixa opaca cobrindo a cena para não mostrar nada. */}
       <ScrollArea className={`flex-1 ${trilho ? "" : "bg-[var(--v-bg)]"}`} ref={detailRef}>
-        <div className="px-4 py-4 space-y-3">
+        <div className="space-y-4 px-3 py-4 sm:px-4">
           {/* ===== FICHA TÉCNICA =====
               Capa, endereço, sobre, números duros, pavimentos e destaques: a
               apresentação do empreendimento, que era o que o painel abria
@@ -624,15 +631,15 @@ function EmpreendimentoDetail({
           {vista === "ficha" && (
             <>
           {emp.thumbnailUrl && (
-            <div className="relative w-full h-40 rounded-[var(--v-r)] overflow-hidden">
+            <div className="relative h-48 w-full overflow-hidden rounded-[16px] shadow-[var(--v-sh-2)]">
               <img
                 src={emp.thumbnailUrl}
                 alt={emp.name}
                 className="w-full h-full object-cover"
                 data-testid={`img-detail-thumb-${emp.id}`}
               />
-              <div className="absolute inset-0 bg-gradient-to-t from-[#04141d]/80 via-transparent to-transparent" />
-              <span className="absolute left-3 bottom-2 text-[10px] uppercase tracking-[0.25em] text-[var(--v-accent)]">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-transparent to-black/5" />
+              <span className="absolute bottom-3 left-3 rounded-full border border-white/20 bg-black/35 px-3 py-1 text-[9px] font-semibold uppercase tracking-[0.18em] text-white backdrop-blur-md">
                 {emp.status}
               </span>
             </div>
@@ -640,19 +647,23 @@ function EmpreendimentoDetail({
 
           {/* Localização. O nome saiu daqui: ele agora vive no cabeçalho, ao
               lado dos traços da gaveta, uma vez só. */}
-          <div>
-            <div className="flex items-center gap-1.5">
-              <MapPin className="w-4 h-4 shrink-0 text-[var(--v-accent)]" />
-              <span className="v-body-sm font-medium">{emp.address}</span>
-            </div>
+          <div className="v-card overflow-hidden">
+            <div className="flex items-start gap-3 p-3.5">
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[var(--v-accent-soft)] text-[var(--v-accent)]">
+                <MapPin className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 pt-0.5">
+                <span className="v-body-sm block font-semibold leading-snug">{emp.address}</span>
             {/* Só o campo do projeto. O " — Alagoas" que ficava aqui era do
                 empreendimento-piloto e viajava para todo projeto novo: um
                 empreendimento em Anápolis aparecia como "Anápolis - GO —
                 Alagoas". O schema não tem estado separado, e `neighborhood` já
                 é preenchido com cidade e UF. */}
             {emp.neighborhood && (
-              <span className="v-meta ml-[22px] block">{emp.neighborhood}</span>
+                <span className="v-meta mt-0.5 block">{emp.neighborhood}</span>
             )}
+              </span>
+            </div>
 
             {emp.website && (
               <a
@@ -660,7 +671,7 @@ function EmpreendimentoDetail({
                 target="_blank"
                 rel="noopener noreferrer"
                 data-testid={`link-website-${emp.id}`}
-                className="v-btn-ghost mt-3 !h-9 !text-[13px]"
+                className="flex h-10 w-full items-center justify-center gap-2 border-t border-[var(--v-line)] bg-[var(--v-surface-2)] text-[12px] font-semibold text-[var(--v-accent)] transition-colors hover:bg-[var(--v-accent-soft)]"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
                 Visitar site
@@ -669,9 +680,9 @@ function EmpreendimentoDetail({
           </div>
 
           {emp.descricao && (
-            <div>
+            <div className="rounded-[var(--v-r)] bg-white p-4 shadow-[var(--v-sh-1)]">
               <SectionTitle>Sobre</SectionTitle>
-              <p className="v-body">{emp.descricao}</p>
+              <p className="v-body !leading-[1.68]">{emp.descricao}</p>
             </div>
           )}
 
@@ -696,12 +707,6 @@ function EmpreendimentoDetail({
             </div>
           )}
 
-          {emp.pavimentos !== "-" && emp.pavimentos !== "" && (
-            <div>
-              <SectionTitle>Pavimentos</SectionTitle>
-              <p className="v-body-sm">{emp.pavimentos}</p>
-            </div>
-          )}
             </>
           )}
 
@@ -712,7 +717,7 @@ function EmpreendimentoDetail({
           {destaques.length > 0 && (
             <div>
               <SectionTitle>Destaques</SectionTitle>
-              <div className="space-y-1">
+              <div className="overflow-hidden rounded-[var(--v-r)] border border-[var(--v-line)] bg-white px-3">
                 {destaques.map((h) => (
                   <ItemDaLista
                     key={h.id}
@@ -935,65 +940,79 @@ function EmpreendimentoDetail({
             ];
             const visiveis = catPoi ? pontos.filter((p) => p.categoria === catPoi) : pontos;
             return (
-            <div>
-              <SectionTitle>Pontos de Interesse</SectionTitle>
+            <div className="space-y-3">
+              <div className="overflow-hidden rounded-[16px] bg-[var(--v-accent-deep)] p-4 text-white shadow-[var(--v-sh-2)]">
+                <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/60">Explore a região</span>
+                <div className="mt-1 flex items-end justify-between gap-4">
+                  <div>
+                    <h3 className="font-serif text-[25px] leading-tight tracking-[-0.02em]">Tudo por perto</h3>
+                    <p className="mt-1 text-[12px] leading-relaxed text-white/70">Selecione um local para visualizar a rota no mapa.</p>
+                  </div>
+                  <span className="v-num shrink-0 text-[11px] font-semibold text-white/55">{pontos.length} locais</span>
+                </div>
+              </div>
               {cats.length > 1 && (
-                <div className="mb-2 flex flex-wrap gap-1">
+                <div className="v-scroll -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
                   {[["", "Todos"] as const, ...cats.map((c) => [c, c] as const)].map(([v, l]) => {
                     const n = v ? pontos.filter((p) => p.categoria === v).length : pontos.length;
                     const cor = v ? corDaCategoriaPoi(v, emp.estiloCategoriaPoi) : undefined;
                     return (
                       <button key={v || "todos"} onClick={() => setCatPoi(v)}
                         data-testid={`poi-cat-${v || "todos"}`}
-                        className={`flex items-center gap-1 rounded-full border px-2 py-[3px] text-[10px] transition-colors ${
+                        data-on={catPoi === v ? "1" : undefined}
+                        className={`flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[10px] font-semibold capitalize transition-all ${
                           catPoi === v
-                            ? "border-[var(--v-accent)] bg-[var(--v-accent)]/15 text-[var(--v-ink)]"
-                            : "border-[var(--v-line)] text-[var(--v-ink-2)] hover:border-[var(--v-line-2)]"
+                            ? "border-[var(--v-accent)] bg-[var(--v-accent)] text-[var(--v-accent-ink)] shadow-[var(--v-sh-1)]"
+                            : "border-[var(--v-line)] bg-white text-[var(--v-ink-2)] hover:border-[var(--v-line-2)]"
                         }`}>
                         {cor && (
-                          <span className="h-1.5 w-1.5 rounded-full"
+                          <span className="h-2 w-2 rounded-full border border-black/5"
                             style={{ background: cor }} />
                         )}
                         {l}
-                        <span className="text-[var(--v-ink-3)]">{n}</span>
+                        <span className={catPoi === v ? "text-white/60" : "text-[var(--v-ink-3)]"}>{n}</span>
                       </button>
                     );
                   })}
                 </div>
               )}
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 {visiveis.map((poi, i) => {
                   const id = poi.id ?? `poi-${i}`;
+                  const corPoi = corDaCategoriaPoi(poi.categoria, emp.estiloCategoriaPoi);
                   return (
-                  <div
+                  <button type="button"
                     key={i}
                     data-testid={`poi-item-${i}`}
                     data-sel={poiSelId === id ? "1" : undefined}
-                    className="v-card flex items-center justify-between gap-2 p-2.5 cursor-pointer"
+                    className="v-card flex min-h-[62px] w-full items-center justify-between gap-3 p-2.5 text-left"
                     onClick={() => {
                       setPoiSelId(poiSelId === id ? null : id);
                     }}
                   >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
                       {/* Ícone e cor vêm do que foi configurado no editor —
                           os mesmos do pino no mapa, para a lista e o mapa
                           lerem como a mesma coisa. */}
                       <span
-                        className="flex-shrink-0"
-                        style={{ color: corDaCategoriaPoi(poi.categoria, emp.estiloCategoriaPoi) }}
+                        className="grid h-9 w-9 flex-shrink-0 place-items-center rounded-full"
+                        style={{ color: corPoi, background: `color-mix(in srgb, ${corPoi} 12%, white)` }}
                       >
                         {(() => {
                           const Ic = iconeDaCategoria(poi.categoria, emp.estiloCategoriaPoi);
-                          return <Ic className="w-3.5 h-3.5" />;
+                          return <Ic className="h-4 w-4" />;
                         })()}
                       </span>
-                      <span className="v-body-sm truncate">{poi.name}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] font-semibold leading-tight text-[var(--v-ink)]">{poi.name}</span>
+                        <span className="mt-1 block truncate text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--v-ink-3)]">{poi.categoria}</span>
+                      </span>
                     </div>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <Clock className="w-3 h-3 text-[var(--v-ink-3)]" />
-                      <span className="v-meta whitespace-nowrap">{poi.tempo}</span>
-                    </div>
-                  </div>
+                    <span className="flex h-7 flex-shrink-0 items-center gap-1.5 rounded-full bg-[var(--v-surface-3)] px-2.5">
+                      <Clock className="h-3 w-3 text-[var(--v-ink-3)]" />
+                      <span className="v-num whitespace-nowrap text-[11px] font-semibold text-[var(--v-ink-2)]">{poi.tempo}</span>
+                    </span>
+                  </button>
                   );
                 })}
               </div>
@@ -1138,12 +1157,12 @@ function InfoCard({
   value: string;
 }) {
   return (
-    <div className="v-card p-3">
-      <div className="flex items-center gap-1.5 mb-1">
-        <span className="text-[var(--v-accent)]/70">{icon}</span>
-        <span className="v-eyebrow !text-[10px]">{label}</span>
+    <div className="v-card min-h-[86px] p-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-[var(--v-accent-soft)] text-[var(--v-accent)]">{icon}</span>
+        <span className="v-eyebrow !text-[9px]">{label}</span>
       </div>
-      <p className="text-[15px] font-semibold leading-tight text-[var(--v-ink)]">{value}</p>
+      <p className="v-num text-[17px] font-semibold leading-tight text-[var(--v-ink)]">{value}</p>
     </div>
   );
 }
@@ -1314,9 +1333,9 @@ function ItemDaLista({ item, icon, onZoom, onPanorama }: {
   // altura para exibir uma palavra é moldura sem quadro.
   if (!item.imagemUrl && !item.descricao && !tem360) {
     return (
-      <div className="flex items-center gap-2 py-1.5">
-        {icon}
-        <span className="v-body-sm">{item.titulo}</span>
+      <div className="flex min-h-11 items-center gap-2.5 border-b border-[var(--v-line)] py-2.5 last:border-b-0">
+        <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[var(--v-accent-soft)] text-[var(--v-accent)]">{icon}</span>
+        <span className="v-body-sm font-medium">{item.titulo}</span>
       </div>
     );
   }

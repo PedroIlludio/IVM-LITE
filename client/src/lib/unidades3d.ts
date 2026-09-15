@@ -54,9 +54,9 @@ const FOLGA_Z = 0.78;
  * em um mosaico de semáforo.
  */
 const STATUS_3D: Record<UnidadeStatus, string> = {
-  disponivel: "#2f9b72",
-  reservada: "#bd9138",
-  vendida: "#b85c58",
+  disponivel: "#229866",
+  reservada: "#c08c27",
+  vendida: "#c2504c",
 };
 
 /**

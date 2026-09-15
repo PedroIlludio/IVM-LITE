@@ -515,7 +515,7 @@ export default function IvmViewPage() {
       // A escolhida volta a ser opaca — é a que ele quer ver.
       // Uma película de status, não uma pintura da fachada. A geometria e os
       // materiais do prédio continuam sendo a leitura principal.
-      opacidade: 0.26,
+      opacidade: 0.38,
     });
     return boxes;
   }, [buscaMode, building, pavCfg, unidades, torres, filtradas, unidadeSelId]);
