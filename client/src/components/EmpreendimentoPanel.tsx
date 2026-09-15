@@ -622,8 +622,8 @@ function EmpreendimentoDetail({
 
       {/* O fundo creme é da LEITURA (categoria aberta). No trilho ele seria
           uma faixa opaca cobrindo a cena para não mostrar nada. */}
-      <ScrollArea className={`flex-1 ${trilho ? "" : "bg-[var(--v-bg)]"}`} ref={detailRef}>
-        <div className="space-y-4 px-3 py-4 sm:px-4">
+      <ScrollArea className={`v-detail-scroll min-w-0 flex-1 overflow-hidden ${trilho ? "" : "bg-[var(--v-bg)]"}`} ref={detailRef}>
+        <div className="min-w-0 max-w-full space-y-4 overflow-x-hidden px-3 py-4 sm:px-4">
           {/* ===== FICHA TÉCNICA =====
               Capa, endereço, sobre, números duros, pavimentos e destaques: a
               apresentação do empreendimento, que era o que o painel abria
@@ -940,19 +940,19 @@ function EmpreendimentoDetail({
             ];
             const visiveis = catPoi ? pontos.filter((p) => p.categoria === catPoi) : pontos;
             return (
-            <div className="space-y-3">
+            <div className="min-w-0 max-w-full space-y-3 overflow-hidden">
               <div className="overflow-hidden rounded-[16px] bg-[var(--v-accent-deep)] p-4 text-white shadow-[var(--v-sh-2)]">
                 <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-white/60">Explore a região</span>
                 <div className="mt-1 flex items-end justify-between gap-4">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <h3 className="font-serif text-[25px] leading-tight tracking-[-0.02em]">Tudo por perto</h3>
                     <p className="mt-1 text-[12px] leading-relaxed text-white/70">Selecione um local para visualizar a rota no mapa.</p>
                   </div>
-                  <span className="v-num shrink-0 text-[11px] font-semibold text-white/55">{pontos.length} locais</span>
+                  <span className="v-num shrink-0 whitespace-nowrap text-[11px] font-semibold text-white/55">{pontos.length} locais</span>
                 </div>
               </div>
               {cats.length > 1 && (
-                <div className="v-scroll -mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+                <div className="v-scroll flex w-full min-w-0 max-w-full gap-1.5 overflow-x-auto pb-1">
                   {[["", "Todos"] as const, ...cats.map((c) => [c, c] as const)].map(([v, l]) => {
                     const n = v ? pontos.filter((p) => p.categoria === v).length : pontos.length;
                     const cor = v ? corDaCategoriaPoi(v, emp.estiloCategoriaPoi) : undefined;

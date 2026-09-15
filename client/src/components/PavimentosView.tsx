@@ -71,7 +71,7 @@ export default function PavimentosView({
     if (!corte) sceneRef.current?.frameBuilding();
     else sceneRef.current?.viewCorteDeCima(
       corte, p.camDist ?? cfg.camDist, p.camPitch ?? cfg.camPitch,
-      p.camGiro ?? cfg.camGiro, 1.4,
+      p.camGiro ?? cfg.camGiro, 1.4, p.plantaArea,
     );
   };
 

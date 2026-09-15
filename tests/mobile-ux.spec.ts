@@ -169,6 +169,22 @@ test("paisagem preserva uma grande área interativa para a maquete", async ({ pa
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+test("entorno no painel mantém cards e tempos dentro da largura", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await abrirVitrine(page);
+
+  const painel = page.getByTestId("panel-empreendimentos");
+  await page.getByTestId("cat-entorno").click();
+  await expect(page.getByTestId("poi-item-0")).toBeVisible();
+  expect(await painel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+
+  const primeiro = page.getByTestId("poi-item-0");
+  const caixaPainel = await painel.boundingBox();
+  const caixaPrimeiro = await primeiro.boundingBox();
+  expect(caixaPrimeiro!.x + caixaPrimeiro!.width)
+    .toBeLessThanOrEqual(caixaPainel!.x + caixaPainel!.width + 1);
+});
+
 test("login administrativo não cria rolagem horizontal", async ({ page }) => {
   await page.goto("/admin");
   await expect(page.locator("body")).toBeVisible();

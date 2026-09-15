@@ -123,6 +123,7 @@ export interface Scene3DHandle {
   viewCorteDeCima: (
     corte: CorteDef, distancia: number,
     pitchGraus?: number, giroGraus?: number, duration?: number,
+    areaEnquadramento?: CorteDef["area"],
   ) => void;
   /** Enquadra o prédio selecionado (visão externa). */
   frameBuilding: () => void;
@@ -1909,8 +1910,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     cutAtFloor: (modelZ) => cutAtFloor(modelZ),
     viewFromFloor: (camH, heading, duration) => viewFromFloor(camH, heading, duration),
     viewCutExternal: (duration) => viewCutExternal(duration),
-    viewCorteDeCima: (corte, distancia, pitchGraus, giroGraus, duration) =>
-      viewCorteDeCima(corte, distancia, pitchGraus, giroGraus, duration),
+    viewCorteDeCima: (corte, distancia, pitchGraus, giroGraus, duration, areaEnquadramento) =>
+      viewCorteDeCima(corte, distancia, pitchGraus, giroGraus, duration, areaEnquadramento),
     frameBuilding: () => {
       const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
       if (b) flyToBuilding(b);
@@ -6382,6 +6383,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     pitchGraus = -90,
     giroGraus = 0,
     duration = 1.4,
+    areaEnquadramento?: CorteDef["area"],
   ) {
     const v = viewerRef.current;
     const id = selectedRef.current;
@@ -6389,7 +6391,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const node = id ? nodesRef.current.get(id) : undefined;
     if (!v || !b || !node) return;
 
-    const a = corte.area;
+    // O recorte pode atravessar o modelo inteiro e, ainda assim, a planta ter
+    // uma área calibrada. Essa área é o melhor alvo visual do pavimento e não
+    // deve alterar a geometria que o corte remove.
+    const a = corte.area ?? areaEnquadramento;
     /**
      * Centro do que se está olhando — e `(0, 0)` NÃO é esse centro.
      *
@@ -6427,11 +6432,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     soltarOrbita();
 
+    // -90° exatos não têm direção horizontal: heading e roll ficam
+    // indeterminados e o Cesium pode escolher outro "topo" entre voos. Um grau
+    // de perspectiva é visualmente planta, mas mantém a base da câmera estável.
+    const pitchEstavel = Math.max(-89, Math.min(-1, pitchGraus));
     v.camera.flyToBoundingSphere(new BoundingSphere(alvo, 1), {
       duration,
       offset: new HeadingPitchRange(
         heading,
-        CesiumMath.toRadians(Math.max(-90, Math.min(-1, pitchGraus))),
+        CesiumMath.toRadians(pitchEstavel),
         alcance,
       ),
     });

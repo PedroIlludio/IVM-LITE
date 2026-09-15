@@ -1283,6 +1283,7 @@ export default function IvmEditorPage() {
       n.camPitch ?? pavCfg.camPitch,
       n.camGiro ?? pavCfg.camGiro,
       1.4,
+      n.plantaArea,
     );
   }
 

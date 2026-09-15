@@ -453,7 +453,7 @@ export default function BuscadorUnidades3D({
       // Usa exatamente o alvo, a inclinacao e o giro salvos para o andar.
       // Apenas abre um pouco o enquadramento para compensar as gavetas laterais.
       corte, (nivel.camDist ?? cfg.camDist) * 1.2, nivel.camPitch ?? cfg.camPitch,
-      nivel.camGiro ?? cfg.camGiro, 1.4,
+      nivel.camGiro ?? cfg.camGiro, 1.4, nivel.plantaArea,
     );
     else sceneRef.current?.viewCutExternal();
   }

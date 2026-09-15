@@ -175,6 +175,18 @@
 }
 
 /*
+ * O ScrollArea do Radix envolve o conteúdo numa `table` de largura intrínseca.
+ * Um carrossel horizontal dentro dela fazia a tabela assumir a soma de todos
+ * os chips e alargava também os cards do Entorno, cortando o tempo à direita.
+ * Nesta área a largura pertence ao painel; somente o carrossel pode rolar.
+ */
+.vitrine .v-detail-scroll [data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+/*
  * Faixa escura — o papel do "House Green". Fecha a página em cima e embaixo,
  * dando o ritmo creme → branco → escuro que o sistema pede. A cor sai da
  * marca do projeto, então cada empreendimento tem a sua faixa.
