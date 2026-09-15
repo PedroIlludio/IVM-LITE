@@ -201,6 +201,10 @@ export default function MapaEntorno({
 
     const mobileInicial = window.innerWidth < 768
       || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+    // Perspectiva leve na vitrine: dá profundidade ao bairro sem comprometer
+    // nomes e rotas. No editor a vista continua ortogonal, pois desenhar e
+    // arrastar pontos pede precisão cartográfica.
+    const pitchInicial = editavel ? 0 : mobileInicial ? 28 : 36;
     const map = new MapLibreMap({
       container: div,
       style: ESTILO_POSITRON,
@@ -208,6 +212,8 @@ export default function MapaEntorno({
       // No desktop 13.5 mostrava bairros inteiros antes de qualquer escolha.
       // A leitura inicial agora começa na escala do entorno imediato.
       zoom: mobileInicial ? 13.8 : 15,
+      pitch: pitchInicial,
+      bearing: 0,
       attributionControl: { compact: true },
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
@@ -416,7 +422,13 @@ export default function MapaEntorno({
       if (!editavel) {
         const mobile = window.innerWidth < 768
           || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
-        map.easeTo({ center: [centro.lng, centro.lat], zoom: mobile ? 13.8 : 15, duration: 700 });
+        map.easeTo({
+          center: [centro.lng, centro.lat],
+          zoom: mobile ? 13.8 : 15,
+          pitch: mobile ? 28 : 36,
+          bearing: 0,
+          duration: 700,
+        });
       }
       return;
     }
@@ -444,7 +456,13 @@ export default function MapaEntorno({
           }
         : 32;
       const duracaoVisaoGeral = editavel ? 500 : 650;
-      map.fitBounds(b, { padding, maxZoom: mobile ? 14.1 : 16.2, duration: duracaoVisaoGeral });
+      map.fitBounds(b, {
+        padding,
+        maxZoom: mobile ? 14.1 : 16.2,
+        pitch: editavel ? 0 : mobile ? 28 : 36,
+        bearing: 0,
+        duration: duracaoVisaoGeral,
+      });
 
       // No editor a rota precisa ficar estática: mover pinos e vértices durante
       // uma câmera em movimento torna a edição imprecisa. A condução animada é
