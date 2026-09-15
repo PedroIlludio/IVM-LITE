@@ -1157,25 +1157,38 @@ function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
 }) {
   const initialIndex = Math.max(0, itens.findIndex((item) => item.id === initialId));
   const [index, setIndex] = useState(initialIndex);
+  const [seletorAberto, setSeletorAberto] = useState(false);
   const item = itens[index] ?? itens[0];
 
   useEffect(() => {
     const anterior = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const aoTeclar = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-      if (e.key === "ArrowLeft") setIndex((i) => (i - 1 + itens.length) % itens.length);
-      if (e.key === "ArrowRight") setIndex((i) => (i + 1) % itens.length);
+      if (e.key === "Escape") {
+        if (seletorAberto) setSeletorAberto(false);
+        else onClose();
+      }
+      if (e.key === "ArrowLeft") {
+        setSeletorAberto(false);
+        setIndex((i) => (i - 1 + itens.length) % itens.length);
+      }
+      if (e.key === "ArrowRight") {
+        setSeletorAberto(false);
+        setIndex((i) => (i + 1) % itens.length);
+      }
     };
     window.addEventListener("keydown", aoTeclar);
     return () => {
       document.body.style.overflow = anterior;
       window.removeEventListener("keydown", aoTeclar);
     };
-  }, [itens.length, onClose]);
+  }, [itens.length, onClose, seletorAberto]);
 
   if (!item) return null;
-  const ir = (delta: number) => setIndex((i) => (i + delta + itens.length) % itens.length);
+  const ir = (delta: number) => {
+    setSeletorAberto(false);
+    setIndex((i) => (i + delta + itens.length) % itens.length);
+  };
 
   return createPortal(
     <div className="vitrine fixed inset-0 z-[9999] overflow-hidden bg-black text-white animate-in fade-in duration-300"
@@ -1223,39 +1236,62 @@ function AreaComumViewer({ itens, initialId, onClose, onPanorama }: {
       </div>
 
       {itens.length > 1 && (
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 px-4"
-          style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
-          <button type="button" onClick={() => ir(-1)} aria-label="Ambiente anterior"
-            className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <div className="v-scroll flex h-14 max-w-[calc(100vw-128px)] items-center gap-1 overflow-x-auto border border-white/20 bg-black/35 p-1 backdrop-blur-md sm:max-w-[min(68vw,760px)]">
-            {itens.map((it, i) => (
-              <button key={it.id} type="button" onClick={() => setIndex(i)} aria-label={`Abrir ${it.titulo}`}
-                aria-current={i === index ? "true" : undefined}
-                className={`flex h-12 w-12 shrink-0 items-center gap-2 overflow-hidden border text-left transition-colors sm:w-[112px] sm:pr-2 ${
-                  i === index
-                    ? "border-[var(--v-accent)] bg-black/65 text-white"
-                    : "border-transparent bg-black/20 text-white/65 hover:bg-black/50 hover:text-white"
-                }`}>
-                {it.imagemUrl ? (
-                  <img src={it.imagemUrl} alt="" className="h-full w-full shrink-0 object-cover sm:w-11" />
-                ) : (
-                  <span className="grid h-full w-full shrink-0 place-items-center bg-white/10 sm:w-11">
-                    <Trees className="h-4 w-4" />
-                  </span>
-                )}
-                <span className="hidden min-w-0 flex-1 truncate text-[10px] font-semibold sm:block">
-                  {it.titulo}
-                </span>
-              </button>
-            ))}
+        <>
+          {seletorAberto && (
+            <div id="seletor-areas-comuns" className="absolute inset-x-3 bottom-[76px] z-10 mx-auto max-h-[min(54vh,440px)] w-auto max-w-[860px] overflow-hidden border border-white/20 bg-black/75 p-3 shadow-2xl backdrop-blur-xl sm:inset-x-6 sm:p-4"
+              data-testid="seletor-areas-comuns">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/60">Escolha um ambiente</span>
+                <button type="button" onClick={() => setSeletorAberto(false)} aria-label="Fechar lista de ambientes"
+                  className="grid h-7 w-7 place-items-center text-white/55 hover:text-white">
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <div className="v-scroll grid max-h-[calc(min(54vh,440px)-52px)] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3 lg:grid-cols-4">
+                {itens.map((it, i) => (
+                  <button key={it.id} type="button"
+                    onClick={() => { setIndex(i); setSeletorAberto(false); }}
+                    aria-label={`Abrir ${it.titulo}`}
+                    aria-current={i === index ? "true" : undefined}
+                    className={`group overflow-hidden border text-left transition-colors ${
+                      i === index ? "border-[var(--v-accent)] bg-white/10" : "border-white/10 bg-white/[0.04] hover:border-white/35"
+                    }`}>
+                    <span className="block aspect-[16/8] overflow-hidden bg-white/5">
+                      {it.imagemUrl ? (
+                        <img src={it.imagemUrl} alt="" className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.04]" />
+                      ) : (
+                        <span className="grid h-full place-items-center"><Trees className="h-5 w-5 text-white/30" /></span>
+                      )}
+                    </span>
+                    <span className="block truncate px-2.5 py-2 text-[11px] font-semibold text-white/85">{it.titulo}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-2 px-4"
+            style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
+            <button type="button" onClick={() => ir(-1)} aria-label="Ambiente anterior"
+              className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => setSeletorAberto((aberto) => !aberto)}
+              aria-expanded={seletorAberto} aria-controls="seletor-areas-comuns"
+              data-testid="btn-seletor-areas-comuns"
+              className="flex h-11 w-[min(58vw,360px)] items-center justify-between gap-3 border border-white/20 bg-black/40 px-4 text-white backdrop-blur-md hover:bg-black/55">
+              <span className="min-w-0 truncate text-[11px] font-semibold">{item.titulo}</span>
+              <span className="flex shrink-0 items-center gap-2 text-[10px] text-white/55">
+                {String(index + 1).padStart(2, "0")} / {String(itens.length).padStart(2, "0")}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${seletorAberto ? "rotate-180" : ""}`} />
+              </span>
+            </button>
+            <button type="button" onClick={() => ir(1)} aria-label="Próximo ambiente"
+              className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
+              <ChevronRight className="h-4 w-4" />
+            </button>
           </div>
-          <button type="button" onClick={() => ir(1)} aria-label="Próximo ambiente"
-            className="grid h-11 w-11 place-items-center border border-white/20 bg-black/35 text-white backdrop-blur-md hover:bg-black/55">
-            <ChevronRight className="h-4 w-4" />
-          </button>
-        </div>
+        </>
       )}
     </div>,
     document.body,

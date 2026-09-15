@@ -513,7 +513,9 @@ export default function IvmViewPage() {
       // que ficam translúcidas: assim a fachada continua legível por trás
       // delas e o cliente enxerga em que altura e em que face a unidade está.
       // A escolhida volta a ser opaca — é a que ele quer ver.
-      opacidade: 0.5,
+      // Uma película de status, não uma pintura da fachada. A geometria e os
+      // materiais do prédio continuam sendo a leitura principal.
+      opacidade: 0.26,
     });
     return boxes;
   }, [buscaMode, building, pavCfg, unidades, torres, filtradas, unidadeSelId]);

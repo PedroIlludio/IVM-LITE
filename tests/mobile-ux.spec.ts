@@ -60,7 +60,10 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(ambiente).toBeVisible();
   expect((await ambiente.boundingBox())!.width).toBe(viewport.width);
   expect((await ambiente.boundingBox())!.height).toBe(viewport.height);
-  await expect(ambiente.getByRole("button", { name: /^Abrir / }).first()).toBeVisible();
+  await page.getByTestId("btn-seletor-areas-comuns").click();
+  const seletorAreas = page.getByTestId("seletor-areas-comuns");
+  await expect(seletorAreas).toBeVisible();
+  await expect(seletorAreas.getByRole("button", { name: /^Abrir / }).first()).toBeVisible();
   await page.getByTestId("btn-close-area-comum").click();
 
   // A busca não deixa uma faixa morta da cena na lateral no celular.
