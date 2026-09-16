@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  ArrowUpDown, Check, ChevronDown, Columns2, Globe2, GripHorizontal, Heart, Layers,
+  ArrowLeft, ArrowUpDown, Box, Check, ChevronDown, Columns2, Globe2, GripHorizontal, Heart, Layers,
   MessageCircle, Search, SlidersHorizontal, X,
 } from "lucide-react";
 import type { ContatoCfg } from "@/lib/ivm-store";
@@ -14,7 +14,7 @@ import {
   faixasDe, formatArea, formatPreco, formatPrecoCurto, tipologiaDaUnidade, unidadesComTipologia,
 } from "@/lib/tipologias";
 import {
-  Alca, CabecalhoCartao, COR_STATUS, canaisDeContato, precoAbreviado,
+  CabecalhoCartao, COR_STATUS, canaisDeContato, precoAbreviado, useMovel,
 } from "@/components/vitrine/comum";
 import FaixaVidro, { faixaNoPasso } from "@/components/vitrine/FaixaVidro";
 import SelecaoVidro from "@/components/vitrine/SelecaoVidro";
@@ -253,6 +253,14 @@ export default function BuscadorUnidades3D({
 
   // --- Foco na cena -----------------------------------------------------------
   const [modo, setModoInterno] = useState<ModoFoco>("volume");
+  /**
+   * CELULAR: lista e ficha ocupam a tela inteira, e a cena só aparece quando
+   * o visitante pede ("Ver unidade em 3D"). Enquanto isso lista e ficha somem,
+   * mas continuam montadas — "Informações" volta ao mesmo ponto.
+   */
+  const movel = useMovel();
+  const [cenaMovel, setCenaMovel] = useState(false);
+  const oculto = movel && cenaMovel ? " vd-oculto-movel" : "";
   const [lightbox, setLightbox] = useState<string | null>(null);
   const listaRef = useRef<HTMLUListElement>(null);
 
@@ -273,6 +281,7 @@ export default function BuscadorUnidades3D({
    * caixas entrarem na cena.
    */
   useEffect(() => {
+    setCenaMovel(false);
     if (!sel) return;
     setModo("volume");
     let cancelado = false;
@@ -395,9 +404,8 @@ export default function BuscadorUnidades3D({
 
   return (
     <>
-      <aside className="vd-painel vd-unidades vd-vidro vd-entra v-unit-search w-[298px] overflow-hidden"
+      <aside className={`vd-painel vd-unidades vd-vidro vd-entra v-unit-search w-[298px] overflow-hidden${oculto}`}
         aria-label="Unidades">
-        <Alca onFechar={onClose} />
         <CabecalhoCartao
           rotulo="Unidades"
           extra={
@@ -605,7 +613,7 @@ export default function BuscadorUnidades3D({
           `${sel.pavimento}º pav. · ${torreLabel(sel.torre, torres)}`,
         ].filter(Boolean).join(" · ");
         return (
-          <section ref={cartaoRef} className="vd-unidade-card vd-vidro vd-entra vd-scroll"
+          <section ref={cartaoRef} className={`vd-unidade-card vd-vidro vd-entra vd-scroll${oculto}`}
             style={{ translate: `${posCartao.x}px ${posCartao.y}px` }}
             aria-label={`Unidade ${sel.numero}`} data-testid="cartao-unidade">
             <div className="vd-arrastar px-4 pb-1 pt-1.5"
@@ -630,7 +638,11 @@ export default function BuscadorUnidades3D({
                   </button>
                   <button type="button" className="vd-icone-btn vd-alvo"
                     data-on={modo === "corte" ? "1" : undefined}
-                    onClick={() => ver(sel, modo === "corte" ? "volume" : "corte")}
+                    onClick={() => {
+                      ver(sel, modo === "corte" ? "volume" : "corte");
+                      // No celular a ficha cobre a cena: o corte só se vê saindo dela.
+                      if (movel && modo !== "corte") setCenaMovel(true);
+                    }}
                     title={modo === "corte" ? "Voltar à unidade" : "Ver o pavimento"}
                     aria-label={modo === "corte" ? "Voltar à unidade" : "Ver o pavimento"}>
                     <Layers className="h-3.5 w-3.5" strokeWidth={1.5} />
@@ -654,6 +666,14 @@ export default function BuscadorUnidades3D({
                   className="vd-planta mt-2 block h-[160px] w-full overflow-hidden rounded-[6px]"
                   title="Ampliar a planta" aria-label="Ampliar a planta">
                   <img src={planta} alt={`Planta da unidade ${sel.numero}`} className="h-full w-full object-contain p-2" draggable={false} />
+                </button>
+              )}
+
+              {movel && (
+                <button type="button" className="vd-btn vd-btn-vazado mt-3 !h-11 w-full"
+                  data-testid="btn-ver-unidade-3d"
+                  onClick={() => { ver(sel, "volume"); setCenaMovel(true); }}>
+                  <Box className="h-4 w-4" strokeWidth={1.5} /> Ver unidade {sel.numero} em 3D
                 </button>
               )}
 
@@ -681,6 +701,21 @@ export default function BuscadorUnidades3D({
           </section>
         );
       })()}
+
+      {movel && cenaMovel && sel && (
+        <div className="vd-palco-unidade vd-vidro" data-testid="mobile-unit-stage">
+          <div className="min-w-0 flex-1">
+            <p className="vd-micro vd-bronze">{modo === "corte" ? "Vista do pavimento" : "Unidade em 3D"}</p>
+            <p className="vd-num mt-0.5 truncate text-[14px] font-light">
+              Unidade {sel.numero} · {sel.pavimento}º pavimento
+            </p>
+          </div>
+          <button type="button" className="vd-btn vd-btn-vazado !h-11 shrink-0 !px-3"
+            data-testid="btn-voltar-info-unidade" onClick={() => setCenaMovel(false)}>
+            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} /> Informações
+          </button>
+        </div>
+      )}
 
       {lightbox && createPortal(
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-6"

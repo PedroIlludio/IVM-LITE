@@ -4,7 +4,7 @@ import type { Empreendimento } from "@shared/schema";
 import type { EditablePoi } from "@/lib/ivm-store";
 import { iconeDaCategoria } from "@/lib/poi-icones";
 import { CartaoPoi } from "@/components/CartaoPoi";
-import { Alca } from "./comum";
+import { useMovel } from "./comum";
 
 /* MapLibre pesa centenas de KB e só é necessário ao abrir a Localização. */
 const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
@@ -13,7 +13,7 @@ const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
  * Localização: tela CLARA. O mapa segue sendo o MapLibre do projeto, repintado
  * na paleta areia/água; a lista de pontos fica num painel claro à direita.
  */
-export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, onFoto, onFechar }: {
+export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, onFoto }: {
   emp: Empreendimento;
   centro: { lat: number; lng: number };
   nome: string;
@@ -22,7 +22,6 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
   poiSelId: string | null;
   onPoiSel: (id: string | null) => void;
   onFoto: (url: string) => void;
-  onFechar: () => void;
 }) {
   const pontos = useMemo(
     () => ((emp.pontosDeInteresse ?? []) as unknown as EditablePoi[])
@@ -30,6 +29,11 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
     [emp.pontosDeInteresse],
   );
   const [categoria, setCategoria] = useState("");
+  /**
+   * CELULAR: só o mapa. A lista em texto disputava a tela com ele e cobria os
+   * pinos; lá a escolha é tocando nos ícones, e o cartão do ponto responde.
+   */
+  const movel = useMovel();
 
   /** Só as categorias com ponto, na ordem do editor; as avulsas no fim. */
   const categorias = useMemo(() => {
@@ -69,10 +73,9 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
         />
       </Suspense>
 
-      {pontos.length > 0 && (
+      {pontos.length > 0 && !movel && (
         <aside className="vd-painel vd-claro vd-entra w-[278px] overflow-hidden"
           aria-label="Pontos de interesse">
-          <Alca onFechar={onFechar} />
           <div className="flex items-center px-4 py-3">
             <span className="vd-rotulo">Localização</span>
             <span className="vd-micro vd-num ml-auto text-[#8a6f4e]">{visiveis.length} locais</span>
@@ -127,6 +130,7 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
         estilo={emp.estiloCategoriaPoi}
         onFechar={() => onPoiSel(null)}
         onFoto={onFoto}
+        mostrarBasico={movel}
       />
     </div>
   );

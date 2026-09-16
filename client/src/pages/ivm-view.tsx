@@ -606,7 +606,6 @@ export default function IvmViewPage() {
           onFoto={setFotoAmpliada}
           /* Pino e rota na cor da marca do projeto — a mesma do mapa de antes. */
           cor={brand.primary || "#2dd4bf"}
-          onFechar={() => irPara("home")}
         />
       )}
 

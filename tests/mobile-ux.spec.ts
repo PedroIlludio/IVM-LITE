@@ -53,29 +53,47 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
     await expect(lazer).toBeVisible();
     expect((await lazer.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
     expect((await lazer.boundingBox())!.height).toBeCloseTo(viewport.height, 0);
+    // A mídia fica inteira, na horizontal, e não cortada pela altura da tela.
+    const midia = lazer.locator("img, video").first();
+    if (await midia.count()) {
+      const caixa = (await midia.boundingBox())!;
+      expect(caixa.width).toBeCloseTo(viewport.width, 0);
+      expect(caixa.height).toBeLessThan(caixa.width);
+    }
     await page.getByRole("button", { name: "Próximo ambiente" }).click();
     await expect(lazer.getByText(/^02 \//)).toBeVisible();
     await barra.getByRole("button", { name: "Lazer" }).click();
     await expect(lazer).toBeHidden();
   }
 
-  // Unidades: folha inferior de largura cheia com o CTA do corretor.
+  // Unidades: lista em TELA CHEIA.
   await barra.getByRole("button", { name: "Unidades" }).click();
   const busca = page.locator(".v-unit-search");
   await expect(busca).toBeVisible();
-  expect((await busca.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
+  const caixaBusca = (await busca.boundingBox())!;
+  expect(caixaBusca.width).toBeCloseTo(viewport.width, 0);
+  expect(caixaBusca.height).toBeCloseTo(viewport.height, 0);
 
-  // O cartão da unidade entra por cima da lista, também em largura cheia.
+  // A ficha também é tela cheia, e a cena só aparece pelo botão.
   await busca.locator('[data-testid^="unidade-card-"]').first().click();
   const cartao = page.getByTestId("cartao-unidade");
   await expect(cartao).toBeVisible();
-  expect((await cartao.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
+  expect((await cartao.boundingBox())!.height).toBeCloseTo(viewport.height, 0);
+  await page.getByTestId("btn-ver-unidade-3d").click();
+  await expect(cartao).toBeHidden();
+  await expect(busca).toBeHidden();
+  const palco = page.getByTestId("mobile-unit-stage");
+  await expect(palco).toContainText("Unidade em 3D");
   await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
   await expect(page.locator('img[title="Cesium ion"]')).toHaveCount(0);
+  await page.getByTestId("btn-voltar-info-unidade").click();
+  await expect(cartao).toBeVisible();
 
-  // Pavimento e volta à unidade pelo mesmo botão.
+  // O pavimento também leva direto à cena.
   await cartao.getByRole("button", { name: "Ver o pavimento" }).click();
-  await cartao.getByRole("button", { name: "Voltar à unidade" }).click();
+  await expect(palco).toContainText("Vista do pavimento");
+  await page.getByTestId("btn-voltar-info-unidade").click();
+  await expect(cartao).toBeVisible();
 
   await cartao.getByTestId("btn-mostrar-todas").click();
   await expect(cartao).toBeHidden();
@@ -103,15 +121,16 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await busca.getByRole("button", { name: "Fechar unidades" }).click();
   await expect(busca).toBeHidden();
 
-  // Entorno abre o mapa inteiro; os pinos abrem a ficha do local.
+  // Entorno é SÓ o mapa: sem lista em texto; tocar num ícone abre o local.
   await barra.getByRole("button", { name: "Entorno" }).click();
   const mapa = page.getByTestId("mapa-entorno-viewport");
   await expect(mapa).toBeVisible();
   await expect(page.locator(".maplibregl-map")).toHaveCSS("height", `${viewport.height}px`, { timeout: 30_000 });
-  await page.getByTestId("poi-item-0").click();
-  await expect(page.getByTestId("cartao-poi")).toBeVisible().catch(() => {
-    /* ponto sem foto nem descrição não abre cartão — comportamento esperado */
-  });
+  await expect(page.getByTestId("poi-item-0")).toHaveCount(0);
+  const primeiroPoi = page.locator(".maplibregl-marker span").first();
+  await expect(primeiroPoi).toBeVisible({ timeout: 30_000 });
+  await primeiroPoi.click();
+  await expect(page.getByTestId("cartao-poi")).toBeVisible();
 
   // Voltar ao 3D remonta a cena com a espera curta, sem o diagnóstico.
   await barra.getByRole("button", { name: "Entorno" }).click();

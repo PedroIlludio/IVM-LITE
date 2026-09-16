@@ -609,17 +609,42 @@
   }
   .vitrine .vd-alca { display: flex; }
 
+  /* Unidades: lista e ficha em TELA CHEIA; a cena aparece só sob pedido. */
+  .vitrine .vd-painel.vd-unidades {
+    top: 0;
+    max-height: none;
+    border-radius: 0;
+    border: 0;
+    padding-top: env(safe-area-inset-top);
+    background: rgba(16, 20, 16, 0.96);
+  }
   .vitrine .vd-unidade-card {
-    top: auto;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    inset: 0;
     translate: none !important;
     z-index: 52;
     width: auto;
-    max-height: 78dvh;
-    border-radius: 20px 20px 0 0;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
     padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(16, 20, 16, 0.98);
+    box-shadow: none;
+  }
+  .vitrine .vd-unidade-card .vd-planta { height: min(42dvh, 320px); }
+  .vitrine .vd-oculto-movel { display: none !important; }
+  .vitrine .vd-palco-unidade {
+    position: absolute;
+    left: 10px;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    z-index: 55;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 10px 10px 14px;
+    /* Denso: por baixo dela fica a barra de seções, que não pode vazar. */
+    background: rgba(16, 20, 16, 0.96);
   }
 
   .vitrine .vd-clima {

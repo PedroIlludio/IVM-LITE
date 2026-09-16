@@ -1,7 +1,26 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { MessageCircle, Phone, Mail, type LucideIcon } from "lucide-react";
 import { montarMensagemContato, type ContatoCfg } from "@/lib/ivm-store";
 import type { UnidadeStatus } from "@/lib/unidades";
+
+/** Mesma consulta das regras de celular em vitrine.css — as duas precisam concordar. */
+export const CONSULTA_MOVEL =
+  "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)";
+
+/** Celular (retrato, ou deitado com toque)? Para o que o CSS sozinho não resolve. */
+export function useMovel() {
+  const [movel, setMovel] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(CONSULTA_MOVEL).matches,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(CONSULTA_MOVEL);
+    const ver = () => setMovel(mq.matches);
+    ver();
+    mq.addEventListener("change", ver);
+    return () => mq.removeEventListener("change", ver);
+  }, []);
+  return movel;
+}
 
 /** Seções da ilha de navegação. `comparar` é tela, não seção: sai de Unidades. */
 export type Secao = "home" | "projeto" | "lazer" | "unidades" | "local" | "galeria";
