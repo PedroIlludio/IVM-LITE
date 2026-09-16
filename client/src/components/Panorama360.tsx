@@ -271,7 +271,10 @@ export default function Panorama360({ url, titulo }: { url: string; titulo?: str
        * campo de visão atual, o pixel sob o dedo permanece sob o dedo.
        */
       const escala = fovRef.current / Math.max(1, canvas.clientHeight);
-      yawRef.current -= (e.clientX - ant.x) * escala;
+      // "Pegar e puxar": a imagem acompanha o dedo. No shader, `yaw` maior
+      // desloca a vista para a ESQUERDA da equirretangular — então arrastar
+      // para a direita soma. Com o sinal trocado a imagem corria contra o gesto.
+      yawRef.current += (e.clientX - ant.x) * escala;
       pitchRef.current = Math.max(
         -PITCH_MAX,
         Math.min(PITCH_MAX, pitchRef.current + (e.clientY - ant.y) * escala),

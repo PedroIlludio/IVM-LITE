@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowLeft, ChevronLeft, ChevronRight, Globe2, Play, Trees, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Globe2, Trees, X } from "lucide-react";
 import type { ItemLista } from "@shared/schema";
 import Panorama360 from "@/components/Panorama360";
 import { doisDigitos, useMovel } from "./comum";
@@ -17,7 +17,6 @@ export default function LazerView({ itens, onFechar }: {
 }) {
   const [filtro, setFiltro] = useState("");
   const [atualId, setAtualId] = useState(itens[0]?.id ?? "");
-  const [modo, setModo] = useState<"imagem" | "video">("imagem");
   const [panorama, setPanorama] = useState<ItemLista | null>(null);
   const movel = useMovel();
   const faixaRef = useRef<HTMLDivElement>(null);
@@ -30,8 +29,11 @@ export default function LazerView({ itens, onFechar }: {
   const visiveis = filtro ? itens.filter((i) => i.pavimento?.trim() === filtro) : itens;
   const indice = Math.max(0, visiveis.findIndex((i) => i.id === atualId));
   const item = visiveis[indice] ?? itens[0];
-  const temVideo = itens.some((i) => i.videoUrl);
-  const mostrandoVideo = modo === "video" && !!item?.videoUrl;
+  /**
+   * Vídeo cadastrado SUBSTITUI a imagem de apresentação — sem botão nem
+   * alternador. O único botão do cartão é o do 360°.
+   */
+  const mostrandoVideo = !!item?.videoUrl;
 
   // Ambiente fora do filtro: cai no primeiro que passa.
   useEffect(() => {
@@ -84,20 +86,11 @@ export default function LazerView({ itens, onFechar }: {
         document.body,
       );
 
-  const botoesMidia = (item.videoUrl || item.panoramaUrl) && (
+  const botoesMidia = item.panoramaUrl && (
     <div className="mt-5 flex gap-2">
-      {item.videoUrl && (
-        <button type="button" className="vd-btn vd-btn-vazado flex-1"
-          onClick={() => setModo(mostrandoVideo ? "imagem" : "video")}>
-          <Play className="h-3.5 w-3.5" strokeWidth={1.5} />
-          {mostrandoVideo ? "Ver a imagem" : "Ver o vídeo"}
-        </button>
-      )}
-      {item.panoramaUrl && (
-        <button type="button" className="vd-btn vd-btn-vazado flex-1" onClick={() => setPanorama(item)}>
-          <Globe2 className="h-3.5 w-3.5" strokeWidth={1.5} /> 360°
-        </button>
-      )}
+      <button type="button" className="vd-btn vd-btn-vazado flex-1" onClick={() => setPanorama(item)}>
+        <Globe2 className="h-3.5 w-3.5" strokeWidth={1.5} /> Explorar em 360°
+      </button>
     </div>
   );
 
@@ -125,16 +118,6 @@ export default function LazerView({ itens, onFechar }: {
             </span>
           </div>
 
-          {temVideo && (
-            <div className="flex gap-1.5 px-4 pb-3" role="group" aria-label="Tipo de mídia">
-              <button type="button" className="vd-pilula" data-on={!mostrandoVideo ? "1" : undefined}
-                onClick={() => setModo("imagem")}>Imagens</button>
-              <button type="button" className="vd-pilula" data-on={mostrandoVideo ? "1" : undefined}
-                disabled={!item.videoUrl} style={!item.videoUrl ? { opacity: 0.45 } : undefined}
-                onClick={() => setModo("video")}>Vídeo</button>
-            </div>
-          )}
-
           {/* Deslizar o dedo na foto também troca de ambiente. */}
           {/* SEM `key` aqui: recriar o contêiner no meio do gesto (ele recebe o
               toque e contém as setas) deixava o navegador sem gerar o clique
@@ -151,8 +134,8 @@ export default function LazerView({ itens, onFechar }: {
               if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) ir(dx < 0 ? 1 : -1);
             }}>
             {mostrandoVideo ? (
-              <video key={`v-${item.id}`} src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline controls
-                className="h-full w-full object-contain" />
+              <video key={`v-${item.id}`} src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline
+                className="pointer-events-none h-full w-full object-contain" />
             ) : item.imagemUrl ? (
               <img key={`i-${item.id}`} src={item.imagemUrl} alt={item.titulo} draggable={false}
                 className="pointer-events-none h-full w-full select-none object-contain animate-in fade-in duration-300" />
@@ -225,23 +208,6 @@ export default function LazerView({ itens, onFechar }: {
       </div>
       <div className="pointer-events-none absolute inset-0"
         style={{ background: "linear-gradient(180deg, rgba(16,20,16,.34) 0%, rgba(16,20,16,.06) 32%, rgba(16,20,16,.72) 100%)" }} />
-
-      {temVideo && (
-        <div className="vd-lazer-alternador absolute left-[78px] top-5 z-10 flex gap-1.5" role="group" aria-label="Tipo de mídia">
-          <button type="button" className="vd-pilula vd-pilula-vidro"
-            data-on={!mostrandoVideo ? "1" : undefined} onClick={() => setModo("imagem")}>
-            Imagens
-          </button>
-          <button type="button" className="vd-pilula vd-pilula-vidro"
-            data-on={mostrandoVideo ? "1" : undefined}
-            disabled={!item.videoUrl}
-            title={item.videoUrl ? undefined : "Este ambiente não tem vídeo"}
-            onClick={() => setModo("video")}
-            style={!item.videoUrl ? { opacity: 0.45 } : undefined}>
-            Vídeo
-          </button>
-        </div>
-      )}
 
       {visiveis.length > 1 && (
         <div className="vd-lazer-setas pointer-events-none absolute left-[88px] right-[306px] top-1/2 z-10 flex -translate-y-1/2 justify-between">
