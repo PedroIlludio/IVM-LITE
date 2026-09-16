@@ -62,8 +62,11 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
     }
     await page.getByRole("button", { name: "Próximo ambiente" }).click();
     await expect(lazer.getByText(/^02 \//)).toBeVisible();
-    await barra.getByRole("button", { name: "Lazer" }).click();
+    // Dentro da seção a barra some; a saída é o "Voltar".
+    await expect(barra).toBeHidden();
+    await lazer.getByRole("button", { name: "Voltar" }).click();
     await expect(lazer).toBeHidden();
+    await expect(barra).toBeVisible();
   }
 
   // Unidades: lista em TELA CHEIA.
@@ -133,7 +136,8 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(page.getByTestId("cartao-poi")).toBeVisible();
 
   // Voltar ao 3D remonta a cena com a espera curta, sem o diagnóstico.
-  await barra.getByRole("button", { name: "Entorno" }).click();
+  await expect(barra).toBeHidden();
+  await mapa.getByRole("button", { name: "Voltar" }).click();
   await expect(mapa).toBeHidden();
   await expect(page.getByText("Carregando cena 3D")).toBeVisible();
   await expect(page.getByText(/Parado há/)).toHaveCount(0);

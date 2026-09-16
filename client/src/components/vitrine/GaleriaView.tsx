@@ -130,7 +130,7 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
       )}
 
       {pecas.length > 1 && (
-        <div className="absolute bottom-6 left-[88px] right-[320px] z-10 flex justify-center gap-2 max-md:left-2.5 max-md:right-2.5 max-md:bottom-[84px] max-md:overflow-x-auto">
+        <div className="absolute bottom-6 left-[88px] right-[320px] z-10 flex justify-center gap-2 max-md:left-2.5 max-md:right-2.5 max-md:bottom-4 max-md:overflow-x-auto">
           {janela.map((p, k) => {
             const i = inicio + k;
             return (

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import type { Empreendimento } from "@shared/schema";
 import type { EditablePoi } from "@/lib/ivm-store";
 import { iconeDaCategoria } from "@/lib/poi-icones";
@@ -16,7 +16,7 @@ const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
  * Localização: tela CLARA. O mapa segue sendo o MapLibre do projeto, repintado
  * na paleta areia/água; a lista de pontos fica num painel claro à direita.
  */
-export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, onFoto }: {
+export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, onFoto, onFechar }: {
   emp: Empreendimento;
   centro: { lat: number; lng: number };
   nome: string;
@@ -25,6 +25,8 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
   poiSelId: string | null;
   onPoiSel: (id: string | null) => void;
   onFoto: (url: string) => void;
+  /** Volta à cena — no celular a barra de seções some aqui. */
+  onFechar: () => void;
 }) {
   const pontos = useMemo(
     () => ((emp.pontosDeInteresse ?? []) as unknown as EditablePoi[])
@@ -134,6 +136,14 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
             })}
           </ul>
         </aside>
+      )}
+
+      {movel && (
+        <button type="button" onClick={onFechar} aria-label="Voltar" title="Voltar"
+          className="absolute left-3 z-30 grid h-11 w-11 place-items-center rounded-full border border-[rgba(28,31,28,.14)] bg-white/95 text-[#1c1f1c] shadow-[0_6px_24px_rgba(28,31,28,.16)]"
+          style={{ top: "max(12px, env(safe-area-inset-top))" }}>
+          <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
+        </button>
       )}
 
       <CartaoPoi

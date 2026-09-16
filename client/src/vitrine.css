@@ -673,14 +673,14 @@
   .vitrine .vd-lazer-alternador { left: 12px !important; }
   .vitrine .vd-lazer-setas { left: 10px !important; right: 10px !important; }
 
-  .vitrine .vd-galeria-palco { padding: 64px 10px 150px !important; }
+  .vitrine .vd-galeria-palco { padding: 64px 10px 96px !important; }
   .vitrine .vd-galeria-legenda { display: none; }
 
   /* Cartão do ponto compacto: o mapa continua sendo o protagonista. */
   .vitrine .v-poi-card {
     top: auto;
     right: 10px;
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
+    bottom: max(10px, env(safe-area-inset-bottom));
     left: 10px;
     width: auto;
     max-height: 46dvh;
@@ -748,3 +748,13 @@
 }
 .vitrine .vd-menu-item[data-foco="1"] { background: rgba(255, 255, 255, 0.08); color: #fff; }
 .vitrine .vd-menu-item[data-on="1"] { color: #fff; }
+
+/* Faixa horizontal de pílulas: o gesto é SÓ lateral, para a rolagem vertical
+   da página não roubar o arraste no celular. */
+.vitrine .vd-faixa-h {
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.vitrine .vd-faixa-h::-webkit-scrollbar { display: none; }

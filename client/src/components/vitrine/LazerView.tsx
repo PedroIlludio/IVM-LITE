@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronLeft, ChevronRight, Globe2, Play, Trees, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, Globe2, Play, Trees, X } from "lucide-react";
 import type { ItemLista } from "@shared/schema";
 import Panorama360 from "@/components/Panorama360";
 import { doisDigitos, useMovel } from "./comum";
@@ -10,12 +10,18 @@ import SelecaoVidro from "./SelecaoVidro";
  * Lazer como PEÇA DE MÍDIA: imagem ou vídeo do ambiente com a informação ao
  * lado. Regra de produto — o lazer nunca navega na maquete, não há hotspots.
  */
-export default function LazerView({ itens }: { itens: ItemLista[] }) {
+export default function LazerView({ itens, onFechar }: {
+  itens: ItemLista[];
+  /** Volta à cena — no celular a barra de seções some aqui. */
+  onFechar: () => void;
+}) {
   const [filtro, setFiltro] = useState("");
   const [atualId, setAtualId] = useState(itens[0]?.id ?? "");
   const [modo, setModo] = useState<"imagem" | "video">("imagem");
   const [panorama, setPanorama] = useState<ItemLista | null>(null);
   const movel = useMovel();
+  const faixaRef = useRef<HTMLDivElement>(null);
+  const toque = useRef<{ x: number; y: number } | null>(null);
 
   const pavimentos = useMemo(
     () => Array.from(new Set(itens.map((i) => i.pavimento?.trim()).filter((p): p is string => !!p))),
@@ -49,6 +55,13 @@ export default function LazerView({ itens }: { itens: ItemLista[] }) {
     window.addEventListener("keydown", aoTeclar);
     return () => window.removeEventListener("keydown", aoTeclar);
   });
+
+  // O ambiente ativo sempre à vista na faixa: avançar pelas setas deixava a
+  // pílula marcada fora da tela e a faixa parecia não acompanhar.
+  useEffect(() => {
+    faixaRef.current?.querySelector<HTMLElement>('[aria-current="true"]')
+      ?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [item?.id, movel]);
 
   if (!item) return null;
 
@@ -99,9 +112,13 @@ export default function LazerView({ itens }: { itens: ItemLista[] }) {
         <div className="vd-scroll h-full"
           style={{
             paddingTop: "max(16px, env(safe-area-inset-top))",
-            paddingBottom: "calc(max(10px, env(safe-area-inset-bottom)) + 76px)",
+            paddingBottom: "max(24px, env(safe-area-inset-bottom))",
           }}>
-          <div className="flex items-center px-4 pb-3">
+          <div className="flex items-center gap-2 px-4 pb-3">
+            <button type="button" onClick={onFechar} className="vd-acao vd-alvo !h-11 !w-11 shrink-0"
+              aria-label="Voltar" title="Voltar">
+              <ArrowLeft className="h-4 w-4" strokeWidth={1.5} />
+            </button>
             <span className="vd-rotulo">Lazer</span>
             <span className="vd-micro vd-num vd-3 ml-auto">
               {doisDigitos(indice + 1)} / {doisDigitos(visiveis.length)}
@@ -118,13 +135,27 @@ export default function LazerView({ itens }: { itens: ItemLista[] }) {
             </div>
           )}
 
-          <div className="relative aspect-[16/10] w-full bg-black" key={`${item.id}-${mostrandoVideo}`}>
+          {/* Deslizar o dedo na foto também troca de ambiente. */}
+          {/* SEM `key` aqui: recriar o contêiner no meio do gesto (ele recebe o
+              toque e contém as setas) deixava o navegador sem gerar o clique
+              seguinte — o "Voltar" parava de responder depois de um deslize.
+              Só a mídia é recriada. */}
+          <div className="relative aspect-[16/10] w-full touch-pan-y bg-black"
+            onTouchStart={(e) => { toque.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }}
+            onTouchEnd={(e) => {
+              const t = toque.current;
+              toque.current = null;
+              if (!t) return;
+              const dx = e.changedTouches[0].clientX - t.x;
+              const dy = e.changedTouches[0].clientY - t.y;
+              if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) ir(dx < 0 ? 1 : -1);
+            }}>
             {mostrandoVideo ? (
-              <video src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline controls
+              <video key={`v-${item.id}`} src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline controls
                 className="h-full w-full object-contain" />
             ) : item.imagemUrl ? (
-              <img src={item.imagemUrl} alt={item.titulo}
-                className="h-full w-full object-contain animate-in fade-in duration-300" />
+              <img key={`i-${item.id}`} src={item.imagemUrl} alt={item.titulo} draggable={false}
+                className="pointer-events-none h-full w-full select-none object-contain animate-in fade-in duration-300" />
             ) : (
               <div className="grid h-full w-full place-items-center">
                 <Trees className="h-14 w-14 text-white/15" strokeWidth={1} />
@@ -145,7 +176,7 @@ export default function LazerView({ itens }: { itens: ItemLista[] }) {
           </div>
 
           {/* Ambientes em faixa rolável: o nome visível é o atalho. */}
-          <div className="vd-scroll flex gap-1.5 overflow-x-auto px-4 pt-3" role="group" aria-label="Ambientes">
+          <div ref={faixaRef} className="vd-faixa-h flex gap-1.5 overflow-x-auto px-4 pt-3" role="group" aria-label="Ambientes">
             {visiveis.map((i) => (
               <button key={i.id} type="button" className="vd-pilula !h-9 shrink-0 !normal-case !tracking-[0.04em] !text-[11.5px] !font-medium"
                 data-on={i.id === item.id ? "1" : undefined} aria-current={i.id === item.id ? "true" : undefined}

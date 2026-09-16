@@ -587,7 +587,7 @@ export default function IvmViewPage() {
       )}
 
       {/* ---- Telas que cobrem a cena ---- */}
-      {emp && semErro && tela === "lazer" && <LazerView itens={lazer} />}
+      {emp && semErro && tela === "lazer" && <LazerView itens={lazer} onFechar={() => irPara("home")} />}
 
       {emp && semErro && tela === "galeria" && (
         <GaleriaView
@@ -609,6 +609,7 @@ export default function IvmViewPage() {
           onFoto={setFotoAmpliada}
           /* Pino e rota na cor da marca do projeto — a mesma do mapa de antes. */
           cor={brand.primary || "#2dd4bf"}
+          onFechar={() => irPara("home")}
         />
       )}
 
@@ -756,7 +757,9 @@ export default function IvmViewPage() {
       {project && semErro && (
         <>
           <IlhaNav itens={nav} ativa={secao} onEscolher={irPara} claro={telaClara} />
-          {tela !== "comparar" && <BarraMovel itens={navMovel} ativa={secao} onEscolher={irPara} />}
+          {/* No celular a barra de seções só vive na Home: cada seção ocupa a
+              tela e tem o próprio botão de voltar. */}
+          {tela === "home" && <BarraMovel itens={navMovel} ativa={secao} onEscolher={irPara} />}
         </>
       )}
 
