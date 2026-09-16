@@ -424,11 +424,14 @@ export default function IvmViewPage() {
 
   /** Segundos parado na capa — passado um tempo, a tela diz o que não chegou. */
   const [segundosCarregando, setSegundosCarregando] = useState(0);
+  // No Entorno do celular a cena está desmontada de propósito: não é espera,
+  // e o tique por segundo só re-renderizava a página (e o mapa) à toa.
+  const cenaEmEspera = carregando && !(mobileViewport && tela === "local");
   useEffect(() => {
-    if (!carregando) return;
+    if (!cenaEmEspera) return;
     const t = setInterval(() => setSegundosCarregando((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, [carregando]);
+  }, [cenaEmEspera]);
 
   /**
    * Remonta a cena do zero pela `key` do `Scene3D`, sem recarregar a página e

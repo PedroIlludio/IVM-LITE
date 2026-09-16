@@ -7,6 +7,9 @@ import { CartaoPoi } from "@/components/CartaoPoi";
 import { useMovel } from "./comum";
 
 /* MapLibre pesa centenas de KB e só é necessário ao abrir a Localização. */
+
+/** A rota enquadrada fica entre a ilha (esquerda) e o painel (direita). */
+const RESPIRO = { top: 48, right: 340, bottom: 48, left: 110 };
 const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
 
 /**
@@ -29,6 +32,17 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
     [emp.pontosDeInteresse],
   );
   const [categoria, setCategoria] = useState("");
+  /**
+   * Referência ESTÁVEL. O mapa refaz enquadramento e animação da rota sempre
+   * que esta lista muda; recriada a cada render, qualquer re-render da página
+   * puxava a câmera de volta e reiniciava o traçado.
+   */
+  const poisDoMapa = useMemo(
+    () => pontos.map((p) => ({
+      id: p.id, name: p.name, categoria: p.categoria, lat: p.lat, lng: p.lng, rota: p.rota,
+    })),
+    [pontos],
+  );
   /**
    * CELULAR: só o mapa. A lista em texto disputava a tela com ele e cobria os
    * pinos; lá a escolha é tocando nos ícones, e o cartão do ponto responde.
@@ -58,15 +72,12 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
         <MapaEntorno
           centro={centro}
           nomeCentro={nome}
-          pois={pontos.map((p) => ({
-            id: p.id, name: p.name, categoria: p.categoria, lat: p.lat, lng: p.lng, rota: p.rota,
-          }))}
+          pois={poisDoMapa}
           estiloCategorias={emp.estiloCategoriaPoi}
           cor={cor}
           paleta="areia"
           semControles
-          /* A rota enquadrada fica entre a ilha (esquerda) e o painel (direita). */
-          respiro={{ top: 48, right: 340, bottom: 48, left: 110 }}
+          respiro={RESPIRO}
           selecionadoId={poiSelId}
           onSelecionar={onPoiSel}
           className="h-full w-full"

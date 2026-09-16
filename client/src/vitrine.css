@@ -672,13 +672,23 @@
   .vitrine .vd-galeria-palco { padding: 64px 10px 150px !important; }
   .vitrine .vd-galeria-legenda { display: none; }
 
+  /* Cartão do ponto compacto: o mapa continua sendo o protagonista. */
   .vitrine .v-poi-card {
     top: auto;
     right: 10px;
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
     left: 10px;
     width: auto;
-    max-height: 50dvh;
+    max-height: 34dvh;
+  }
+  .vitrine .v-poi-card img { height: 96px; }
+  .vitrine .v-poi-card > div:last-child { padding: 10px 12px; }
+  .vitrine .v-poi-card p.whitespace-pre-line {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-size: 12px;
   }
 
   /* Bússola abaixo das ações empilhadas. */
