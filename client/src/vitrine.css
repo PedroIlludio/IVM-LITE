@@ -676,3 +676,36 @@
   .vitrine .vd-local .v-poi-card { top: 20px; right: 318px; }
   .vitrine .vd-local .maplibregl-ctrl-top-right { right: 300px; }
 }
+
+/* --- Menu suspenso (SelecaoVidro) ------------------------------------------
+   Vidro mais denso que o dos cartões: o menu abre SOBRE outro vidro, e com a
+   mesma transparência os itens da lista de baixo vazavam por trás.
+   -------------------------------------------------------------------------- */
+.vitrine .vd-menu {
+  border: 1px solid var(--vd-borda);
+  border-radius: 10px;
+  background: rgba(16, 20, 16, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+  animation: vd-menu-abre 0.14s ease-out both;
+}
+@keyframes vd-menu-abre {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+.vitrine .vd-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: left;
+}
+.vitrine .vd-menu-item[data-foco="1"] { background: rgba(255, 255, 255, 0.08); color: #fff; }
+.vitrine .vd-menu-item[data-on="1"] { color: #fff; }

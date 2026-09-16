@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight, Globe2, Play, Trees, X } from "lucide-react"
 import type { ItemLista } from "@shared/schema";
 import Panorama360 from "@/components/Panorama360";
 import { doisDigitos } from "./comum";
+import SelecaoVidro from "./SelecaoVidro";
 
 /**
  * Lazer como PEÇA DE MÍDIA: imagem ou vídeo do ambiente com a informação ao
@@ -104,12 +105,11 @@ export default function LazerView({ itens }: { itens: ItemLista[] }) {
         </div>
         {pavimentos.length > 1 && (
           <div className="px-4 pb-2">
-            <select value={filtro} onChange={(e) => setFiltro(e.target.value)}
-              aria-label="Filtrar por pavimento"
-              className="vd-micro h-8 w-full cursor-pointer rounded-[40px] border border-white/20 bg-transparent px-3 text-white outline-none">
-              <option value="" className="text-black">Todos os pavimentos</option>
-              {pavimentos.map((p) => <option key={p} value={p} className="text-black">{p}</option>)}
-            </select>
+            <SelecaoVidro rotulo="Filtrar por pavimento" valor={filtro} onChange={setFiltro}
+              opcoes={[
+                { valor: "", rotulo: "Todos os pavimentos" },
+                ...pavimentos.map((p) => ({ valor: p, rotulo: p })),
+              ]} />
           </div>
         )}
         <ul className="vd-scroll min-h-0 flex-1 pb-1">

@@ -17,6 +17,7 @@ import {
   Alca, CabecalhoCartao, COR_STATUS, canaisDeContato, precoAbreviado,
 } from "@/components/vitrine/comum";
 import FaixaVidro, { faixaNoPasso } from "@/components/vitrine/FaixaVidro";
+import SelecaoVidro from "@/components/vitrine/SelecaoVidro";
 
 /**
  * Como o visitante está olhando a unidade escolhida.
@@ -48,12 +49,12 @@ const ROTULO_STATUS: Record<UnidadeStatus, string> = {
 };
 
 type Ordem = "numero" | "preco-asc" | "preco-desc" | "area-asc" | "area-desc";
-const ORDENS: { v: Ordem; l: string }[] = [
-  { v: "numero", l: "Andar" },
-  { v: "preco-asc", l: "Menor preço" },
-  { v: "preco-desc", l: "Maior preço" },
-  { v: "area-asc", l: "Menor área" },
-  { v: "area-desc", l: "Maior área" },
+const ORDENS: { valor: Ordem; rotulo: string }[] = [
+  { valor: "numero", rotulo: "Andar" },
+  { valor: "preco-asc", rotulo: "Menor preço" },
+  { valor: "preco-desc", rotulo: "Maior preço" },
+  { valor: "area-asc", rotulo: "Menor área" },
+  { valor: "area-desc", rotulo: "Maior área" },
 ];
 
 type Faixa = [number, number];
@@ -472,14 +473,15 @@ export default function BuscadorUnidades3D({
                   value={fQuartos} onChange={setFQuartos} />
               )}
               {pavimentosDisponiveis.length > 1 && (
-                <label className="block">
+                <div>
                   <span className="vd-micro vd-3 mb-1 block">Pavimento</span>
-                  <select value={pavimento ?? ""} className="vd-campo"
-                    onChange={(e) => setPavimento(e.target.value === "" ? null : Number(e.target.value))}>
-                    <option value="">Todos os pavimentos</option>
-                    {pavimentosDisponiveis.map((p) => <option key={p} value={p}>{p}º pavimento</option>)}
-                  </select>
-                </label>
+                  <SelecaoVidro rotulo="Pavimento" valor={pavimento == null ? "" : String(pavimento)}
+                    onChange={(v) => setPavimento(v === "" ? null : Number(v))}
+                    opcoes={[
+                      { valor: "", rotulo: "Todos os pavimentos" },
+                      ...pavimentosDisponiveis.map((p) => ({ valor: String(p), rotulo: `${p}º pavimento` })),
+                    ]} />
+                </div>
               )}
               {tipsUsadas.length > 1 && (
                 <div>
@@ -524,13 +526,8 @@ export default function BuscadorUnidades3D({
           <span className="vd-micro vd-num vd-3 mr-auto">
             {resultados.length} {resultados.length === 1 ? "resultado" : "resultados"}
           </span>
-          <label className="vd-micro flex items-center gap-1 vd-2">
-            <ArrowUpDown className="h-3 w-3" strokeWidth={1.5} />
-            <select value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)} aria-label="Ordenar"
-              className="cursor-pointer bg-transparent uppercase tracking-[0.1em] outline-none">
-              {ORDENS.map((o) => <option key={o.v} value={o.v} className="text-black">{o.l}</option>)}
-            </select>
-          </label>
+          <SelecaoVidro variante="texto" rotulo="Ordenar" valor={ordem} opcoes={ORDENS} onChange={setOrdem}
+            icone={<ArrowUpDown className="h-3 w-3 shrink-0" strokeWidth={1.5} />} />
           <button type="button" onClick={() => setSoFavoritos((v) => !v)}
             data-on={soFavoritos ? "1" : undefined} className="vd-icone-btn !h-7 !w-auto gap-1 !px-2 !flex"
             title="Só favoritas" aria-label="Só favoritas" aria-pressed={soFavoritos}>
