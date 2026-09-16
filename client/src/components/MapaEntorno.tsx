@@ -48,6 +48,10 @@ interface Props {
    * o editor segue com o estilo original, que é mais legível para desenhar.
    */
   paleta?: "areia";
+  /** Sem zoom (+/−) e sem a faixa de créditos — a vitrine usa gestos e a própria moldura. */
+  semControles?: boolean;
+  /** Margem do enquadramento da rota no desktop — a área coberta por painéis. */
+  respiro?: { top: number; right: number; bottom: number; left: number };
   selecionadoId?: string | null;
   onSelecionar?: (id: string | null) => void;
   /** Modo edição: pinos arrastáveis e clique no mapa reposiciona o escolhido. */
@@ -155,7 +159,7 @@ function aplicarPaletaAreia(map: MapLibreMap) {
  * pelo editor. Ver o comentário de `PontoDeInteresse.rota`.
  */
 export default function MapaEntorno({
-  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a", paleta,
+  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a", paleta, semControles = false, respiro,
   selecionadoId, onSelecionar, editavel, onMoverPoi,
   tracado, fechado = false, editandoTracado, onTracado, className = "",
 }: Props) {
@@ -246,9 +250,9 @@ export default function MapaEntorno({
       zoom: mobileInicial ? 13.8 : 15,
       pitch: pitchInicial,
       bearing: 0,
-      attributionControl: { compact: true },
+      attributionControl: semControles ? false : { compact: true },
     });
-    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    if (!semControles) map.addControl(new NavigationControl({ showCompass: false }), "top-right");
     map.on("load", () => {
       if (paleta === "areia") aplicarPaletaAreia(map);
       setPronto(true);
@@ -489,7 +493,7 @@ export default function MapaEntorno({
             bottom: Math.min(460, window.innerHeight * 0.48),
             left: 42,
           }
-        : 32;
+        : (respiro ?? 32);
       const duracaoVisaoGeral = editavel ? 500 : 650;
       map.fitBounds(b, {
         padding,
@@ -513,6 +517,8 @@ export default function MapaEntorno({
           map.easeTo({
             center: destino,
             zoom: mobile ? Math.max(map.getZoom(), 14.6) : Math.max(map.getZoom(), 16),
+            // O destino centraliza na área livre, não atrás dos painéis.
+            ...(!mobile && respiro ? { padding: respiro } : {}),
             duration: duracao,
             easing: (t) => 1 - Math.pow(1 - t, 3),
           });

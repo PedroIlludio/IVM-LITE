@@ -466,14 +466,84 @@
    O painel superior encurta para não colidir com o cartão da unidade: nunca
    dois overlays na mesma faixa. Valores ajustados empiricamente no handoff.
    -------------------------------------------------------------------------- */
-.vitrine .vd-unidades[data-com-cartao="1"] { max-height: calc(100% - 430px); }
+/* Cartão da unidade: ilha flutuante à ESQUERDA da lista, arrastável pelo
+   cabeçalho. O arraste usa `translate` (e não `transform`) para não brigar
+   com a animação de entrada. */
 .vitrine .vd-unidade-card {
   position: absolute;
-  right: 20px;
-  bottom: 24px;
+  top: 68px;
+  right: calc(20px + 298px + 12px);
   z-index: 31;
-  width: 250px;
+  width: 260px;
+  max-height: calc(100% - 68px - 88px);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
 }
+.vitrine .vd-arrastar { cursor: grab; touch-action: none; user-select: none; }
+.vitrine .vd-arrastar:active { cursor: grabbing; }
+
+/* Campos sobre vidro: busca e seletores. */
+.vitrine .vd-campo {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  outline: none;
+  transition: border-color 0.14s ease, background-color 0.14s ease;
+}
+.vitrine .vd-campo::placeholder { color: rgba(255, 255, 255, 0.62); }
+.vitrine .vd-campo:focus { border-color: rgba(255, 255, 255, 0.5); background: rgba(255, 255, 255, 0.1); }
+.vitrine select.vd-campo { cursor: pointer; appearance: none; }
+.vitrine select.vd-campo option { color: #1c1f1c; }
+
+/* Segmentado de status sobre vidro. */
+.vitrine .vd-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 40px;
+  background: rgba(255, 255, 255, 0.07);
+}
+.vitrine .vd-seg > button {
+  flex: 1 1 auto;
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 40px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.vitrine .vd-seg > button:hover { color: #fff; }
+.vitrine .vd-seg > button[data-on="1"] { background: #fff; color: var(--vd-tinta); }
+
+/* Polegares do slider de faixa. */
+.vitrine .vd-faixa input[type="range"]::-webkit-slider-thumb {
+  width: 12px; height: 12px; border: 0; background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.vitrine .vd-faixa input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border: 0; background: #fff;
+}
+
+/* Linha marcada para comparação. */
+.vitrine .vd-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  color: var(--vd-tinta);
+}
+.vitrine .vd-check[data-on="1"] { background: var(--vd-bronze); border-color: var(--vd-bronze); }
 .vitrine .vd-planta { background: rgba(255, 255, 255, 0.06); }
 
 /* --- Lazer ---------------------------------------------------------------- */
@@ -526,8 +596,7 @@
   .vitrine .vd-acao-extra { display: none; }
 
   /* Cartões da direita viram folha inferior, acima da barra de seções. */
-  .vitrine .vd-painel,
-  .vitrine .vd-unidades[data-com-cartao="1"] {
+  .vitrine .vd-painel {
     top: auto;
     left: 0;
     right: 0;
@@ -541,9 +610,11 @@
   .vitrine .vd-alca { display: flex; }
 
   .vitrine .vd-unidade-card {
+    top: auto;
     left: 0;
     right: 0;
     bottom: 0;
+    translate: none !important;
     z-index: 52;
     width: auto;
     max-height: 78dvh;

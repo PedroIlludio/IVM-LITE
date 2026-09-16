@@ -77,19 +77,28 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await cartao.getByRole("button", { name: "Ver o pavimento" }).click();
   await cartao.getByRole("button", { name: "Voltar à unidade" }).click();
 
-  // Comparar plantas: tela própria, até três colunas, com saída.
-  await cartao.getByRole("button", { name: "Comparar esta planta" }).click();
+  await cartao.getByTestId("btn-mostrar-todas").click();
+  await expect(cartao).toBeHidden();
+
+  // Comparar plantas: marca exatamente duas na lista; o botão só libera com as duas.
+  await page.getByTestId("btn-comparar-unidades").click();
+  const abrir = page.getByTestId("btn-abrir-comparacao");
+  await expect(abrir).toBeDisabled();
+  const linhas = busca.locator('[data-testid^="unidade-card-"]');
+  await linhas.nth(0).click();
+  await linhas.nth(1).click();
+  await expect(abrir).toBeEnabled();
+  await expect(abrir).toContainText("Comparar 2 plantas");
+  await abrir.click();
   const comparador = page.getByTestId("comparador-unidades");
   await expect(comparador).toBeVisible();
   expect((await comparador.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
   expect((await comparador.boundingBox())!.height).toBeCloseTo(viewport.height, 0);
-  await page.getByTestId("btn-adicionar-comparacao").click();
-  await comparador.locator("ul button").first().click();
-  await expect(comparador.getByText("2 de 3 selecionadas")).toBeVisible();
+  await expect(comparador.getByRole("region", { name: /^Unidade / })).toHaveCount(2);
+  await semVazamento(page);
   await page.getByTestId("btn-fechar-comparacao").click();
   await expect(busca).toBeVisible();
 
-  await cartao.getByTestId("btn-mostrar-todas").click();
   await expect(cartao).toBeHidden();
   await busca.getByRole("button", { name: "Fechar unidades" }).click();
   await expect(busca).toBeHidden();

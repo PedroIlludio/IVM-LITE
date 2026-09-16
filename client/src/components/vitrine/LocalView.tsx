@@ -13,10 +13,12 @@ const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
  * Localização: tela CLARA. O mapa segue sendo o MapLibre do projeto, repintado
  * na paleta areia/água; a lista de pontos fica num painel claro à direita.
  */
-export default function LocalView({ emp, centro, nome, poiSelId, onPoiSel, onFoto, onFechar }: {
+export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, onFoto, onFechar }: {
   emp: Empreendimento;
   centro: { lat: number; lng: number };
   nome: string;
+  /** Cor do pino do empreendimento e das rotas. */
+  cor: string;
   poiSelId: string | null;
   onPoiSel: (id: string | null) => void;
   onFoto: (url: string) => void;
@@ -56,8 +58,11 @@ export default function LocalView({ emp, centro, nome, poiSelId, onPoiSel, onFot
             id: p.id, name: p.name, categoria: p.categoria, lat: p.lat, lng: p.lng, rota: p.rota,
           }))}
           estiloCategorias={emp.estiloCategoriaPoi}
-          cor="#8a6f4e"
+          cor={cor}
           paleta="areia"
+          semControles
+          /* A rota enquadrada fica entre a ilha (esquerda) e o painel (direita). */
+          respiro={{ top: 48, right: 340, bottom: 48, left: 110 }}
           selecionadoId={poiSelId}
           onSelecionar={onPoiSel}
           className="h-full w-full"
@@ -74,15 +79,25 @@ export default function LocalView({ emp, centro, nome, poiSelId, onPoiSel, onFot
           </div>
 
           {categorias.length > 1 && (
-            <div className="vd-scroll flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-3">
-              {[["", "Todos"], ...categorias.map((c) => [c, c])].map(([v, rotulo]) => (
-                <button key={v || "todos"} type="button" className="vd-pilula !h-7 shrink-0 !px-3"
-                  data-on={categoria === v ? "1" : undefined}
-                  data-testid={`poi-cat-${v || "todos"}`}
-                  onClick={() => setCategoria(v)}>
-                  {rotulo}
-                </button>
-              ))}
+            /* Em linhas que quebram: rolando na horizontal, as categorias do
+               fim ficavam escondidas atrás da borda do painel. */
+            <div className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-3" role="group" aria-label="Categorias">
+              {[["", "Todos"], ...categorias.map((c) => [c, c])].map(([v, rotulo]) => {
+                const n = v ? pontos.filter((p) => p.categoria === v).length : pontos.length;
+                const Icone = v ? iconeDaCategoria(v, emp.estiloCategoriaPoi) : null;
+                return (
+                  <button key={v || "todos"} type="button"
+                    className="vd-pilula !h-7 !gap-1.5 !px-2.5 !normal-case !tracking-[0.04em] !text-[11px] !font-medium"
+                    data-on={categoria === v ? "1" : undefined}
+                    data-testid={`poi-cat-${v || "todos"}`}
+                    aria-pressed={categoria === v}
+                    onClick={() => setCategoria(v)}>
+                    {Icone && <Icone className="h-3 w-3" strokeWidth={1.5} />}
+                    <span className="first-letter:uppercase">{rotulo}</span>
+                    <span className="vd-num opacity-60">{n}</span>
+                  </button>
+                );
+              })}
             </div>
           )}
 

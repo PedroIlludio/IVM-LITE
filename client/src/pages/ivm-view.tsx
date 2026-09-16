@@ -13,7 +13,7 @@ import ClimaBar, { ehNoite } from "@/components/vitrine/ClimaBar";
 import LazerView from "@/components/vitrine/LazerView";
 import GaleriaView from "@/components/vitrine/GaleriaView";
 import LocalView from "@/components/vitrine/LocalView";
-import ComparadorPlantas, { MAX_COMPARACAO } from "@/components/vitrine/ComparadorPlantas";
+import ComparadorPlantas from "@/components/vitrine/ComparadorPlantas";
 import {
   BarraMovel, IlhaNav, Simbolo, TELAS_COM_3D, canaisDeContato,
   type ItemNav, type Secao, type Tela,
@@ -94,7 +94,7 @@ export default function IvmViewPage() {
    */
   const [modoFoco, setModoFoco] = useState<ModoFoco>("volume");
   const [filtradas, setFiltradas] = useState<string[]>([]);
-  /** Até três unidades na tela Comparar plantas. */
+  /** As duas plantas marcadas para a tela Comparar plantas. */
   const [comparacao, setComparacao] = useState<string[]>([]);
   const [season, setSeason] = useState<Season>("verao");
   const [timeMinutes, setTimeMinutes] = useState(780);
@@ -604,6 +604,8 @@ export default function IvmViewPage() {
           poiSelId={poiEntornoId}
           onPoiSel={setPoiEntornoId}
           onFoto={setFotoAmpliada}
+          /* Pino e rota na cor da marca do projeto — a mesma do mapa de antes. */
+          cor={brand.primary || "#2dd4bf"}
           onFechar={() => irPara("home")}
         />
       )}
@@ -612,15 +614,11 @@ export default function IvmViewPage() {
         <ComparadorPlantas
           unidades={unidadesCompletas}
           ids={comparacao}
-          selecionadaId={unidadeSelId}
           torres={torres}
           logoUrl={brand.logoUrl}
           plantaDe={(u) => plantaDaUnidade(u, tipologias)}
           tourDe={(u) => tipologias.find((t) => t.id === u.tipologiaId || t.nome === u.tipologia)?.tour360Url}
           contatoDe={(u) => canaisDeContato(project?.data.config.contato, project?.name ?? "", u.numero)[0]}
-          onAdicionar={(id) => setComparacao((c) => (c.includes(id) ? c : [...c, id].slice(-MAX_COMPARACAO)))}
-          onRemover={(id) => setComparacao((c) => c.filter((x) => x !== id))}
-          onSelecionar={setUnidadeSelId}
           onTour={(url, titulo) => setTour360({ url, titulo })}
           onFechar={() => irPara("unidades")}
         />
@@ -721,6 +719,7 @@ export default function IvmViewPage() {
       {project && semErro && tela === "unidades" && (
         <BuscadorUnidades3D
           sceneRef={sceneRef}
+          projetoId={project.id}
           contato={project.data.config.contato}
           nomeEmpreendimento={project.name}
           unidades={unidades}
@@ -733,10 +732,9 @@ export default function IvmViewPage() {
           onSelecionar={(u) => setUnidadeSelId(u?.id ?? null)}
           onModo={setModoFoco}
           onFiltrar={setFiltradas}
-          onComparar={(id) => {
-            if (id) setComparacao((c) => (c.includes(id) ? c : [...c, id].slice(-MAX_COMPARACAO)));
-            irPara("comparar");
-          }}
+          comparacaoIds={comparacao}
+          onComparacaoIds={setComparacao}
+          onAbrirComparacao={() => irPara("comparar")}
           onTour={(url, titulo) => setTour360({ url, titulo })}
           onClose={() => irPara("home")}
         />
