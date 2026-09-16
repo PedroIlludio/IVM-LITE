@@ -43,6 +43,7 @@ export default function ClimaBar({ minutos, onMinutos, estacao, onEstacao, sol }
       <div className="flex shrink-0 items-baseline gap-2">
         <span className="vd-micro" style={{ color: "var(--vd-pedra)" }}>Luz</span>
         <strong className="vd-num text-[15px] font-light">{formatarHora(minutos)}</strong>
+        <span className="vd-clima-extra vd-micro vd-num ml-auto whitespace-nowrap vd-bronze">{leitura}</span>
       </div>
       <input
         type="range"
@@ -52,12 +53,11 @@ export default function ClimaBar({ minutos, onMinutos, estacao, onEstacao, sol }
         value={minutos}
         onInput={(e) => onMinutos(Number((e.target as HTMLInputElement).value))}
         onChange={(e) => onMinutos(Number(e.target.value))}
-        className="vd-range min-w-[80px] flex-1"
+        className="vd-range min-w-[80px]"
         aria-label="Hora do dia"
         aria-valuetext={formatarHora(minutos)}
       />
-      <span className="vd-clima-extra vd-micro vd-num shrink-0 whitespace-nowrap vd-bronze">{leitura}</span>
-      <div className="vd-clima-extra flex shrink-0 gap-1" role="group" aria-label="Estação do ano">
+      <div className="vd-clima-extra flex shrink-0 justify-between gap-1" role="group" aria-label="Estação do ano">
         {SEASONS.map((s) => (
           <button
             key={s.id}
@@ -66,7 +66,7 @@ export default function ClimaBar({ minutos, onMinutos, estacao, onEstacao, sol }
             data-on={estacao === s.id ? "1" : undefined}
             title={s.label}
             aria-label={s.label}
-            className="vd-pilula !h-[26px] !px-2.5"
+            className="vd-pilula !h-[26px] flex-1 !px-2"
           >
             {CURTO[s.id]}
           </button>

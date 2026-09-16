@@ -173,10 +173,12 @@ test("desktop: ilha fixa, um cartão por seção e clima só com o 3D", async ({
   await expect(page.getByTestId("panel-empreendimentos")).toBeVisible();
   await expect(clima).toBeVisible();
 
-  // O cartão da ficha termina acima do clima.
-  const caixaFicha = (await page.getByTestId("panel-empreendimentos").boundingBox())!;
-  const caixaClima = (await clima.boundingBox())!;
-  expect(caixaFicha.y + caixaFicha.height).toBeLessThanOrEqual(caixaClima.y);
+  // Ficha e controle de luz nunca se sobrepõem; o controle é compacto.
+  const f = (await page.getByTestId("panel-empreendimentos").boundingBox())!;
+  const c = (await clima.boundingBox())!;
+  const cruzam = f.x < c.x + c.width && c.x < f.x + f.width && f.y < c.y + c.height && c.y < f.y + f.height;
+  expect(cruzam).toBe(false);
+  expect(c.width).toBeLessThanOrEqual(320);
 
   // Localização: tela clara, sem clima, lista dentro da largura do painel.
   if (await page.getByTestId("nav-local").count()) {
