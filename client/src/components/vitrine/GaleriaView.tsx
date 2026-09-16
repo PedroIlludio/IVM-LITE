@@ -217,7 +217,7 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
         {!lista.length ? (
           <p className="vd-micro vd-3 py-20 text-center">Nenhuma mídia cadastrada.</p>
         ) : (
-          <div className="grid gap-2.5" style={{ gridTemplateColumns: movel ? "repeat(2, minmax(0,1fr))" : "repeat(auto-fill, minmax(220px, 1fr))" }}>
+          <div className={`grid ${movel ? "gap-2.5" : "gap-4"}`} style={{ gridTemplateColumns: movel ? "repeat(2, minmax(0,1fr))" : "repeat(3, minmax(0,1fr))" }}>
             {lista.map((p, i) => (
               <button key={`${p.url}-${i}`} type="button" onClick={() => setAberta(i)}
                 className="group text-left" aria-label={`Abrir ${p.titulo || p.categoria}`}>
