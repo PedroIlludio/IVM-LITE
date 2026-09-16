@@ -490,7 +490,7 @@ export default function MapaEntorno({
         ? {
             top: Math.max(88, window.innerHeight * 0.11),
             right: 42,
-            bottom: Math.min(460, window.innerHeight * 0.48),
+            bottom: Math.min(480, window.innerHeight * 0.52),
             left: 42,
           }
         : (respiro ?? 32);
@@ -517,8 +517,11 @@ export default function MapaEntorno({
           map.easeTo({
             center: destino,
             zoom: mobile ? Math.max(map.getZoom(), 14.6) : Math.max(map.getZoom(), 16),
-            // O destino centraliza na área livre, não atrás dos painéis.
-            ...(!mobile && respiro ? { padding: respiro } : {}),
+            // O destino centraliza na área livre, não atrás dos painéis — no
+            // celular, acima do cartão do ponto, que ocupa a parte de baixo.
+            ...(mobile
+              ? { padding: { top: 72, right: 24, bottom: Math.min(480, window.innerHeight * 0.52), left: 24 } }
+              : respiro ? { padding: respiro } : {}),
             duration: duracao,
             easing: (t) => 1 - Math.pow(1 - t, 3),
           });

@@ -633,6 +633,10 @@
   }
   .vitrine .vd-unidade-card .vd-planta { height: min(42dvh, 320px); }
   .vitrine .vd-oculto-movel { display: none !important; }
+  /* Com a barra da unidade em cena, a luz sobe e as duas não encostam. */
+  .vitrine:has(.vd-palco-unidade) .vd-clima {
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 78px);
+  }
   .vitrine .vd-palco-unidade {
     position: absolute;
     left: 10px;
@@ -679,9 +683,9 @@
     bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
     left: 10px;
     width: auto;
-    max-height: 34dvh;
+    max-height: 46dvh;
   }
-  .vitrine .v-poi-card img { height: 96px; }
+  .vitrine .v-poi-card img { height: min(24dvh, 190px); }
   .vitrine .v-poi-card > div:last-child { padding: 10px 12px; }
   .vitrine .v-poi-card p.whitespace-pre-line {
     display: -webkit-box;
