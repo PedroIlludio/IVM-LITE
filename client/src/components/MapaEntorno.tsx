@@ -43,6 +43,11 @@ interface Props {
   estiloCategorias?: EstiloPoi;
   /** Cor do empreendimento e do traçado — a da marca do projeto. */
   cor?: string;
+  /**
+   * Repinta o Positron na paleta da vitrine (areia e água). Só a vitrine pede;
+   * o editor segue com o estilo original, que é mais legível para desenhar.
+   */
+  paleta?: "areia";
   selecionadoId?: string | null;
   onSelecionar?: (id: string | null) => void;
   /** Modo edição: pinos arrastáveis e clique no mapa reposiciona o escolhido. */
@@ -112,6 +117,33 @@ function trechoDaRota(pontos: [number, number][], progresso: number): [number, n
 }
 
 /**
+ * Paleta da vitrine sobre o Positron: chão areia, água esverdeada.
+ *
+ * Por tipo e nome de camada, e não por id exato: o estilo do OpenFreeMap muda
+ * de versão, e uma lista fechada de ids quebraria em silêncio.
+ */
+function aplicarPaletaAreia(map: MapLibreMap) {
+  for (const camada of map.getStyle().layers ?? []) {
+    const id = camada.id.toLowerCase();
+    try {
+      if (camada.type === "background") {
+        map.setPaintProperty(camada.id, "background-color", "#e6e3dc");
+      } else if (camada.type === "fill" && /water|ocean|sea/.test(id)) {
+        map.setPaintProperty(camada.id, "fill-color", "#cfdcdb");
+      } else if (camada.type === "line" && /water|river/.test(id)) {
+        map.setPaintProperty(camada.id, "line-color", "#cfdcdb");
+      } else if (camada.type === "fill" && /park|landuse|landcover|wood|grass/.test(id)) {
+        map.setPaintProperty(camada.id, "fill-color", "#dcd8cf");
+      } else if (camada.type === "fill" && /building/.test(id)) {
+        map.setPaintProperty(camada.id, "fill-color", "#d6d2c8");
+      }
+    } catch {
+      /* camada sem a propriedade: segue com a cor do estilo */
+    }
+  }
+}
+
+/**
  * Mapa 2D do entorno — MapLibre sobre OpenFreeMap.
  *
  * Serve às duas pontas: na vitrine é leitura (onde as coisas estão e como se
@@ -123,7 +155,7 @@ function trechoDaRota(pontos: [number, number][], progresso: number): [number, n
  * pelo editor. Ver o comentário de `PontoDeInteresse.rota`.
  */
 export default function MapaEntorno({
-  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a",
+  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a", paleta,
   selecionadoId, onSelecionar, editavel, onMoverPoi,
   tracado, fechado = false, editandoTracado, onTracado, className = "",
 }: Props) {
@@ -217,7 +249,10 @@ export default function MapaEntorno({
       attributionControl: { compact: true },
     });
     map.addControl(new NavigationControl({ showCompass: false }), "top-right");
-    map.on("load", () => setPronto(true));
+    map.on("load", () => {
+      if (paleta === "areia") aplicarPaletaAreia(map);
+      setPronto(true);
+    });
     // Sem isto uma falha de estilo/tile some em silêncio e o mapa fica branco.
     map.on("error", (e) => {
       const msg = (e as { error?: { message?: string } })?.error?.message ?? "erro desconhecido";

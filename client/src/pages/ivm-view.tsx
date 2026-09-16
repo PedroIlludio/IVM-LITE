@@ -1,16 +1,28 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoute } from "wouter";
-import { ArrowLeft, Loader2, Menu, Search, Home, Play, Square, Camera, Moon, SunMedium, Layers3, RotateCw, MoreHorizontal, X } from "lucide-react";
+import {
+  Loader2, Home, Play, Square, Camera, Moon, Maximize, Minimize, Layers3, RotateCw,
+  ClipboardList, Trees, Building2, MapPin, Images,
+} from "lucide-react";
 import Scene3D, { type Scene3DHandle, TILES_TETO_MS } from "@/components/Scene3D";
-import SolarBar from "@/components/SolarBar";
 import EmpreendimentoPanel from "@/components/EmpreendimentoPanel";
-import PavimentosView from "@/components/PavimentosView";
-import BuscadorUnidades3D, { type ModoFoco } from "@/components/BuscadorUnidades3D";
+import BuscadorUnidades3D, { plantaDaUnidade, type ModoFoco } from "@/components/BuscadorUnidades3D";
 import Bussola from "@/components/Bussola";
+import TourVirtual from "@/components/TourVirtual";
+import ClimaBar, { ehNoite } from "@/components/vitrine/ClimaBar";
+import LazerView from "@/components/vitrine/LazerView";
+import GaleriaView from "@/components/vitrine/GaleriaView";
+import LocalView from "@/components/vitrine/LocalView";
+import ComparadorPlantas, { MAX_COMPARACAO } from "@/components/vitrine/ComparadorPlantas";
+import {
+  BarraMovel, IlhaNav, Simbolo, TELAS_COM_3D, canaisDeContato,
+  type ItemNav, type Secao, type Tela,
+} from "@/components/vitrine/comum";
 import {
   aplicarCrm,
   getProjectByPath,
   getProjectBySlug,
+  normalizarLista,
   projectAmbiente,
   projectPavCfg,
   projectMapaBase,
@@ -21,20 +33,18 @@ import {
 import type { Unidade } from "@/lib/unidades";
 import { buildUnitBoxes, volumeDaTorre } from "@/lib/unidades3d";
 import { tocarTour, vistaPrincipal, type TourHandle } from "@/lib/tour";
-import { plantasDoProjeto } from "@/lib/tipologias";
-import { niveisDe, alturaDaPlanta, type NivelDef } from "@/lib/pavimentos";
-import { CartaoPoi } from "@/components/CartaoPoi";
-import type { EditablePoi } from "@/lib/ivm-store";
-import { getSunReadout, getSunTimesLocal, localToUtc, seasonDate, type Season } from "@/lib/solar";
+import { plantasDeTipologia, unidadesComTipologia } from "@/lib/tipologias";
+import { alturaDaPlanta, type NivelDef } from "@/lib/pavimentos";
+import { getSunReadout, localToUtc, seasonDate, type Season } from "@/lib/solar";
 import { ehAparelhoLeve } from "@/lib/cesium-setup";
 
-/* MapLibre pesa centenas de KB e só é necessário depois de abrir o Entorno.
-   O import dinâmico tira esse custo do carregamento inicial da vitrine. */
-const MapaEntorno = lazy(() => import("@/components/MapaEntorno"));
-
 /**
- * Página pública de um IVM Lite (projeto do Supabase): mesma experiência rica
- * do /explorar, porém com os dados vindos da plataforma.
+ * Página pública de um IVM Lite — a vitrine, na direção "Vidro".
+ *
+ * A cena 3D ocupa a tela inteira e fica MONTADA em todas as seções (trocar de
+ * seção não remonta o viewer). A navegação é a ilha de ícones à esquerda; cada
+ * seção abre um único cartão à direita ou uma tela própria (lazer, galeria,
+ * localização, comparar) por cima da cena.
  */
 export default function IvmViewPage() {
   // A página atende os dois endereços: o legado `/v/:slug` (projeto ainda sem
@@ -47,135 +57,77 @@ export default function IvmViewPage() {
 
   const [apiKey, setApiKey] = useState<string | null>(null);
   /**
-   * O servidor respondeu, mas sem chave do Google.
-   *
-   * Sem isto a página ficava presa em "Carregando experiência 3D…" para sempre:
-   * a cena nunca monta (o `apiKey` vazio é falsy), logo `ready` nunca vira
-   * true, e nada na tela dizia o motivo. Uma variável de ambiente esquecida no
-   * deploy transformava toda vitrine publicada numa animação infinita.
+   * O servidor respondeu, mas sem chave do Google. Sem isto a página ficava
+   * presa na capa para sempre — a cena nunca monta sem `apiKey`.
    */
   const [semChave, setSemChave] = useState(false);
   const [project, setProject] = useState<IvmProject | null>(null);
   const [notFound, setNotFound] = useState(false);
-  /**
-   * Falha que deixa a cena SEM O PRODUTO — fotogrametria ou GLB.
-   *
-   * Nasceu para os 3D Tiles (daí o nome) e hoje cobre as duas: as duas levam à
-   * mesma tela e à mesma saída, o "Tentar de novo".
-   */
+  /** Falha que deixa a cena SEM O PRODUTO — fotogrametria ou GLB. */
   const [tilesError, setTilesError] = useState<string | null>(null);
   /**
-   * A falha foi da FOTOGRAMETRIA (e nao do modelo do empreendimento)?
-   *
-   * So esse caso tem saida alternativa. Quando o que faltou foi o GLB do
-   * empreendimento, entrar sem a cidade nao resolve nada — a vitrine abriria
-   * vazia, que e pior do que a tela de erro.
+   * A falha foi da FOTOGRAMETRIA (e não do modelo)? Só esse caso tem saída
+   * alternativa: sem o GLB, entrar sem a cidade abriria a vitrine vazia.
    */
   const [erroDeFotogrametria, setErroDeFotogrametria] = useState(false);
   /**
-   * Abrir a cena sem pedir a fotogrametria do Google.
-   *
-   * Ligado pelo botao da tela de erro. Nao e automatico de proposito: com
-   * cobertura e conexao normais a cidade do Google e a melhor experiencia, e
-   * cair sozinho para o modo reduzido esconderia do operador do plantao que
-   * algo esta errado na configuracao.
+   * Abrir a cena sem pedir a fotogrametria do Google. Ligado pelo botão da
+   * tela de erro — nunca automático, para não esconder do plantão que algo na
+   * configuração está errado.
    */
   const [semFotogrametria, setSemFotogrametria] = useState(false);
   const [ready, setReady] = useState(false);
   /** O GLB terminou de carregar (ou o projeto não tem modelo a esperar). */
   const [modeloPronto, setModeloPronto] = useState(false);
 
+  // --- Navegação --------------------------------------------------------------
+  const [tela, setTela] = useState<Tela>("home");
+  const secao: Secao = tela === "comparar" ? "unidades" : tela;
+  const com3D = TELAS_COM_3D.includes(tela);
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [panelOpen, setPanelOpen] = useState(true);
-  const [pavMode, setPavMode] = useState(false);
-  const [buscaMode, setBuscaMode] = useState(false);
   const [unidades, setUnidades] = useState<Unidade[]>([]);
   const [unidadeSelId, setUnidadeSelId] = useState<string | null>(null);
-  /** No celular, alterna a ficha cheia pela cena sem perder a unidade escolhida. */
-  const [mobileUnitScene, setMobileUnitScene] = useState(false);
   /**
-   * Como a unidade está sendo olhada — ver `ModoFoco`.
-   *
-   * Vive aqui, e não só no buscador, porque decide a NAVEGAÇÃO da câmera, que
-   * é prop do `Scene3D`. Em `vista` a câmera pousa dentro da torre.
+   * Como a unidade está sendo olhada — ver `ModoFoco`. Vive aqui porque decide
+   * a NAVEGAÇÃO da câmera, que é prop do `Scene3D`.
    */
   const [modoFoco, setModoFoco] = useState<ModoFoco>("volume");
   const [filtradas, setFiltradas] = useState<string[]>([]);
+  /** Até três unidades na tela Comparar plantas. */
+  const [comparacao, setComparacao] = useState<string[]>([]);
   const [season, setSeason] = useState<Season>("verao");
   const [timeMinutes, setTimeMinutes] = useState(780);
-  /** Ações menos frequentes, agrupadas no celular para liberar o topo da cena. */
-  const [acoesMoveisAbertas, setAcoesMoveisAbertas] = useState(false);
-  /** Entorno: 3D ou mapa. Vive aqui porque o mapa ocupa o viewport. */
-  const [modoEntorno, setModoEntorno] = useState<"3d" | "mapa">("3d");
-  /** Retorno do mapa usa uma espera curta, própria para o visitante. */
+  /** Retorno da localização no celular: espera curta, própria para o visitante. */
   const [voltandoDoMapa, setVoltandoDoMapa] = useState(false);
-  useEffect(() => {
-    setAcoesMoveisAbertas(false);
-  }, [pavMode, buscaMode, modoEntorno]);
   const [poiEntornoId, setPoiEntornoId] = useState<string | null>(null);
   /** Foto do cartão do POI aberta em tela cheia. */
   const [fotoAmpliada, setFotoAmpliada] = useState<string | null>(null);
-  /** Nível aberto na vista de pavimentos — de onde sai a planta no chão. */
+  /** Nível aberto (vista do pavimento de uma unidade) — de onde sai a planta no chão. */
   const [nivelAberto, setNivelAberto] = useState<NivelDef | null>(null);
+  /** Tour 360 de uma unidade, em tela cheia. */
+  const [tour360, setTour360] = useState<{ url: string; titulo: string } | null>(null);
+  const fecharTour360 = useCallback(() => setTour360(null), []);
+  const [telaCheia, setTelaCheia] = useState(false);
 
   /**
-   * Fotogrametria (a cidade em volta) ligada?
-   *
-   * O que pesa na cena é o streaming de tiles do Google, não o modelo do
-   * empreendimento: são milhares de triângulos e texturas chegando pela rede a
-   * cada movimento de câmera. Desligá-la deixa o prédio FLUTUANDO — leitura de
-   * maquete — com o espelho de vendas, as sombras e a simulação solar
-   * intactos. Se o projeto tiver mini mapa (`mapaBase`), ele entra no lugar da
-   * fotogrametria e o prédio ganha terreno de volta, sem o custo do streaming.
-   *
-   * Começa ligada, EXCETO no caminho abaixo (aparelho fraco com mini mapa).
-   *
-   * A restrição antiga era mais dura: começar desligada era proibido, porque a
-   * altura do terreno é medida contra a fotogrametria e sem ela o prédio
-   * nascia despencado. Isso deixou de valer quando a medição passou a ser
-   * guardada no projeto (`ProjectConfig.alturaSolo`) — com a cota conhecida,
-   * abrir sem a cidade é seguro. Onde a cota NÃO existe, a regra antiga
-   * continua em vigor, e é por isso que ela é uma das condições.
+   * Fotogrametria (a cidade em volta) ligada? Desligá-la deixa o prédio
+   * flutuando — leitura de maquete — com espelho de vendas, sombras e luz
+   * intactos. Começa ligada, exceto no aparelho fraco com mini mapa e cota
+   * salva (ver abaixo).
    */
   const [cidade3D, setCidade3D] = useState(true);
   /**
-   * A cidade esta REALMENTE em cena?
-   *
-   * `cidade3D` e so a preferencia do visitante no botao. No modo sem
-   * fotogrametria nao ha tileset nenhum, e a preferencia perde o objeto.
-   *
-   * A distincao nao e cosmetica: varias decisoes desta pagina — sombras,
-   * vias, superficies e, principalmente, o modo de navegacao — perguntam "ha
-   * cidade?" para escolher comportamento. Lendo a preferencia crua elas
-   * concluiam que sim, e agiam como se houvesse chao onde nao ha. Foi assim
-   * que a vista do andar voltou a entortar: a orbita se desligava esperando a
-   * navegacao padrao do Cesium assumir, e ela depende de um buffer de
-   * profundidade que, sem fotogrametria, esta vazio.
+   * A cidade está REALMENTE em cena? Sem fotogrametria não há tileset e a
+   * preferência perde o objeto — e sombras, vias e o modo de navegação
+   * perguntam por isto para escolher comportamento.
    */
   const cidadeEfetiva = cidade3D && !semFotogrametria;
-  const alternarCidade3D = () => setCidade3D((v) => !v);
 
   /**
-   * Aparelho fraco abre pelo MINI MAPA, não pela fotogrametria.
-   *
-   * O streaming do Google é, de longe, o item mais caro da cena: milhares de
-   * tiles pela rede antes de a vitrine poder abrir. O mini mapa é um GLB só,
-   * já em cache depois da primeira visita. Num tablet de plantão a diferença
-   * não é de conforto, é de conseguir ou não mostrar o empreendimento antes de
-   * o cliente perder o interesse.
-   *
-   * As TRÊS condições são obrigatórias, e cada uma protege de um estrago:
-   *
-   * - `mapaUrl` — sem mini mapa não há "modo mapa 3D" para abrir; seria abrir
-   *   no vazio cinza, que não é uma experiência melhor, é uma pior;
-   * - `alturaSolo` — sem a cota salva o prédio nasce no fallback de 3 m, ou
-   *   seja, enterrado (ver o campo em `ProjectConfig`);
-   * - aparelho leve — no computador do escritório a fotogrametria carrega
-   *   rápido e é o que há de mais convincente na vitrine. Não se troca isso
-   *   por velocidade que ninguém pediu.
-   *
-   * Decisão de ABERTURA apenas: o botão de camadas continua mandando, e o
-   * visitante liga a cidade quando quiser.
+   * Aparelho fraco abre pelo MINI MAPA, não pela fotogrametria. As três
+   * condições são obrigatórias: mini mapa (senão abre no vazio), cota salva
+   * (senão o prédio nasce enterrado) e aparelho leve.
    */
   const aberturaDecididaRef = useRef(false);
   useEffect(() => {
@@ -185,24 +137,7 @@ export default function IvmViewPage() {
     if (c.mapaUrl && c.alturaSolo != null && ehAparelhoLeve()) setCidade3D(false);
   }, [project]);
 
-  /**
-   * Celular em pé, com o painel aberto.
-   *
-   * Nesse arranjo o painel é uma FOLHA INFERIOR: ele ocupa a parte de baixo da
-   * tela, onde a barra solar também vive. Os dois no mesmo lugar significa um
-   * por cima do outro — e quem perde é a barra, que fica inalcançável atrás da
-   * folha. Como a leitura é o que se está fazendo ali, a barra sai de cena
-   * enquanto a folha está aberta.
-   */
-  const [folhaEmbaixo, setFolhaEmbaixo] = useState(false);
   const [mobileViewport, setMobileViewport] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 767px) and (orientation: portrait)");
-    const ver = () => setFolhaEmbaixo(mq.matches);
-    ver();
-    mq.addEventListener("change", ver);
-    return () => mq.removeEventListener("change", ver);
-  }, []);
   useEffect(() => {
     const mq = window.matchMedia(
       "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)",
@@ -213,18 +148,22 @@ export default function IvmViewPage() {
     return () => mq.removeEventListener("change", ver);
   }, []);
 
+  useEffect(() => {
+    const ver = () => setTelaCheia(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", ver);
+    return () => document.removeEventListener("fullscreenchange", ver);
+  }, []);
+  const alternarTelaCheia = () => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void document.documentElement.requestFullscreen?.().catch(() => {});
+  };
+
   const sceneRef = useRef<Scene3DHandle>(null);
 
   /**
-   * A vitrine trava a rolagem da PÁGINA enquanto estiver aberta.
-   *
-   * Ela é uma tela cheia com painéis que rolam por dentro; a página em si não
-   * tem por que deslizar. No tablet isso não era detalhe: a barra solar e os
-   * botões do rodapé ficavam escondidos atrás da barra do navegador, e só
-   * apareciam arrastando a tela — que ao mesmo tempo tirava a cena do lugar.
-   *
-   * Posto e retirado aqui, e não no CSS global, porque /admin e editor precisam
-   * rolar normalmente.
+   * A vitrine trava a rolagem da PÁGINA: é uma tela cheia com painéis que
+   * rolam por dentro. No tablet, a rolagem escondia o rodapé atrás da barra do
+   * navegador. Posto aqui, e não no CSS global, porque /admin e editor rolam.
    */
   useEffect(() => {
     document.body.classList.add("sem-rolagem");
@@ -255,24 +194,15 @@ export default function IvmViewPage() {
   }, [slug, incorporadoraSlug]);
 
   /**
-   * Título da aba e metadados de compartilhamento, por PROJETO.
-   *
-   * O documento estático traz um título genérico — ele é o mesmo para /admin,
-   * para o editor e para a vitrine de qualquer incorporadora, então não pode
-   * carregar o nome de um empreendimento. Só aqui se sabe qual projeto está
-   * aberto.
-   *
-   * Importa além da aba: é o que aparece quando o corretor manda o link no
-   * WhatsApp. Com o nome fixo do piloto, todo projeto compartilhado anunciava
-   * outro empreendimento, em outra cidade.
+   * Título da aba e metadados de compartilhamento, por PROJETO — é o que
+   * aparece quando o corretor manda o link no WhatsApp. O favicon continua o
+   * da plataforma: ele identifica a ferramenta, não o empreendimento.
    */
   useEffect(() => {
     if (!project) return;
     const emp = project.data.empreendimento;
     const local = emp.neighborhood?.trim();
     const titulo = local ? `${project.name} | ${local}` : project.name;
-    // `Empreendimento` não tem campo de descrição livre; o endereço é o que há
-    // de mais próximo de uma frase útil no compartilhamento.
     const onde = [emp.address?.trim(), local].filter(Boolean).join(" · ");
     const descricao = `Tour interativo 3D${onde ? ` — ${onde}` : ""}.`;
 
@@ -284,18 +214,6 @@ export default function IvmViewPage() {
     meta('meta[name="description"]', descricao);
     meta('meta[property="og:title"]', titulo);
     meta('meta[property="og:description"]', descricao);
-
-    /*
-      O ÍCONE da aba não muda por projeto — é o símbolo da plataforma, um
-      arquivo só em `/favicon.png`. Cheguei a trocá-lo pelo símbolo do
-      empreendimento e estava errado: o favicon identifica a FERRAMENTA, e é o
-      que faz o corretor reconhecer suas abas entre dezenas de outras. Quem
-      identifica o empreendimento é o logo — na capa de carregamento, no painel
-      e no marcador do mapa — e o título, logo acima.
-    */
-
-    // Sair da vitrine devolve o genérico: sem isto, navegar para o editor na
-    // mesma aba deixava o nome do último projeto visitado no título.
     return () => { document.title = "IVM Lite"; };
   }, [project]);
 
@@ -311,14 +229,16 @@ export default function IvmViewPage() {
     return () => clearInterval(t);
   }, [project]);
 
+  const emp = project?.data.empreendimento ?? null;
   const building = useMemo(() => (project ? projectToBuilding3D(project.data) : null), [project]);
   const mapaBase = useMemo(() => (project ? projectMapaBase(project.data) : null), [project]);
   const buildings = useMemo(() => (building ? [building] : []), [building]);
-  const emps = useMemo(
-    () => (project ? [project.data.empreendimento] : []),
-    [project],
-  );
   const tz = project?.data.config.tzOffset ?? -3;
+  const tipologias = useMemo(() => emp?.tipologias ?? [], [emp]);
+  const unidadesCompletas = useMemo(
+    () => unidadesComTipologia(unidades, tipologias),
+    [unidades, tipologias],
+  );
 
   const utcDate = useMemo(() => {
     const [y, m, d] = seasonDate(season, new Date().getFullYear());
@@ -329,30 +249,14 @@ export default function IvmViewPage() {
     () => getSunReadout(utcDate, building?.lat ?? -8.9398, building?.lng ?? -35.1696),
     [utcDate, building],
   );
-  const sunTimes = useMemo(
-    () => getSunTimesLocal(utcDate, building?.lat ?? -8.9398, building?.lng ?? -35.1696, tz),
-    [utcDate, building, tz],
-  );
 
-  // Identidade visual do projeto: aplicada via CSS vars + overrides escopados,
-  // para os componentes existentes (que usam a paleta do Quinta) herdarem a
-  // marca de cada IVM Lite sem refatoração.
   const brand = project?.data.config.branding ?? {};
-  const brandBg = brand.bg || "#04141d";
-  const brandPrimary = brand.primary || "#2dd4bf";
-
   const torres = useMemo(() => (project ? projectTorres(project.data) : []), [project]);
-
   const pavCfg = useMemo(() => (project ? projectPavCfg(project.data) : undefined), [project]);
 
   /**
-   * Centro da torre do pavimento aberto, em X/Y do modelo — o eixo da órbita
-   * na vista de andar (ver `orbitaAlvo` no `Scene3D`).
-   *
-   * Num projeto de várias torres o centro do EMPREENDIMENTO fica entre elas,
-   * e girar por ali afastaria a torre visitada em vez de examiná-la. Sem
-   * `torreId` no nível — projeto de bloco único — devolve nulo e a cena usa o
-   * centro do volume, que ali é a mesma coisa.
+   * Centro da torre do pavimento aberto — o eixo da órbita na vista de andar.
+   * Num projeto de várias torres o centro do EMPREENDIMENTO fica entre elas.
    */
   const centroDaTorreAberta = useMemo(() => {
     const id = nivelAberto?.torreId;
@@ -365,24 +269,18 @@ export default function IvmViewPage() {
 
   // --- Ambiente ---------------------------------------------------------------
   const ambiente = useMemo(() => (project ? projectAmbiente(project.data) : null), [project]);
-
-  /**
-   * A cena projeta sombras no modo em que está AGORA? (ver `AmbienteCfg.sombras`)
-   *
-   * A mesma regra que o `Scene3D` aplica ao shadow map, repetida aqui porque
-   * ela decide também o que a INTERFACE mostra: sem sombra, a barra solar move
-   * um sol que não deixa marca nenhuma na tela. O visitante arrasta das 6h às
-   * 18h, nada acontece, e o controle passa a parecer quebrado — pior que
-   * ausente.
-   */
-  const sombrasAtivas = ambiente?.sombras !== "nunca"
-    && !(ambiente?.sombras === "com-cidade" && !cidadeEfetiva);
-  const [noturno, setNoturno] = useState(false);
   const [heading, setHeading] = useState(0);
   const [capturando, setCapturando] = useState(false);
 
+  /**
+   * Noite segue a HORA, não um botão: o escurecimento da cena e o realce
+   * noturno do modelo acompanham o controle de luz.
+   */
+  const noite = ehNoite(timeMinutes);
+  const noturno = !!ambiente?.noturnoDisponivel && noite;
+
   // Abre na luz definida no editor. Só na carga do projeto: depois disso quem
-  // manda é o visitante (barra solar ou botão de noite).
+  // manda é o visitante.
   useEffect(() => {
     if (!ambiente) return;
     setTimeMinutes(ambiente.horaPadrao);
@@ -390,12 +288,10 @@ export default function IvmViewPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?.id]);
 
-  /** Dia/noite: além do realce da cena, move o relógio solar. */
+  /** A lua leva o relógio para a hora noturna do projeto, e volta. */
   function alternarNoturno() {
     if (!ambiente) return;
-    const indo = !noturno;
-    setNoturno(indo);
-    setTimeMinutes(indo ? ambiente.horaNoturna : ambiente.horaPadrao);
+    setTimeMinutes(noite ? ambiente.horaPadrao : ambiente.horaNoturna);
   }
 
   function capturarTela() {
@@ -413,30 +309,9 @@ export default function IvmViewPage() {
   const views = useMemo(() => project?.data.config.sectionCameras ?? [], [project]);
   const principal = useMemo(() => vistaPrincipal(views), [views]);
   const [tourAtivo, setTourAtivo] = useState(false);
-  /** Nome da vista em curso no tour — só o título, em destaque na cena. */
+  /** Nome da vista em curso no tour — a legenda da cinemática. */
   const [tituloVista, setTituloVista] = useState<string | null>(null);
   const tourRef = useRef<TourHandle | null>(null);
-
-  /**
-   * Abre a experiência 3D de unidades — o mesmo destino, venha de onde vier.
-   *
-   * Havia três portas para cá (a barra, a gaveta e o clique numa unidade) e
-   * cada uma fazia um subconjunto diferente do trabalho: só a de pavimentos
-   * aplicava o enquadramento salvo, e a gaveta não mexia na câmera nenhuma —
-   * clicar nela parecia não fazer nada, porque a cena continuava onde estava.
-   */
-  function abrirUnidades(unidadeId?: string) {
-    pararTour();
-    setModoEntorno("3d");
-    setMobileUnitScene(false);
-    setUnidadeSelId(unidadeId ?? null);
-    // Antes de trocar de vista: a torre já aparece enquadrada quando a lista
-    // abre, em vez de a câmera deslizar por baixo do painel depois.
-    const cam = project?.data.config.cameraUnidades;
-    if (cam) sceneRef.current?.flyToCamera(cam, 1.4);
-    setBuscaMode(true);
-    setPanelOpen(false);
-  }
 
   function pararTour() {
     tourRef.current?.parar();
@@ -445,17 +320,12 @@ export default function IvmViewPage() {
     setTituloVista(null);
   }
 
-  /**
-   * Volta ao enquadramento de abertura. Usa a vista marcada como principal no
-   * editor; se o projeto não tiver vistas salvas, apenas reenquadra o prédio.
-   */
+  /** Volta ao enquadramento de abertura (a vista principal do editor). */
   function irParaPrincipal() {
     pararTour();
     const cena = sceneRef.current;
     if (!cena) return;
     cena.cutAtFloor(principal?.cutFloorZ ?? null);
-    // A guarda de cota nao confiavel vive no `flyToCamera` do Scene3D:
-    // vale para o tour e para as demais cameras salvas, nao so para esta.
     if (principal) cena.flyToCamera(principal, principal.duracao ?? 2);
     else cena.frameBuilding();
   }
@@ -469,10 +339,6 @@ export default function IvmViewPage() {
       { flyToCamera: (c, d) => cena.flyToCamera(c, d), cutAtFloor: (z) => cena.cutAtFloor(z) },
       views,
       {
-        // Título da vista em curso: é a legenda da cinemática. Sem ela o
-        // visitante vê a câmera passear e não sabe o que está sendo mostrado —
-        // "Fachada mar" e "Rooftop" são a diferença entre um voo bonito e uma
-        // apresentação.
         aoEntrar: (vista) => setTituloVista(vista.name),
         aoTerminar: () => {
           tourRef.current = null;
@@ -483,25 +349,57 @@ export default function IvmViewPage() {
     );
   }
 
-  // O tour move a câmera por temporizador: precisa parar ao entrar nos modos que
+  const buscaMode = tela === "unidades";
+  // O tour move a câmera por temporizador: para ao entrar nas unidades, que
   // controlam a câmera por conta própria, e ao sair da página.
   useEffect(() => {
-    if (pavMode || buscaMode) pararTour();
-  }, [pavMode, buscaMode]);
+    if (buscaMode) pararTour();
+  }, [buscaMode]);
   useEffect(() => () => tourRef.current?.parar(), []);
 
   /**
-   * Espelho de vendas em 3D: só existe no modo busca e reflete o filtro atual.
-   *
-   * Com uma unidade escolhida, o espelho ISOLA: só ela fica na cena, colorida,
-   * e as demais somem — inclusive as fantasmas. Uma unidade no meio de trezentas
-   * caixas do mesmo tamanho não se distingue por realce nenhum; tirar as outras
-   * da frente é o que efetivamente a mostra.
-  */
+   * Troca de seção. A cena fica montada; o que muda é o cartão e, ao sair das
+   * unidades, o estado de foco que elas deixaram na cena.
+   */
+  function irPara(destino: Tela) {
+    if (destino === tela) return;
+    const saindoDasUnidades = (tela === "unidades" || tela === "comparar")
+      && destino !== "unidades" && destino !== "comparar";
+    if (saindoDasUnidades) {
+      setUnidadeSelId(null);
+      setModoFoco("volume");
+      setNivelAberto(null);
+      sceneRef.current?.cutAtFloor(null);
+      sceneRef.current?.frameBuilding();
+    }
+    if (destino === "unidades" && tela !== "comparar") {
+      // A torre já aparece enquadrada quando a lista abre.
+      const cam = project?.data.config.cameraUnidades;
+      if (cam) sceneRef.current?.flyToCamera(cam, 1.4);
+    }
+    if (tela === "local") {
+      setPoiEntornoId(null);
+      // O mapa do celular liberou o contexto WebGL: a cena volta do zero.
+      if (mobileViewport) setVoltandoDoMapa(true);
+    }
+    if (destino === "local" && mobileViewport) {
+      setVoltandoDoMapa(false);
+      // A cena é desmontada no celular (ver o `Scene3D` abaixo); marcá-la como
+      // pendente garante a capa certa na volta.
+      setReady(false);
+      setModeloPronto(false);
+    }
+    setTela(destino);
+  }
+
+  /**
+   * Espelho de vendas em 3D: só existe nas unidades e reflete o filtro. Com
+   * uma unidade escolhida, o espelho ISOLA — só ela fica na cena.
+   */
   const unitBoxes = useMemo(() => {
     if (!buscaMode || !building || !pavCfg || unidades.length === 0) return [];
     const isolando = !!unidadeSelId;
-    const boxes = buildUnitBoxes({
+    return buildUnitBoxes({
       buildingId: building.id,
       unidades,
       torres,
@@ -509,32 +407,14 @@ export default function IvmViewPage() {
       visiveis: isolando ? new Set([unidadeSelId as string]) : new Set(filtradas),
       selecionadaId: unidadeSelId,
       mostrarFantasmas: !isolando,
-      // O modelo fica íntegro (ver `aplicarAparenciaModelo`) e são as caixas
-      // que ficam translúcidas: assim a fachada continua legível por trás
-      // delas e o cliente enxerga em que altura e em que face a unidade está.
-      // A escolhida volta a ser opaca — é a que ele quer ver.
+      // O modelo fica íntegro e são as caixas que ficam translúcidas.
       opacidade: 0.5,
     });
-    return boxes;
   }, [buscaMode, building, pavCfg, unidades, torres, filtradas, unidadeSelId]);
 
-  const unidadeEmCena = unidadeSelId
-    ? unidades.find((u) => u.id === unidadeSelId) ?? null
-    : null;
-
-  function mostrarCenaDaUnidadeNoMobile() {
-    if (typeof window === "undefined") return;
-    if (window.matchMedia(
-      "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)",
-    ).matches) {
-      setMobileUnitScene(true);
-    }
-  }
-
   /**
-   * A experiência está pronta quando: o projeto chegou, a cena montou e — se o
-   * projeto tem modelo — o GLB terminou de carregar. Sem `modelUrl` não há o
-   * que esperar, senão a capa nunca sairia num projeto que ainda não subiu o 3D.
+   * A experiência está pronta quando o projeto chegou, a cena montou e — se o
+   * projeto tem modelo — o GLB terminou de carregar.
    */
   const temModelo = !!project?.data.config.modelUrl;
   const carregando = !project || !ready || (temModelo && !modeloPronto);
@@ -542,14 +422,7 @@ export default function IvmViewPage() {
     if (!carregando) setVoltandoDoMapa(false);
   }, [carregando]);
 
-  /**
-   * Segundos parado na tela de carregamento.
-   *
-   * Serve ao diagnóstico: passado um tempo razoável, o que era "carregando"
-   * vira "algo não chegou", e a tela precisa dizer O QUÊ. Sem isso a única
-   * saída era o console do navegador — que num tablet não existe, e é onde a
-   * vitrine mais roda em plantão de vendas.
-   */
+  /** Segundos parado na capa — passado um tempo, a tela diz o que não chegou. */
   const [segundosCarregando, setSegundosCarregando] = useState(0);
   useEffect(() => {
     if (!carregando) return;
@@ -558,13 +431,8 @@ export default function IvmViewPage() {
   }, [carregando]);
 
   /**
-   * Remonta a cena do zero.
-   *
-   * O `key` no `Scene3D` é o que faz o React destruir o componente e criar
-   * outro: a limpeza do efeito destrói o Viewer e o contexto WebGL, e o novo
-   * refaz o pedido da fotogrametria. Recarregar a PÁGINA também funcionaria,
-   * mas jogaria fora o projeto que já chegou do banco e a marca já aplicada —
-   * o visitante veria a tela piscar do zero para consertar algo que não é dele.
+   * Remonta a cena do zero pela `key` do `Scene3D`, sem recarregar a página e
+   * jogar fora o projeto que já chegou.
    */
   const [tentativaCena, setTentativaCena] = useState(0);
   const recarregarCena = () => {
@@ -573,20 +441,12 @@ export default function IvmViewPage() {
     setReady(false);
     setModeloPronto(false);
     setSegundosCarregando(0);
-    // "Tentar de novo" significa tentar o Google OUTRA VEZ: se o visitante ja
-    // estava no modo reduzido, este botao e o caminho de volta.
+    // "Tentar de novo" é tentar o Google OUTRA VEZ.
     setSemFotogrametria(false);
     setTentativaCena((n) => n + 1);
   };
 
-  /**
-   * Entrar no 3D com o entorno do PROJETO no lugar da cidade do Google.
-   *
-   * Remonta a cena pela mesma chave do `recarregarCena`, mudando so uma coisa:
-   * a fotogrametria nao e pedida. O empreendimento, o mini mapa (`mapaBase`),
-   * o espelho de vendas e a simulacao solar seguem inteiros — nada disso
-   * dependia do Google.
-   */
+  /** Entrar no 3D com o entorno do PROJETO no lugar da cidade do Google. */
   const entrarSemFotogrametria = () => {
     setTilesError(null);
     setErroDeFotogrametria(false);
@@ -598,83 +458,69 @@ export default function IvmViewPage() {
   };
 
   const etapaCarregamento = !project
-    ? "Abrindo o empreendimento..."
+    ? "Abrindo o empreendimento"
     : !ready
-      ? "Carregando a fotogrametria..."
-      : "Carregando o modelo do empreendimento...";
+      ? "Carregando a fotogrametria"
+      : "Carregando o modelo";
+
+  // --- Conteúdo das seções ----------------------------------------------------
+  const lazer = useMemo(() => {
+    if (!emp) return [];
+    // Amenidade repetida nos destaques não vira ambiente duas vezes.
+    const destaques = new Set(normalizarLista(emp.highlights).map((h) => h.titulo.toLowerCase()));
+    return normalizarLista(emp.amenities).filter((a) => !destaques.has(a.titulo.toLowerCase()));
+  }, [emp]);
+  const plantasGaleria = useMemo(
+    () => (emp ? plantasDeTipologia(emp).map((p) => ({ url: p.url, legenda: p.area })) : []),
+    [emp],
+  );
+  const temGaleria = !!emp && ((emp.galeria?.length ?? 0) + (emp.videos?.length ?? 0) + plantasGaleria.length > 0);
+  const temPois = (emp?.pontosDeInteresse?.length ?? 0) > 0;
+
+  const nav: ItemNav[] = [
+    { id: "home", rotulo: "Home", icone: Home },
+    { id: "projeto", rotulo: "Projeto", icone: ClipboardList },
+    ...(lazer.length ? [{ id: "lazer" as const, rotulo: "Lazer", icone: Trees }] : []),
+    ...(unidades.length ? [{ id: "unidades" as const, rotulo: "Unidades", icone: Building2 }] : []),
+    ...(temPois ? [{ id: "local" as const, rotulo: "Localização", icone: MapPin }] : []),
+    ...(temGaleria ? [{ id: "galeria" as const, rotulo: "Galeria", icone: Images }] : []),
+  ];
+  // O celular tem ordem e nomes próprios: sem Home, e "Entorno" no fim.
+  const ordemMovel: Secao[] = ["projeto", "lazer", "unidades", "galeria", "local"];
+  const navMovel = ordemMovel
+    .map((id) => nav.find((n) => n.id === id))
+    .filter((n): n is ItemNav => !!n)
+    .map((n) => (n.id === "local" ? { ...n, rotulo: "Entorno" } : n));
 
   if (notFound) {
     return (
-      <div className="vitrine flex h-[100dvh] items-center justify-center bg-[var(--v-bg)] text-[var(--v-ink-2)]">
-        IVM Lite não encontrado ou não publicado.
+      <div className="vitrine flex h-[100dvh] items-center justify-center bg-[#101410] px-6 text-center">
+        <p className="vd-rotulo text-[var(--vd-pedra)]">IVM Lite não encontrado ou não publicado.</p>
       </div>
     );
   }
 
-  // Plantas da vitrine: tipologias (unidade) + níveis (pavimento), com o
-  // `emp.plantas` legado só cobrindo o que sobrou. Ver `plantasDoProjeto`.
-  const plantas = project
-    ? plantasDoProjeto(
-        project.data.empreendimento,
-        niveisDe(project.data.config.pavimentosCfg ?? {}, project.data.config.niveis),
-      )
-    : [];
+  const cenaMontada = !!apiKey && !!building && !(mobileViewport && tela === "local");
+  const telaClara = tela === "local" || tela === "comparar";
+  const semErro = !tilesError && !semChave;
 
   return (
-    <div
-      className="vitrine ivm-brand relative h-[100dvh] w-full overflow-hidden"
-      style={
-        {
-          background: brandBg,
-          "--ivm-bg": brandBg,
-          "--ivm-primary": brandPrimary,
-          // O acento do sistema da vitrine vem da marca do projeto: um só
-          // ponto de entrada, em vez de `text-teal-*` remapeado por !important.
-          "--v-accent": brandPrimary,
-          "--v-accent-soft": `color-mix(in srgb, ${brandPrimary} 12%, transparent)`,
-          "--ivm-font-display": brand.fontDisplay || "",
-          "--ivm-font-sans": brand.fontSans || "",
-        } as React.CSSProperties
-      }
-    >
-      {/* Marca do projeto: remapeia a paleta base (Quinta) para as cores/fontes
-          deste IVM Lite, sem precisar refatorar cada componente. */}
-      <style>{`
-        .ivm-brand [class*="bg-[#04141d]"] {
-          background-color: color-mix(in srgb, var(--ivm-bg) 90%, transparent) !important;
-        }
-        .ivm-brand .text-teal-300,
-        .ivm-brand .text-teal-400,
-        .ivm-brand .text-teal-500 { color: var(--ivm-primary) !important; }
-        .ivm-brand .bg-teal-400,
-        .ivm-brand .bg-teal-500,
-        .ivm-brand [class*="bg-teal-500/"] { background-color: var(--ivm-primary) !important; }
-        .ivm-brand .accent-teal-400 { accent-color: var(--ivm-primary) !important; }
-        .ivm-brand [class*="ring-teal-"] { --tw-ring-color: var(--ivm-primary) !important; }
-        ${brand.fontSans ? `.ivm-brand { font-family: ${brand.fontSans}, sans-serif; }` : ""}
-        ${brand.fontDisplay ? `.ivm-brand .font-serif { font-family: ${brand.fontDisplay}, serif; }` : ""}
-      `}</style>
-
-      {apiKey && building && !(mobileViewport && modoEntorno === "mapa") && (
+    <div className="vitrine relative h-[100dvh] w-full overflow-hidden bg-[#101410]">
+      {cenaMontada && (
         <Scene3D
           /* Ver `recarregarCena`: trocar a chave é o que remonta a cena. */
           key={tentativaCena}
           ref={sceneRef}
-          apiKey={apiKey}
+          apiKey={apiKey as string}
           buildings={buildings}
           solarUtc={utcDate}
           solarAltitude={sun.altitude}
           selectedId={selectedId}
-          onSelect={(id) => {
-            setSelectedId(id);
-            if (id) setPanelOpen(true);
-          }}
+          onSelect={setSelectedId}
           onReady={() => setReady(true)}
-          onModelLoading={(carregando) => { if (!carregando) setModeloPronto(true); }}
-          /* Vitrine sem o prédio não é vitrine: é o mapa do bairro. Falhar aqui
-             vale a tela de erro — que traz o "Tentar de novo" — em vez de abrir
-             a cena e deixar o visitante procurar um empreendimento que não
-             chegou. */
+          onModelLoading={(c) => { if (!c) setModeloPronto(true); }}
+          /* Vitrine sem o prédio não é vitrine: falhar aqui vale a tela de
+             erro, com o "Tentar de novo". */
           onModelError={(msg) => {
             setErroDeFotogrametria(false);
             setTilesError(`O modelo 3D do empreendimento não carregou. ${msg}`);
@@ -685,42 +531,18 @@ export default function IvmViewPage() {
           }}
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
-          /* No modo reduzido a cidade fica desligada tambem no estado da
-             interface, senao o botao da barra ofereceria ligar algo que nao
-             foi baixado. */
           cidade={cidadeEfetiva}
           fotogrametria={!semFotogrametria}
           sombras={ambiente?.sombras}
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
           /*
-            Órbita em toda vista que OLHA DE FORA.
-
-            Ela era desligada com unidade ou pavimento aberto, porque o pivô
-            era sempre o centro do prédio e de perto isso jogava o alvo para
-            fora da tela. Agora o pivô acompanha o foco (`orbitaAlvo`), e
-            examinar de perto é onde a navegação de maquete mais vale.
-
-            `pavMode` fica fora: ali o palco é o painel, não a cena.
-
-            `vista` é o caso torto, e a razão é do Cesium. A cena roda com
-            `globe: false`, e sem globo o controlador de câmera tira o pivô
-            EXCLUSIVAMENTE do buffer de profundidade:
-
-                if (!defined(globe)) return clone(depthIntersection, result);
-                                          // ScreenSpaceCameraController.js
-
-            Com a fotogrametria ligada há chão no buffer sob o cursor e a
-            navegação padrão funciona — é o "modo cesium normal". Sem ela, o
-            cursor cai no vazio, o pivô sai indefinido e o arraste dispara: o
-            "modo 3D bugado". Por isso, sem cidade, a órbita continua LIGADA
-            também em `vista` — com o pivô à frente da câmera (`naCamera`), que
-            não depende de superfície nenhuma para existir.
-
-            Com cidade, `vista` segue na navegação padrão, que já funciona e
-            pivota no que o visitante aponta.
+            Órbita em toda vista que OLHA DE FORA. Em `vista` a câmera está
+            dentro da torre: com cidade, a navegação padrão do Cesium pivota no
+            chão sob o cursor; sem cidade o buffer de profundidade está vazio e
+            a órbita continua ligada, com o pivô à frente da câmera.
           */
-          orbitar={!pavMode && (modoFoco !== "vista" || !cidadeEfetiva)}
+          orbitar={modoFoco !== "vista" || !cidadeEfetiva}
           orbitaAlvo={{
             unidadeId: unidadeSelId,
             pavimentoZ: nivelAberto?.cutZ ?? null,
@@ -732,9 +554,7 @@ export default function IvmViewPage() {
           /* Na vitrine o recorte vale SEMPRE: não há edição a proteger. */
           recorteTerreno={project?.data.config.recorteTerreno ?? null}
           {...(() => {
-            // A planta só entra quando o nível aberto tem tudo: desenho,
-            // permissão de deitar no chão, cota e retângulo. Faltando qualquer
-            // um, o pavimento segue como antes.
+            // A planta só deita no chão quando o nível aberto tem tudo.
             const n = nivelAberto;
             const pa = n?.plantaArea ?? n?.area;
             if (!building || !n?.plantaNoChao || !n.plantaUrl
@@ -749,10 +569,8 @@ export default function IvmViewPage() {
               },
             };
           })()}
-          /* Vias, superfícies e POIs acompanham a cidade: os três existem
-             para situar o empreendimento NO ENTORNO, e sem a fotogrametria
-             perdem o chão a que se referem — viram linhas e pinos boiando no
-             vazio, pior que ausentes, porque parecem defeito. */
+          /* Vias e superfícies existem para situar o prédio NO ENTORNO: sem a
+             fotogrametria viram linhas boiando no vazio. */
           vias={cidadeEfetiva ? (project?.data.config.entorno?.vias ?? null) : null}
           corVia={project?.data.config.entorno?.corVia}
           superficies={cidadeEfetiva ? (project?.data.config.entorno?.superficies ?? null) : null}
@@ -760,180 +578,153 @@ export default function IvmViewPage() {
         />
       )}
 
-      {/*
-        Mapa do entorno NO VIEWPORT — por cima da cena 3D, não dentro do painel.
-        São duas leituras do mesmo lugar disputando o mesmo palco: espremer o
-        mapa num retângulo de 256px dentro da lateral desperdiçava justamente o
-        que ele tem de melhor, que é a escala do entorno.
-      */}
-      {project && modoEntorno === "mapa" && (
-        <div className="absolute inset-0 z-20" data-testid="mapa-entorno-viewport">
-          <Suspense fallback={
-            <div className="grid h-full w-full place-items-center bg-[var(--v-surface-3)]">
-              <Loader2 className="h-6 w-6 animate-spin text-[var(--v-ink-3)]" />
-            </div>
-          }>
-            <MapaEntorno
-              centro={{ lat: building?.lat ?? emps[0].lat, lng: building?.lng ?? emps[0].lng }}
-              nomeCentro={project.name}
-              pois={(project.data.empreendimento.pontosDeInteresse ?? []).map((p, i) => ({
-                id: p.id ?? `poi-${i}`,
-                name: p.name,
-                categoria: p.categoria,
-                lat: p.lat,
-                lng: p.lng,
-                rota: p.rota,
-              }))}
-              estiloCategorias={project.data.empreendimento.estiloCategoriaPoi}
-              cor={brandPrimary}
-              selecionadoId={poiEntornoId}
-              onSelecionar={setPoiEntornoId}
-              className="h-full w-full"
-            />
-          </Suspense>
+      {/* Escurecimento noturno: segue a hora do controle de luz. */}
+      {com3D && semErro && (
+        <div className="vd-noite" style={{ opacity: noite ? 1 : 0 }} aria-hidden="true" />
+      )}
+
+      {/* ---- Telas que cobrem a cena ---- */}
+      {emp && semErro && tela === "lazer" && <LazerView itens={lazer} />}
+
+      {emp && semErro && tela === "galeria" && (
+        <GaleriaView
+          imagens={emp.galeria ?? []}
+          videos={emp.videos ?? []}
+          plantas={plantasGaleria}
+          ordemCategorias={emp.categoriasGaleria}
+          onFechar={() => irPara("home")}
+        />
+      )}
+
+      {emp && tela === "local" && (
+        <LocalView
+          emp={emp}
+          centro={{ lat: building?.lat ?? emp.lat, lng: building?.lng ?? emp.lng }}
+          nome={project?.name ?? emp.name}
+          poiSelId={poiEntornoId}
+          onPoiSel={setPoiEntornoId}
+          onFoto={setFotoAmpliada}
+          onFechar={() => irPara("home")}
+        />
+      )}
+
+      {emp && semErro && tela === "comparar" && (
+        <ComparadorPlantas
+          unidades={unidadesCompletas}
+          ids={comparacao}
+          selecionadaId={unidadeSelId}
+          torres={torres}
+          logoUrl={brand.logoUrl}
+          plantaDe={(u) => plantaDaUnidade(u, tipologias)}
+          tourDe={(u) => tipologias.find((t) => t.id === u.tipologiaId || t.nome === u.tipologia)?.tour360Url}
+          contatoDe={(u) => canaisDeContato(project?.data.config.contato, project?.name ?? "", u.numero)[0]}
+          onAdicionar={(id) => setComparacao((c) => (c.includes(id) ? c : [...c, id].slice(-MAX_COMPARACAO)))}
+          onRemover={(id) => setComparacao((c) => c.filter((x) => x !== id))}
+          onSelecionar={setUnidadeSelId}
+          onTour={(url, titulo) => setTour360({ url, titulo })}
+          onFechar={() => irPara("unidades")}
+        />
+      )}
+
+      {/* ---- Sobre a cena: marca, ações, bússola, legenda do tour ---- */}
+      {com3D && semErro && (
+        <div className="pointer-events-none absolute left-5 top-5 z-30 max-w-[calc(100%-120px)]">
+          <div className="vd-sombra-texto flex items-center gap-2.5">
+            <Simbolo url={brand.logoUrl} tamanho={26} />
+            <span className="vd-rotulo truncate">{project?.name}</span>
+          </div>
+          {tela === "home" && (
+            <p className="vd-orbitar vd-micro vd-sombra-texto mt-2 !text-[9px] text-[var(--vd-pedra)]">
+              Arraste para orbitar
+            </p>
+          )}
         </div>
       )}
 
-      {/* Bússola */}
-      {project && modoEntorno !== "mapa" && !tilesError && ambiente?.mostrarBussola && (
+      {com3D && semErro && ambiente?.mostrarBussola && (
         <Bussola heading={heading} onClick={() => sceneRef.current?.flyToCamera({
           ...(sceneRef.current.getCurrentCamera() ?? { lng: 0, lat: 0, height: 500, pitch: -30, roll: 0, heading: 0 }),
           heading: 0,
         }, 1)} />
       )}
 
-      {project && !tilesError && !pavMode && !buscaMode && (
-        <EmpreendimentoPanel
-          empreendimentos={emps}
-          selectedId={selectedId}
-          onSelect={(id) => {
-            setSelectedId(id);
-            if (id) setPanelOpen(true);
-          }}
-          isOpen={panelOpen}
-          onToggle={() => setPanelOpen((o) => !o)}
-          onVerUnidades={() => abrirUnidades()}
-          onOpenPavimentos={() => {
-            // Nível anterior fora: sair e voltar da vista de pavimentos deixava
-            // a planta do último andar deitada no chão do prédio inteiro.
-            setNivelAberto(null);
-            const cam = project?.data.config.cameraUnidades;
-            if (cam) sceneRef.current?.flyToCamera(cam, 1.4);
-            setPavMode(true);
-          }}
-          onSelectUnit={(id) => {
-            abrirUnidades(id);
-            setPanelOpen(false);
-          }}
-          unidades={unidades}
-          torres={torres}
-          logoUrl={brand.logoUrl}
-          plantas={plantas}
-          entorno={{
-            modo: modoEntorno,
-            onModo: setModoEntorno,
-            poiSelId: poiEntornoId,
-            onPoiSel: setPoiEntornoId,
-            onAbrirMapaMobile: () => {
-              setPoiEntornoId(null);
-              setVoltandoDoMapa(false);
-              // O mapa mobile libera o contexto WebGL do Cesium. Marcar a cena
-              // como pendente garante feedback correto quando o visitante voltar.
-              setReady(false);
-              setModeloPronto(false);
-              setModoEntorno("mapa");
-              setPanelOpen(false);
-            },
-          }}
-          /* Sem cidade não há entorno a mostrar: a categoria some da gaveta. */
-          cidadeVisivel={cidadeEfetiva}
-        />
-      )}
-
-      {/*
-        Título da vista do tour.
-
-        Centralizado e alto, longe dos painéis: é legenda de cinema, não
-        controle. Só o título, como pedido — duração, ordem e o resto do
-        aparato do tour são coisa do editor; na vitrine seriam ruído sobre o que
-        se está tentando mostrar.
-
-        `pointer-events-none` porque ele passa por cima da cena: um retângulo
-        invisível engolindo cliques no meio da tela seria pior que não ter
-        legenda nenhuma.
-      */}
-      {tituloVista && !pavMode && !buscaMode && (
-        <div className="pointer-events-none absolute left-1/2 top-16 z-30 -translate-x-1/2 px-4">
-          {/* `key` no título: reinicia a animação a cada vista, senão a
-              transição só aconteceria na primeira. */}
+      {tituloVista && tela === "home" && (
+        /* Legenda de cinema, não controle: não engole cliques. */
+        <div className="pointer-events-none absolute left-1/2 top-20 z-30 -translate-x-1/2 px-4">
           <div key={tituloVista} className="v-titulo-vista text-center">
-            <span className="font-serif text-[clamp(18px,3.2vw,30px)] tracking-[0.14em] text-white drop-shadow-[0_2px_12px_rgba(0,0,0,0.75)]">
-              {tituloVista.toUpperCase()}
+            <span className="vd-sombra-texto text-[clamp(16px,2.4vw,24px)] font-light uppercase tracking-[0.34em]">
+              {tituloVista}
             </span>
           </div>
         </div>
       )}
 
-      {/*
-        Cartão do ponto de interesse, à direita.
-
-        Fora das vistas que tomam o palco (`pavMode`, `buscaMode`): elas trocam
-        a cena inteira, e o cartão de um ponto do entorno ficaria pairando sobre
-        uma planta de pavimento sem relação nenhuma com ela.
-      */}
-      {project && !tilesError && !pavMode && !buscaMode && (
-        <CartaoPoi
-          poi={
-            (project.data.empreendimento.pontosDeInteresse as unknown as EditablePoi[] | undefined)
-              ?.find((p, i) => (p.id ?? `poi-${i}`) === poiEntornoId) ?? null
-          }
-          estilo={project.data.empreendimento.estiloCategoriaPoi}
-          onFechar={() => setPoiEntornoId(null)}
-          onFoto={setFotoAmpliada}
-          mostrarBasico={mobileViewport && modoEntorno === "mapa"}
-        />
-      )}
-
-      {/* Foto do cartão em tela cheia. */}
-      {fotoAmpliada && (
-        <div
-          className="absolute inset-0 z-[60] flex items-center justify-center bg-black/85 p-6 backdrop-blur-sm"
-          onClick={() => setFotoAmpliada(null)}
-        >
-          <img src={fotoAmpliada} alt=""
-            className="max-h-full max-w-full rounded-[8px] object-contain" />
+      {com3D && semErro && (
+        <div className="vd-acoes absolute right-5 top-5 z-40 flex items-center gap-2">
+          <button type="button" onClick={irParaPrincipal} className="vd-acao"
+            title="Voltar à vista principal" aria-label="Voltar à vista principal">
+            <Home className="h-4 w-4" strokeWidth={1.5} />
+          </button>
+          {views.length > 0 && tela !== "unidades" && (
+            <button type="button" onClick={alternarTour} className="vd-acao"
+              data-on={tourAtivo ? "1" : undefined}
+              title={tourAtivo ? "Parar o tour" : "Rodar o tour de vistas"}
+              aria-label={tourAtivo ? "Parar o tour" : "Rodar o tour de vistas"}>
+              {tourAtivo
+                ? <Square className="h-3.5 w-3.5" strokeWidth={1.5} />
+                : <Play className="h-4 w-4" strokeWidth={1.5} />}
+            </button>
+          )}
+          {ambiente?.noturnoDisponivel && (
+            <button type="button" onClick={alternarNoturno} className="vd-acao"
+              data-on={noite ? "1" : undefined}
+              title={noite ? "Voltar ao dia" : "Ver à noite"}
+              aria-label={noite ? "Voltar ao dia" : "Ver à noite"}>
+              <Moon className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          )}
+          <button type="button" onClick={alternarTelaCheia} className="vd-acao"
+            data-on={telaCheia ? "1" : undefined}
+            title={telaCheia ? "Sair da tela cheia" : "Tela cheia"}
+            aria-label={telaCheia ? "Sair da tela cheia" : "Tela cheia"}>
+            {telaCheia
+              ? <Minimize className="h-4 w-4" strokeWidth={1.5} />
+              : <Maximize className="h-4 w-4" strokeWidth={1.5} />}
+          </button>
+          {/* Sem fotogrametria não há tileset a alternar: um botão que não faz
+              nada faz a vitrine parecer travada. */}
+          {!semFotogrametria && (
+            <button type="button" onClick={() => setCidade3D((v) => !v)} className="vd-acao vd-acao-extra"
+              data-on={cidade3D ? undefined : "1"}
+              title={cidade3D
+                ? (mapaBase ? "Trocar a fotogrametria pelo mini mapa (cena mais leve)" : "Esconder o entorno (cena mais leve)")
+                : "Mostrar o entorno"}
+              aria-label={cidade3D ? "Esconder o entorno" : "Mostrar o entorno"}>
+              <Layers3 className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          )}
+          {ambiente?.permitirScreenshot && (
+            <button type="button" onClick={capturarTela} className="vd-acao vd-acao-extra"
+              data-on={capturando ? "1" : undefined}
+              title="Capturar a tela" aria-label="Capturar a tela">
+              <Camera className="h-4 w-4" strokeWidth={1.5} />
+            </button>
+          )}
         </div>
       )}
 
-      {project && !tilesError && pavMode && (
-        <PavimentosView
-          sceneRef={sceneRef}
-          plantas={plantas}
-          unidades={unidades}
-          pavCfg={pavCfg}
-          niveis={project.data.config.niveis}
-          torres={torres}
-          onNivel={setNivelAberto}
-          onClose={() => {
-            setPavMode(false);
-            setNivelAberto(null);
-            sceneRef.current?.cutAtFloor(null);
-            sceneRef.current?.frameBuilding();
-            // Volta para a gaveta, de onde se veio. Ver `abrirUnidades`.
-            setPanelOpen(true);
-          }}
-        />
+      {/* ---- Cartões das seções com 3D ---- */}
+      {emp && semErro && tela === "projeto" && (
+        <EmpreendimentoPanel emp={emp} unidades={unidades} onFechar={() => irPara("home")} />
       )}
 
-      {project && !tilesError && buscaMode && (
+      {project && semErro && tela === "unidades" && (
         <BuscadorUnidades3D
           sceneRef={sceneRef}
-          projetoId={project.id}
           contato={project.data.config.contato}
           nomeEmpreendimento={project.name}
           unidades={unidades}
-          plantas={plantas}
-          tipologias={project.data.empreendimento.tipologias}
+          tipologias={tipologias}
           torres={torres}
           pavCfg={pavCfg}
           niveis={project.data.config.niveis}
@@ -942,327 +733,155 @@ export default function IvmViewPage() {
           onSelecionar={(u) => setUnidadeSelId(u?.id ?? null)}
           onModo={setModoFoco}
           onFiltrar={setFiltradas}
-          mobileSceneOpen={mobileUnitScene}
-          onMostrarCenaMobile={mostrarCenaDaUnidadeNoMobile}
-          onClose={() => {
-            setBuscaMode(false);
-            setMobileUnitScene(false);
-            setUnidadeSelId(null);
-            // Fechar a busca devolve a cena externa — e com ela a órbita.
-            setModoFoco("volume");
-            // Sem isto a planta do último andar visitado ficava deitada no
-            // prédio inteiro depois de fechar a busca.
-            setNivelAberto(null);
-            sceneRef.current?.cutAtFloor(null);
-            sceneRef.current?.frameBuilding();
-            /**
-             * Reabre a gaveta.
-             *
-             * `abrirUnidades` fecha o painel para a busca ocupar a lateral, e
-             * fechar a busca desfazia só metade do caminho: a categoria sumia e
-             * a gaveta ficava fechada junto, deixando o visitante na cena nua
-             * com a pastilha do menu no canto. O ✕ da categoria fecha a
-             * CATEGORIA — quem fecha o painel é o painel.
-             */
-            setPanelOpen(true);
+          onComparar={(id) => {
+            if (id) setComparacao((c) => (c.includes(id) ? c : [...c, id].slice(-MAX_COMPARACAO)));
+            irPara("comparar");
           }}
+          onTour={(url, titulo) => setTour360({ url, titulo })}
+          onClose={() => irPara("home")}
         />
       )}
 
-      {project && buscaMode && mobileUnitScene && unidadeEmCena && (
-        <div className="v-mobile-unit-stage" data-testid="mobile-unit-stage">
-          <div className="min-w-0">
-            <span className="v-eyebrow block">
-              {modoFoco === "corte" ? "Vista do pavimento" : "Unidade em 3D"}
-            </span>
-            <strong className="v-title block truncate text-[15px]">
-              Unidade {unidadeEmCena.numero} · {unidadeEmCena.pavimento}º pavimento
-            </strong>
-          </div>
-          <button
-            type="button"
-            data-testid="btn-voltar-info-unidade"
-            onClick={() => setMobileUnitScene(false)}
-            className="v-btn shrink-0 gap-1.5 px-3"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            Informações
-          </button>
-        </div>
+      {com3D && semErro && ambiente?.mostrarBarraSolar !== false && (
+        <ClimaBar
+          minutos={timeMinutes}
+          onMinutos={setTimeMinutes}
+          estacao={season}
+          onEstacao={setSeason}
+          sol={sun}
+        />
       )}
 
-      {/*
-        Controles da cena. Ações com nome viram pastilhas; as de alternância
-        viram botões redondos de ícone — a distinção de forma é o que permite
-        achar o certo sem ler, e é a da referência.
-      */}
-      {!tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && (
-        <div className="v-scene-controls absolute right-4 top-4 z-40 flex items-center gap-2">
-          {/* Mostrar/esconder a fotogrametria. O prédio nunca some.
-              Escondido no modo sem fotogrametria: ali nao ha tileset para
-              alternar, e um botao que nao faz nada e pior que a ausencia
-              dele — o visitante clica, nada muda, e a vitrine parece travada. */}
-          {!semFotogrametria && (
-          <button
-            onClick={alternarCidade3D}
-            className="v-icon-btn v-desktop-secondary"
-            data-on={cidade3D ? undefined : "1"}
-            title={cidade3D
-              ? (mapaBase
-                  ? "Trocar a fotogrametria pelo mini mapa (cena mais leve)"
-                  : "Esconder o entorno (deixa o prédio isolado e a cena mais leve)")
-              : "Mostrar o entorno"}
-          >
-            <Layers3 className="h-4 w-4" />
-          </button>
-          )}
-
-          <button onClick={() => { irParaPrincipal(); setAcoesMoveisAbertas(false); }} title="Voltar à vista principal" className="v-pill">
-            <Home className="h-4 w-4" />
-            <span className="hidden sm:inline">Vista principal</span>
-          </button>
-
-          {views.length > 0 && (
-            <button onClick={alternarTour} className="v-pill v-desktop-secondary" data-on={tourAtivo ? "1" : undefined}
-              title={tourAtivo ? "Parar o tour" : "Rodar o tour de vistas"}>
-              {tourAtivo ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              <span className="hidden sm:inline">{tourAtivo ? "Parar" : "Tour"}</span>
-            </button>
-          )}
-
-          {unidades.length > 0 && (
-            <button
-              onClick={() => { abrirUnidades(); setAcoesMoveisAbertas(false); }}
-              className="v-pill">
-              <Search className="h-4 w-4" />
-              <span className="hidden sm:inline">Buscar unidade</span>
-            </button>
-          )}
-
-          {ambiente?.noturnoDisponivel && (
-            <button onClick={alternarNoturno} className="v-icon-btn v-desktop-secondary" data-on={noturno ? "1" : undefined}
-              title={noturno ? "Voltar ao dia" : "Ver à noite"}>
-              {noturno ? <SunMedium className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-            </button>
-          )}
-
-          {ambiente?.permitirScreenshot && (
-            <button onClick={capturarTela} className="v-icon-btn v-desktop-secondary" data-on={capturando ? "1" : undefined}
-              title="Capturar a tela">
-              <Camera className="h-4 w-4" />
-            </button>
-          )}
-
-          <button
-            onClick={() => setAcoesMoveisAbertas((v) => !v)}
-            className="v-icon-btn v-mobile-more"
-            data-on={acoesMoveisAbertas ? "1" : undefined}
-            aria-label={acoesMoveisAbertas ? "Fechar mais ações" : "Mais ações"}
-            aria-expanded={acoesMoveisAbertas}
-          >
-            {acoesMoveisAbertas ? <X className="h-4 w-4" /> : <MoreHorizontal className="h-5 w-5" />}
-          </button>
-
-          {acoesMoveisAbertas && (
-            <div className="v-mobile-actions" role="menu" aria-label="Mais ações da cena">
-              {!semFotogrametria && (
-                <button onClick={() => { alternarCidade3D(); setAcoesMoveisAbertas(false); }} role="menuitem">
-                  <Layers3 className="h-4 w-4" />
-                  {cidade3D ? "Cena mais leve" : "Mostrar entorno"}
-                </button>
-              )}
-              {views.length > 0 && (
-                <button onClick={() => { alternarTour(); setAcoesMoveisAbertas(false); }} role="menuitem">
-                  {tourAtivo ? <Square className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  {tourAtivo ? "Parar tour" : "Iniciar tour"}
-                </button>
-              )}
-              {ambiente?.noturnoDisponivel && (
-                <button onClick={() => { alternarNoturno(); setAcoesMoveisAbertas(false); }} role="menuitem">
-                  {noturno ? <SunMedium className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                  {noturno ? "Voltar ao dia" : "Ver à noite"}
-                </button>
-              )}
-              {ambiente?.permitirScreenshot && (
-                <button onClick={() => { capturarTela(); setAcoesMoveisAbertas(false); }} role="menuitem">
-                  <Camera className="h-4 w-4" /> Capturar imagem
-                </button>
-              )}
-            </div>
-          )}
-
-        </div>
+      {/* ---- Navegação ---- */}
+      {project && semErro && (
+        <>
+          <IlhaNav itens={nav} ativa={secao} onEscolher={irPara} claro={telaClara} />
+          {tela !== "comparar" && <BarraMovel itens={navMovel} ativa={secao} onEscolher={irPara} />}
+        </>
       )}
 
-      {!tilesError && !pavMode && !buscaMode && !panelOpen && (
-        <button
-          onClick={() => {
-            if (mobileViewport && modoEntorno === "mapa") {
-              setPoiEntornoId(null);
-              setVoltandoDoMapa(true);
-              setModoEntorno("3d");
-            }
-            setPanelOpen(true);
-          }}
-          className="v-panel-trigger v-pill absolute left-4 top-4 z-40"
-          data-testid={mobileViewport && modoEntorno === "mapa" ? "btn-voltar-mapa-3d" : undefined}
+      {/* Foto do cartão do POI em tela cheia. */}
+      {fotoAmpliada && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center bg-black/85 p-6"
+          onClick={() => setFotoAmpliada(null)}
         >
-          {mobileViewport && modoEntorno === "mapa"
-            ? <ArrowLeft className="h-4 w-4" />
-            : <Menu className="h-4 w-4" />}
-          <span className="max-w-[42vw] truncate">
-            {mobileViewport && modoEntorno === "mapa" ? "Voltar ao 3D" : (project?.name ?? "Detalhes")}
-          </span>
-        </button>
+          <img src={fotoAmpliada} alt="" className="max-h-full max-w-full rounded-[6px] object-contain" />
+        </div>
       )}
 
-      {!(folhaEmbaixo && panelOpen) && !tilesError && modoEntorno !== "mapa" && !pavMode && !buscaMode && ambiente?.mostrarBarraSolar !== false && sombrasAtivas && (
-        <SolarBar
-          timeMinutes={timeMinutes}
-          onTimeChange={(v) => {
-            setTimeMinutes(v);
-            // Mexer na hora à mão sai do modo noturno: quem manda passa a ser
-            // o visitante, e o botão não pode continuar dizendo "é noite".
-            if (noturno) setNoturno(false);
-          }}
-          season={season}
-          onSeasonChange={setSeason}
-          sun={sun}
-          sunriseMin={sunTimes.sunriseMin}
-          sunsetMin={sunTimes.sunsetMin}
-        />
-      )}
+      <TourVirtual
+        url={tour360?.url ?? ""}
+        open={!!tour360}
+        onClose={fecharTour360}
+        nomeEmpreendimento={tour360?.titulo}
+      />
 
       {/*
-        A capa só sai quando a EXPERIÊNCIA está pronta, e isso inclui o GLB.
-
-        Antes ela saía com `ready`, que é só "o viewer existe" — coisa de
-        milissegundos. O cliente via a fotogrametria sem prédio nenhum e o
-        empreendimento surgia do nada segundos depois. Agora o modelo é parte
-        da conta; um projeto sem `modelUrl` não espera por nada.
+        Capa. Só sai quando a EXPERIÊNCIA está pronta, e isso inclui o GLB —
+        senão o cliente via a cidade sem prédio e o empreendimento surgia do
+        nada segundos depois.
       */}
-      {carregando && modoEntorno !== "mapa" && !tilesError && !semChave && (
-        <div className={`absolute inset-0 flex items-center justify-center bg-[var(--v-bg)] ${voltandoDoMapa ? "z-[100]" : "z-30"}`}>
-          <div className="w-[min(88vw,320px)] text-center">
+      {carregando && !(mobileViewport && tela === "local") && semErro && (
+        <div className={`absolute inset-0 flex items-center justify-center overflow-hidden bg-[#101410] ${voltandoDoMapa ? "z-[100]" : "z-[70]"}`}>
+          {emp?.thumbnailUrl && !voltandoDoMapa && (
+            <img src={emp.thumbnailUrl} alt="" aria-hidden="true"
+              className="absolute inset-0 h-full w-full scale-105 object-cover"
+              style={{ filter: "blur(2px) brightness(.5)" }} />
+          )}
+          <div className="relative w-[min(88vw,420px)] text-center">
             {voltandoDoMapa ? (
               <>
-                <Loader2 className="mx-auto mb-4 h-8 w-8 animate-spin text-[var(--v-accent)]" />
-                <p className="text-sm font-medium text-[var(--v-ink)]">Carregando cena 3D…</p>
-                <p className="mt-1 text-xs text-[var(--v-ink-3)]">Só um instante</p>
+                <Loader2 className="mx-auto mb-4 h-7 w-7 animate-spin text-[var(--vd-bronze)]" strokeWidth={1.5} />
+                <p className="vd-rotulo">Carregando cena 3D</p>
               </>
             ) : (
               <>
-            {brand.logoUrl ? (
-              <img src={brand.logoUrl} alt={project?.name ?? ""} className="mx-auto mb-6 h-20 w-auto" />
-            ) : (
-              <Loader2 className="mx-auto mb-6 h-10 w-10 animate-spin text-[var(--v-accent)]" />
-            )}
-            <h1 className="mb-2 font-serif text-2xl tracking-[0.2em] text-white">
-              {project?.name ?? "IVM Lite"}
-            </h1>
-            {/* A etapa dita a frase: um modelo de 23 MB numa conexão de plantão
-                leva dezenas de segundos, e "carregando" genérico por tanto tempo
-                se lê como travado. */}
-            <p className="v-eyebrow">{etapaCarregamento}</p>
-            {/* Barra indeterminada: não há progresso confiável do Cesium para
-                mostrar percentual, e um número inventado é pior que nenhum. */}
-            <div className="mx-auto mt-5 h-[3px] w-40 overflow-hidden rounded-full bg-white/10">
-              <div className="v-carregando h-full w-1/3 rounded-full bg-[var(--v-accent)]" />
-            </div>
-
-            {/*
-              Diagnóstico, depois de 15s.
-
-              Passado esse tempo o que se vê não é mais "carregando", é "algo
-              não chegou" — e a barra girando some com a informação de qual das
-              três etapas falhou. Cada linha aqui é uma das condições de
-              `carregando`, com o dado que permite agir: variável de ambiente
-              faltando, tile do Google recusado, GLB que não baixa.
-
-              Vive na tela, e não no console, porque a vitrine roda em tablet no
-              plantão de vendas — lá não há F12.
-            */}
-            {/*
-              O limiar fica ACIMA do teto de espera da fotogrametria: dentro
-              dele, "parado" ainda é carregamento normal, e acusar falha ali
-              mandava investigar uma cena que estava só streamando.
-            */}
-            {segundosCarregando >= TILES_TETO_MS / 1000 + 5 && (
-              <div className="mt-8 space-y-2 text-left">
-                <p className="v-eyebrow text-[var(--v-ink-3)]">
-                  Parado há {segundosCarregando}s. O que falta:
-                </p>
-                {([
-                  {
-                    ok: !!project,
-                    label: "Projeto",
-                    dica: "não veio do banco — confira SUPABASE_URL e SUPABASE_ANON_KEY no deploy",
-                  },
-                  {
-                    ok: ready,
-                    label: "Cena 3D",
-                    dica: "a fotogrametria do Google não chegou — quase sempre é a conexão; se persistir, confira GOOGLE_MAPS_API_KEY, se a Map Tiles API está ativa e se a restrição de domínio inclui este site",
-                  },
-                  {
-                    ok: !temModelo || modeloPronto,
-                    /**
-                     * O GLB só é PEDIDO depois que a cena monta (o `reconcile`
-                     * do Scene3D começa com `if (!readyRef.current) return`).
-                     * Enquanto `ready` for falso este item não falhou: ele nem
-                     * começou. Marcá-lo de vermelho mandava investigar o bucket
-                     * do Supabase — que estava certo o tempo todo — enquanto o
-                     * problema real estava na linha de cima.
-                     */
-                    esperando: !ready,
-                    label: "Modelo 3D",
-                    dica: "o GLB não baixou — se a URL for do Supabase, o bucket ivm-assets precisa estar público",
-                  },
-                ] as { ok: boolean; esperando?: boolean; label: string; dica: string }[]).map((c) => {
-                  const emEspera = !c.ok && c.esperando;
-                  return (
-                    <p key={c.label} className={`text-[11px] leading-relaxed ${
-                      c.ok || emEspera ? "text-[var(--v-ink-3)]" : "text-amber-300"}`}>
-                      {c.ok ? "✓" : emEspera ? "·" : "✕"}{" "}
-                      <span className="font-semibold">{c.label}</span>
-                      {emEspera
-                        ? <> — na fila, ainda não foi pedido</>
-                        : !c.ok && <> — {c.dica}</>}
-                    </p>
-                  );
-                })}
-                {/* A URL só interessa quando o download realmente começou:
-                    antes disso ela é uma pista falsa. */}
-                {ready && temModelo && !modeloPronto && (
-                  <p className="break-all text-[10px] text-[var(--v-ink-3)]">
-                    modelo: {project?.data.config.modelUrl}
-                  </p>
+                {brand.logoUrl && (
+                  <div className="mb-6 flex justify-center">
+                    <Simbolo url={brand.logoUrl} tamanho={52} alt={project?.name ?? ""} />
+                  </div>
                 )}
+                <h1 className="mx-auto max-w-[16ch] text-[clamp(18px,1.9vw,24px)] font-light uppercase leading-[1.6] tracking-[0.34em]">
+                  {project?.name ?? "IVM Lite"}
+                </h1>
+                {/* Barra indeterminada: o Cesium não dá progresso confiável, e um
+                    número inventado é pior que nenhum. */}
+                <div className="mx-auto mt-7 h-[2px] w-[196px] overflow-hidden bg-white/20"
+                  role="progressbar" aria-label={etapaCarregamento}>
+                  <div className="v-carregando h-full w-1/3 bg-[var(--vd-bronze)]" />
+                </div>
+                <p className="vd-micro mt-5 text-[var(--vd-pedra)]">
+                  {emp?.neighborhood || etapaCarregamento}
+                </p>
 
-                {/* Num tablet de plantão não há F12 nem vontade de dar F5 na
-                    frente do cliente. O caminho de volta precisa estar na tela. */}
-                <button onClick={recarregarCena} className="v-pill mt-4">
-                  <RotateCw className="h-4 w-4" />
-                  <span>Tentar de novo</span>
-                </button>
-              </div>
-            )}
+                {/*
+                  Diagnóstico, acima do teto de espera da fotogrametria. Vive na
+                  tela porque a vitrine roda em tablet de plantão — lá não há F12.
+                */}
+                {segundosCarregando >= TILES_TETO_MS / 1000 + 5 && (
+                  <div className="vd-vidro mt-8 space-y-2 p-4 text-left">
+                    <p className="vd-micro text-[var(--vd-pedra)]">
+                      Parado há {segundosCarregando}s. O que falta:
+                    </p>
+                    {([
+                      {
+                        ok: !!project,
+                        label: "Projeto",
+                        dica: "não veio do banco — confira SUPABASE_URL e SUPABASE_ANON_KEY no deploy",
+                      },
+                      {
+                        ok: ready,
+                        label: "Cena 3D",
+                        dica: "a fotogrametria do Google não chegou — quase sempre é a conexão; se persistir, confira GOOGLE_MAPS_API_KEY, se a Map Tiles API está ativa e se a restrição de domínio inclui este site",
+                      },
+                      {
+                        ok: !temModelo || modeloPronto,
+                        // O GLB só é pedido depois que a cena monta: enquanto
+                        // `ready` for falso, ele não falhou — nem começou.
+                        esperando: !ready,
+                        label: "Modelo 3D",
+                        dica: "o GLB não baixou — se a URL for do Supabase, o bucket ivm-assets precisa estar público",
+                      },
+                    ] as { ok: boolean; esperando?: boolean; label: string; dica: string }[]).map((c) => {
+                      const emEspera = !c.ok && c.esperando;
+                      return (
+                        <p key={c.label} className={`text-[11px] leading-relaxed ${
+                          c.ok || emEspera ? "vd-2" : "text-[#e3b98a]"}`}>
+                          {c.ok ? "✓" : emEspera ? "·" : "✕"}{" "}
+                          <span className="font-semibold">{c.label}</span>
+                          {emEspera
+                            ? <> — na fila, ainda não foi pedido</>
+                            : !c.ok && <> — {c.dica}</>}
+                        </p>
+                      );
+                    })}
+                    {ready && temModelo && !modeloPronto && (
+                      <p className="break-all text-[10px] vd-3">
+                        modelo: {project?.data.config.modelUrl}
+                      </p>
+                    )}
+                    <button type="button" onClick={recarregarCena} className="vd-btn vd-btn-vazado mt-3">
+                      <RotateCw className="h-3.5 w-3.5" strokeWidth={1.5} /> Tentar de novo
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
         </div>
       )}
 
-      {/* Chave do Google ausente: a cena nunca vai montar, então diz o porquê
-          em vez de girar para sempre. */}
+      {/* Chave do Google ausente: a cena nunca vai montar, então diz o porquê. */}
       {semChave && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[var(--v-bg)] p-4">
-          <div className="v-panel max-w-md p-8 text-center">
-            <h2 className="mb-2 font-semibold text-white">Experiência 3D indisponível</h2>
-            <p className="text-sm text-[var(--v-ink-2)]">
+        <div className="absolute inset-0 z-[80] flex items-center justify-center bg-[#101410] p-4">
+          <div className="vd-vidro max-w-md p-8 text-center">
+            <h2 className="vd-rotulo mb-3">Experiência 3D indisponível</h2>
+            <p className="vd-corpo vd-2">
               A chave do Google Maps não está configurada no servidor. Sem ela a
               fotogrametria não pode ser carregada.
             </p>
-            <p className="mt-3 text-xs text-[var(--v-ink-3)]">
+            <p className="mt-3 text-[11px] vd-3">
               Configure <code>GOOGLE_MAPS_API_KEY</code> no ambiente e recarregue.
             </p>
           </div>
@@ -1270,38 +889,25 @@ export default function IvmViewPage() {
       )}
 
       {tilesError && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[var(--v-bg)] p-4">
-          <div className="v-panel max-w-md p-8 text-center">
-            <h2 className="mb-2 font-semibold text-white">Erro ao carregar o 3D</h2>
-            <p className="text-sm text-[var(--v-ink-2)]">{tilesError}</p>
-            <button onClick={recarregarCena} className="v-pill mx-auto mt-5">
-              <RotateCw className="h-4 w-4" />
-              <span>Tentar de novo</span>
+        <div className="absolute inset-0 z-[80] flex items-center justify-center bg-[#101410] p-4">
+          <div className="vd-vidro max-w-md p-8 text-center">
+            <h2 className="vd-rotulo mb-3">Erro ao carregar o 3D</h2>
+            <p className="vd-corpo vd-2">{tilesError}</p>
+            <button type="button" onClick={recarregarCena} className="vd-btn vd-btn-vazado mx-auto mt-5">
+              <RotateCw className="h-3.5 w-3.5" strokeWidth={1.5} /> Tentar de novo
             </button>
 
             {/*
-              Saida alternativa: a cidade do Google e a UNICA coisa que faltou.
-
-              Sem isto, a falha de um servico externo levava junto o
-              empreendimento, o espelho de vendas e a simulacao solar — que
-              estavam prontos e nunca dependeram dele. Num plantao de vendas,
-              com o cliente ao lado, ter a maquete sem a cidade em volta e
-              incomparavelmente melhor do que ter uma tela de erro.
-
-              So aparece quando o que falhou foi a fotogrametria: se o que nao
-              chegou foi o GLB do empreendimento, este caminho abriria a
-              vitrine vazia.
+              Saída alternativa quando SÓ a cidade do Google faltou: a maquete
+              sem a cidade é incomparavelmente melhor que uma tela de erro na
+              frente do cliente.
             */}
             {erroDeFotogrametria && (
               <>
-                <button
-                  onClick={entrarSemFotogrametria}
-                  className="v-pill mx-auto mt-3"
-                >
-                  <Layers3 className="h-4 w-4" />
-                  <span>Entrar no 3D mesmo assim</span>
+                <button type="button" onClick={entrarSemFotogrametria} className="vd-btn vd-btn-bronze mx-auto mt-3">
+                  <Layers3 className="h-3.5 w-3.5" strokeWidth={1.5} /> Entrar no 3D mesmo assim
                 </button>
-                <p className="mt-3 text-[11px] leading-relaxed text-[var(--v-ink-3)]">
+                <p className="mt-3 text-[11px] leading-relaxed vd-3">
                   O empreendimento e o entorno do projeto aparecem normalmente.
                   Só a cidade 3D do Google fica de fora.
                 </p>

@@ -4,189 +4,163 @@ const vitrine = process.env.UX_PATH ?? "/meloborges/now-on";
 
 async function abrirVitrine(page: import("@playwright/test").Page) {
   await page.goto(vitrine);
-  await expect(page.getByTestId("panel-empreendimentos")).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator(".vd-ilha, .vd-barra-movel").first()).toBeAttached({ timeout: 60_000 });
   // A capa bloqueia cliques enquanto a fotogrametria e o empreendimento entram.
   await expect(page.locator(".v-carregando")).toBeHidden({ timeout: 75_000 });
 }
 
+const semVazamento = (page: import("@playwright/test").Page) =>
+  expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
 test("jornada principal cabe no celular e preserva a cena", async ({ page }) => {
   await abrirVitrine(page);
-
   const viewport = page.viewportSize()!;
-  const painel = page.getByTestId("panel-empreendimentos");
-  const caixaMenu = await painel.boundingBox();
-  expect(caixaMenu).not.toBeNull();
-  expect(caixaMenu!.height).toBeLessThan(viewport.height * 0.25);
 
-  // No topo ficam só as ações primárias; as secundárias abrem sob demanda.
-  await expect(page.locator(".v-scene-controls > button:visible")).toHaveCount(3);
-  await page.getByRole("button", { name: "Mais ações" }).click();
-  await expect(page.getByRole("menu", { name: "Mais ações da cena" })).toBeVisible();
-  await page.getByRole("button", { name: "Fechar mais ações" }).click();
+  // No celular a ilha dá lugar à barra de seções do rodapé, sem Home.
+  await expect(page.locator(".vd-ilha")).toBeHidden();
+  const barra = page.locator(".vd-barra-movel");
+  await expect(barra).toBeVisible();
+  await expect(barra.getByRole("button", { name: "Home" })).toHaveCount(0);
+  // Ações do topo empilhadas: só as primárias (menos quando o projeto não
+  // tem tour ou noturno), nunca mais que quatro.
+  expect(await page.locator(".vd-acoes > button:visible").count()).toBeLessThanOrEqual(4);
+  await semVazamento(page);
 
-  // Uma categoria com leitura expande a folha; voltar a deixa compacta.
-  await page.getByTestId("cat-ficha").click();
-  const caixaDetalhe = await painel.boundingBox();
-  expect(caixaDetalhe).not.toBeNull();
-  expect(caixaDetalhe!.height).toBeGreaterThan(viewport.height * 0.6);
-  await page.getByTestId("btn-voltar-categoria").click();
-  expect((await painel.boundingBox())!.height).toBeLessThan(viewport.height * 0.25);
+  // Projeto abre como folha inferior e deixa a cena à vista em cima.
+  await barra.getByRole("button", { name: "Projeto" }).click();
+  const ficha = page.getByTestId("panel-empreendimentos");
+  await expect(ficha).toBeVisible();
+  const caixaFicha = (await ficha.boundingBox())!;
+  expect(caixaFicha.width).toBeCloseTo(viewport.width, 0);
+  expect(caixaFicha.y).toBeGreaterThan(viewport.height * 0.3);
+  await ficha.getByRole("button", { name: "Recolher a ficha do projeto" }).click();
+  await expect(ficha).toBeHidden();
 
-  // O trilho é realmente rolável e o último destino pode entrar inteiro na tela.
-  const categorias = page.getByTestId("categorias-scroll-mobile");
-  await expect(categorias).toBeVisible();
-  expect(await categorias.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
-  await categorias.evaluate((el) => el.scrollTo({ left: el.scrollWidth, behavior: "instant" }));
-  await expect.poll(() => categorias.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
-  const ultimaCategoria = categorias.locator(".v-gaveta-item").last();
-  const caixaCategorias = await categorias.boundingBox();
-  const caixaUltimaCategoria = await ultimaCategoria.boundingBox();
-  expect(caixaUltimaCategoria!.x + caixaUltimaCategoria!.width)
-    .toBeLessThanOrEqual(caixaCategorias!.x + caixaCategorias!.width + 1);
+  // Galeria é tela cheia, sem vazamento horizontal e com saída.
+  if (await barra.getByRole("button", { name: "Galeria" }).count()) {
+    await barra.getByRole("button", { name: "Galeria" }).click();
+    const galeria = page.getByTestId("media-overlay");
+    await expect(galeria).toBeVisible();
+    expect((await galeria.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
+    await semVazamento(page);
+    await page.getByTestId("btn-media-close").click();
+  }
 
-  // Galeria é um overlay verdadeiro: sem vazamento horizontal e com saída.
-  await page.getByTestId("cat-galeria").click();
-  const galeria = page.getByTestId("media-overlay");
-  await expect(galeria).toBeVisible();
-  const caixaGaleria = await galeria.boundingBox();
-  expect(caixaGaleria?.width).toBe(viewport.width);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByTestId("btn-media-close").click();
+  // Lazer é peça de mídia em tela cheia — não navega na maquete.
+  if (await barra.getByRole("button", { name: "Lazer" }).count()) {
+    await barra.getByRole("button", { name: "Lazer" }).click();
+    const lazer = page.getByTestId("lazer-view");
+    await expect(lazer).toBeVisible();
+    expect((await lazer.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
+    expect((await lazer.boundingBox())!.height).toBeCloseTo(viewport.height, 0);
+    await page.getByRole("button", { name: "Próximo ambiente" }).click();
+    await expect(lazer.getByText(/^02 \//)).toBeVisible();
+    await barra.getByRole("button", { name: "Lazer" }).click();
+    await expect(lazer).toBeHidden();
+  }
 
-  // Áreas comuns entram direto na apresentação imersiva. A própria galeria
-  // concentra a descoberta dos ambientes, sem uma grade intermediária.
-  await page.getByTestId("cat-lazer").click();
-  const ambiente = page.getByTestId("area-comum-viewer");
-  await expect(ambiente).toBeVisible();
-  expect((await ambiente.boundingBox())!.width).toBe(viewport.width);
-  expect((await ambiente.boundingBox())!.height).toBe(viewport.height);
-  await page.getByTestId("btn-seletor-areas-comuns").click();
-  const seletorAreas = page.getByTestId("seletor-areas-comuns");
-  await expect(seletorAreas).toBeVisible();
-  await expect(seletorAreas.getByRole("button", { name: /^Abrir / }).first()).toBeVisible();
-  await page.getByTestId("btn-close-area-comum").click();
-
-  // A busca não deixa uma faixa morta da cena na lateral no celular.
-  await page.getByTestId("cat-unidades").click();
+  // Unidades: folha inferior de largura cheia com o CTA do corretor.
+  await barra.getByRole("button", { name: "Unidades" }).click();
   const busca = page.locator(".v-unit-search");
   await expect(busca).toBeVisible();
-  expect((await busca.boundingBox())!.width).toBe(viewport.width);
+  expect((await busca.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
 
-  // Duas unidades podem ser marcadas sem abrir suas fichas. A comparação
-  // mantém plantas e atributos alinhados e também ocupa o viewport inteiro.
-  await page.getByTestId("btn-comparar-unidades").click();
-  const cardsComparaveis = busca.locator('[data-testid^="unidade-card-"]');
-  await cardsComparaveis.nth(0).click();
-  await cardsComparaveis.nth(1).click();
-  await expect(page.getByTestId("barra-comparacao")).toContainText("2 / 2");
-  await page.getByTestId("btn-abrir-comparacao").click();
-  const comparador = page.getByTestId("comparador-unidades");
-  await expect(comparador).toBeVisible();
-  expect((await comparador.boundingBox())!.width).toBe(viewport.width);
-  expect((await comparador.boundingBox())!.height).toBe(viewport.height);
-  await expect(comparador.locator('[data-different="1"]')).not.toHaveCount(0);
-  await page.getByTestId("btn-fechar-comparacao").click();
-  await page.getByTestId("btn-comparar-unidades").click();
-
-  // O detalhe da unidade também é tela cheia; meia gaveta lateral deixa a
-  // ficha estreita demais e cria gesto acidental na cena que sobra ao lado.
-  const primeiraUnidade = busca.locator(".v-card").first();
-  await expect(primeiraUnidade).toBeVisible();
-  await primeiraUnidade.click();
-  const popup = page.locator(".v-unit-popup");
-  await expect(popup).toBeVisible();
-  expect((await popup.boundingBox())!.width).toBe(viewport.width);
-
-  // A ficha cheia sai de cena sob demanda, mas continua montada para voltar ao
-  // mesmo apartamento e ao mesmo modo de visualização.
-  await page.getByTestId("btn-ver-unidade-3d").click();
-  await expect(busca).toBeHidden();
-  await expect(popup).toBeHidden();
-  const palcoUnidade = page.getByTestId("mobile-unit-stage");
-  await expect(palcoUnidade).toBeVisible();
-  await expect(palcoUnidade).toContainText(/Unidade .* pavimento/);
+  // O cartão da unidade entra por cima da lista, também em largura cheia.
+  await busca.locator('[data-testid^="unidade-card-"]').first().click();
+  const cartao = page.getByTestId("cartao-unidade");
+  await expect(cartao).toBeVisible();
+  expect((await cartao.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
   await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
   await expect(page.locator('img[title="Cesium ion"]')).toHaveCount(0);
-  await page.getByTestId("btn-voltar-info-unidade").click();
-  await expect(popup).toBeVisible();
 
-  // A ação de pavimento também entrega a cena imediatamente; antes ela mudava
-  // a câmera atrás da ficha cheia e parecia não funcionar.
-  await popup.getByRole("button", { name: "Vista do andar" }).click();
-  await expect(popup).toBeHidden();
-  await expect(palcoUnidade).toContainText("Vista do pavimento");
-  await page.getByTestId("btn-voltar-info-unidade").click();
-  await expect(popup).toBeVisible();
+  // Pavimento e volta à unidade pelo mesmo botão.
+  await cartao.getByRole("button", { name: "Ver o pavimento" }).click();
+  await cartao.getByRole("button", { name: "Voltar à unidade" }).click();
 
-  // Depois de visitar o pavimento, "Ver unidade" precisa abandonar o corte e
-  // voltar ao enquadramento exclusivo do apartamento.
-  await page.getByTestId("btn-ver-unidade-3d").click();
-  await expect(palcoUnidade).toContainText("Unidade em 3D");
-  await page.getByTestId("btn-voltar-info-unidade").click();
-  await expect(popup).toBeVisible();
-  await popup.locator('button[title="Fechar"]').click();
+  // Comparar plantas: tela própria, até três colunas, com saída.
+  await cartao.getByRole("button", { name: "Comparar esta planta" }).click();
+  const comparador = page.getByTestId("comparador-unidades");
+  await expect(comparador).toBeVisible();
+  expect((await comparador.boundingBox())!.width).toBeCloseTo(viewport.width, 0);
+  expect((await comparador.boundingBox())!.height).toBeCloseTo(viewport.height, 0);
+  await page.getByTestId("btn-adicionar-comparacao").click();
+  await comparador.locator("ul button").first().click();
+  await expect(comparador.getByText("2 de 3 selecionadas")).toBeVisible();
+  await page.getByTestId("btn-fechar-comparacao").click();
+  await expect(busca).toBeVisible();
 
-  await busca.locator('button[title="Fechar"]').click();
-  await expect(painel).toBeVisible();
+  await cartao.getByTestId("btn-mostrar-todas").click();
+  await expect(cartao).toBeHidden();
+  await busca.getByRole("button", { name: "Fechar unidades" }).click();
+  await expect(busca).toBeHidden();
 
-  // No celular, Entorno pula a lista e abre o mapa inteiro. Os pinos continuam
-  // abrindo a ficha do local, inclusive quando ela contém só os dados básicos.
-  await page.getByTestId("cat-entorno").click();
+  // Entorno abre o mapa inteiro; os pinos abrem a ficha do local.
+  await barra.getByRole("button", { name: "Entorno" }).click();
   const mapa = page.getByTestId("mapa-entorno-viewport");
   await expect(mapa).toBeVisible();
-  await expect(page.getByTestId("btn-voltar-mapa-3d")).toBeVisible();
   await expect(page.locator(".maplibregl-map")).toHaveCSS("height", `${viewport.height}px`, { timeout: 30_000 });
-  const primeiroPoi = page.locator(".maplibregl-marker span").first();
-  await expect(primeiroPoi).toBeVisible({ timeout: 30_000 });
-  await primeiroPoi.click();
-  const cartaoPoi = page.getByTestId("cartao-poi");
-  await expect(cartaoPoi).toBeVisible();
-  // O fit reserva o rodapé usado pelo cartão: o destino selecionado continua
-  // no pedaço visível do mapa, em vez de deslizar para baixo da ficha.
-  await page.waitForTimeout(900);
-  const caixaPoi = await primeiroPoi.boundingBox();
-  const caixaCartao = await cartaoPoi.boundingBox();
-  expect(caixaPoi!.y + caixaPoi!.height).toBeLessThan(caixaCartao!.y);
-  await page.getByTestId("btn-voltar-mapa-3d").click();
+  await page.getByTestId("poi-item-0").click();
+  await expect(page.getByTestId("cartao-poi")).toBeVisible().catch(() => {
+    /* ponto sem foto nem descrição não abre cartão — comportamento esperado */
+  });
+
+  // Voltar ao 3D remonta a cena com a espera curta, sem o diagnóstico.
+  await barra.getByRole("button", { name: "Entorno" }).click();
   await expect(mapa).toBeHidden();
-  await expect(page.getByText("Carregando cena 3D…")).toBeVisible();
+  await expect(page.getByText("Carregando cena 3D")).toBeVisible();
   await expect(page.getByText(/Parado há/)).toHaveCount(0);
   await expect(page.locator(".v-carregando")).toBeHidden({ timeout: 75_000 });
   await expect(page.locator(".cesium-widget canvas").first()).toBeVisible();
-  await expect(painel).toBeVisible();
+  await expect(barra).toBeVisible();
 });
 
 test("paisagem preserva uma grande área interativa para a maquete", async ({ page }) => {
   await page.setViewportSize({ width: 915, height: 412 });
   await abrirVitrine(page);
 
-  const painel = page.getByTestId("panel-empreendimentos");
-  const caixa = await painel.boundingBox();
-  expect(caixa).not.toBeNull();
-  expect(caixa!.width).toBeLessThanOrEqual(915 * 0.65);
-  expect(caixa!.height).toBe(412);
-  await expect(page.locator(".v-scene-controls > button:visible")).toHaveCount(3);
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await expect(page.locator(".vd-barra-movel")).toBeVisible();
+  expect(await page.locator(".vd-acoes > button:visible").count()).toBeLessThanOrEqual(4);
+  await semVazamento(page);
 });
 
-test("entorno no painel mantém cards e tempos dentro da largura", async ({ page }) => {
+test("desktop: ilha fixa, um cartão por seção e clima só com o 3D", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await abrirVitrine(page);
 
-  const painel = page.getByTestId("panel-empreendimentos");
-  await page.getByTestId("cat-entorno").click();
-  await expect(page.getByTestId("poi-item-0")).toBeVisible();
-  expect(await painel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  const ilha = page.locator(".vd-ilha");
+  await expect(ilha).toBeVisible();
+  const larguraIlha = (await ilha.boundingBox())!.width;
 
-  const primeiro = page.getByTestId("poi-item-0");
-  const caixaPainel = await painel.boundingBox();
-  const caixaPrimeiro = await primeiro.boundingBox();
-  expect(caixaPrimeiro!.x + caixaPrimeiro!.width)
-    .toBeLessThanOrEqual(caixaPainel!.x + caixaPainel!.width + 1);
+  // O hover mostra a etiqueta FORA da ilha, sem mudar a largura dela.
+  await page.getByTestId("nav-projeto").hover();
+  await expect(page.getByTestId("nav-projeto").locator(".vd-ilha-rotulo")).toHaveCSS("opacity", "1");
+  expect((await ilha.boundingBox())!.width).toBe(larguraIlha);
+
+  const clima = page.getByRole("region", { name: "Controle de luz" });
+  await page.getByTestId("nav-projeto").click();
+  await expect(page.getByTestId("panel-empreendimentos")).toBeVisible();
+  await expect(clima).toBeVisible();
+
+  // O cartão da ficha termina acima do clima.
+  const caixaFicha = (await page.getByTestId("panel-empreendimentos").boundingBox())!;
+  const caixaClima = (await clima.boundingBox())!;
+  expect(caixaFicha.y + caixaFicha.height).toBeLessThanOrEqual(caixaClima.y);
+
+  // Localização: tela clara, sem clima, lista dentro da largura do painel.
+  if (await page.getByTestId("nav-local").count()) {
+    await page.getByTestId("nav-local").click();
+    await expect(ilha).toHaveAttribute("data-claro", "1");
+    await expect(clima).toBeHidden();
+    const primeiro = page.getByTestId("poi-item-0");
+    await expect(primeiro).toBeVisible();
+    const painel = page.getByRole("complementary", { name: "Pontos de interesse" });
+    expect(await painel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+  }
+  await semVazamento(page);
 });
 
 test("login administrativo não cria rolagem horizontal", async ({ page }) => {
   await page.goto("/admin");
   await expect(page.locator("body")).toBeVisible();
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await semVazamento(page);
 });

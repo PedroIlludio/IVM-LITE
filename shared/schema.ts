@@ -234,6 +234,10 @@ export interface ItemLista {
    * completa e só o botão de 360 não aparece.
    */
   panoramaUrl?: string;
+  /** Onde o ambiente fica ("Rooftop", "Térreo") — filtro e legenda do lazer na vitrine. */
+  pavimento?: string;
+  /** Dados curtos do ambiente (rótulo + valor), exibidos no cartão do lazer. */
+  dados?: { rotulo: string; valor: string }[];
 }
 
 /** Texto de um item, aceitando o formato antigo. */
@@ -350,6 +354,8 @@ export const itemListaSchema = z.object({
   imagemUrl: z.string().optional(),
   videoUrl: z.string().optional(),
   panoramaUrl: z.string().optional(),
+  pavimento: z.string().optional(),
+  dados: z.array(z.object({ rotulo: z.string(), valor: z.string() })).optional(),
 });
 
 export const empreendimentoSchema = z.object({

@@ -1,1022 +1,607 @@
 /* ============================================================================
-   SISTEMA DA VITRINE — DESIGN.vitrine.md (Starbucks)
+   SISTEMA DA VITRINE — direção "Vidro"
 
-   Tudo o que o cliente final vê sai daqui. Escopado em `.vitrine` de propósito:
-   as ferramentas (/admin e editor) seguem o DESIGN.editor.md, que é outro
-   sistema — canvas quase-preto, denso, para quem trabalha o dia inteiro nele.
-   Aqui é o oposto: claro, arejado, para quem vai comprar um apartamento.
+   A cena 3D ocupa a tela inteira; a navegação é uma ilha vertical de ícones à
+   esquerda e cada seção abre UM cartão de vidro escuro à direita. Substitui o
+   sistema creme/pílulas do DESIGN.vitrine.md.
 
-   O QUE VEIO DO STARBUCKS
-   - Canvas creme-quente (#f2f0eb / #edebe9) no lugar do branco frio. É a
-     decisão que mais muda a sensação: o branco puro deixa a foto do 3D
-     parecendo recortada; o creme a acolhe.
-   - Pílula completa (50px) em TODO botão, com `scale(0.95)` no toque.
-   - Cartão de 12px com sombra sussurrada (0.14/0.24 alpha). Sem sombra
-     pesada: a elevação é uma dica, não um degrau.
-   - Tracking negativo (-0.01em) universal e hierarquia por PESO, não por
-     tamanho — dois textos de 24px, um 600 e outro 400, já são dois níveis.
+   Escopado em `.vitrine`: /admin e o editor seguem o DESIGN.editor.md.
 
-   O QUE NÃO VEIO, E POR QUÊ
-   O verde. Esta é uma plataforma white-label: cada empreendimento traz a sua
-   cor em `branding.primary`, e pintar tudo de verde Starbucks faria todos os
-   projetos parecerem o mesmo. Então o verde da marca vira um PAPEL, não um
-   valor — `--v-accent` recebe a cor do projeto e cumpre o papel que o verde
-   cumpre lá (CTA, destaque, estado ativo). As profundidades da faixa escura
-   saem daí por `color-mix`, para acompanharem qualquer marca.
+   A marca do projeto (`branding.primary`) NÃO pinta mais a vitrine. O acento é
+   o bronze, fixo — sobre a cena escura o acento de cada cliente brigava com a
+   fotogrametria e derrubava o contraste.
    ========================================================================= */
 
 .vitrine {
-  /*
-   * Superfícies. O creme quente é a página; o branco é o cartão que pousa
-   * sobre ela. Inverter isso (página branca, cartão cinza) é o que dava o ar
-   * de formulário.
-   */
-  --v-bg: #f2f0eb;          /* Neutral Warm — a tela */
-  --v-surface: #ffffff;     /* cartão, painel, modal */
-  --v-surface-2: #f9f9f9;   /* Neutral Cool — superfície quieta dentro do cartão */
-  --v-surface-3: #edebe9;   /* Ceramic — separador de zona, trilho do segmentado */
+  --vd-grafite: #101410;
+  --vd-tinta: #1c1f1c;
+  --vd-bronze: #c9a06a;
+  --vd-bronze-escuro: #8a6f4e;
+  --vd-areia: #e6e3dc;
+  --vd-agua: #cfdcdb;
+  /* Cinza-pedra SÓLIDO para micro-rótulos sobre a cena: alfa baixo some
+     conforme o que passa atrás (ver Acessibilidade no handoff). */
+  --vd-pedra: #cfcac0;
+  --vd-pedra-2: #b9b3a7;
+
+  --vd-ok: #9ec9a6;
+  --vd-ok-claro: #3f6b4f;
+  --vd-vendida: #d79a92;
+  --vd-vendida-claro: #8c3b30;
+  --vd-reservada: #c9a06a;
+  --vd-reservada-claro: #8a6f4e;
+
+  --vd-vidro: rgba(16, 20, 16, 0.62);
+  --vd-vidro-barra: rgba(16, 20, 16, 0.52);
+  --vd-borda: rgba(255, 255, 255, 0.16);
+
+  --vd-fonte: "Helvetica Neue", Helvetica, Arial, sans-serif;
 
   /*
-   * Tinta a 87% de preto, não #000: sobre canvas quente o preto puro fica
-   * frio e "fura" o papel. É a mesma razão do creme.
+   * Tokens legados, repintados na paleta nova. Componentes compartilhados
+   * (cartão do POI, tour virtual, panorama, mapa) ainda leem estes nomes; são
+   * usados sobre superfície CLARA, daí os valores.
    */
-  --v-ink: rgba(0, 0, 0, 0.87);
-  --v-ink-2: rgba(0, 0, 0, 0.58);
-  --v-ink-3: rgba(0, 0, 0, 0.40);
-
-  /* Linhas quase invisíveis. Se a divisória se nota, está forte demais. */
-  --v-line: rgba(0, 0, 0, 0.08);
-  --v-line-2: rgba(0, 0, 0, 0.14);
-
-  /*
-   * Acento = a cor da marca do projeto (o `--v-accent` é sobrescrito em
-   * ivm-view.tsx). O valor abaixo é só o fallback do piloto.
-   */
-  --v-accent: #12a19a;
+  --v-bg: var(--vd-areia);
+  --v-surface: #ffffff;
+  --v-surface-2: #f6f4ef;
+  --v-surface-3: #ece9e2;
+  --v-ink: var(--vd-tinta);
+  --v-ink-2: rgba(28, 31, 28, 0.74);
+  --v-ink-3: rgba(28, 31, 28, 0.62);
+  --v-line: rgba(28, 31, 28, 0.1);
+  --v-line-2: rgba(28, 31, 28, 0.16);
+  --v-accent: var(--vd-bronze-escuro);
   --v-accent-ink: #ffffff;
-  --v-accent-soft: color-mix(in srgb, var(--v-accent) 12%, transparent);
-  /* O papel do "House Green": faixa escura, rodapé, banda de destaque. */
-  --v-accent-deep: color-mix(in srgb, var(--v-accent) 55%, #16211e);
-  --v-accent-hover: color-mix(in srgb, var(--v-accent) 88%, #000);
+  --v-accent-soft: rgba(138, 111, 78, 0.12);
+  --v-r: 10px;
 
-  /* Status do espelho de vendas — dado, não decoração: não seguem a marca. */
-  --v-ok: #1b7f4f;
-  --v-wait: #b47d09;
-  --v-sold: #c82014;
+  --font-sans: var(--vd-fonte);
+  --font-serif: var(--vd-fonte);
 
-  --v-r-sm: 8px;
-  --v-r: 12px;      /* cartão */
-  --v-r-lg: 16px;   /* painel */
-  --v-r-pill: 50px; /* todo elemento interativo */
-
-  /*
-   * Sombras sussurradas. A base do Starbucks é `0 0 .5px/.14 + 0 1px 1px/.24`
-   * — quase nada. As duas maiores existem só para o que FLUTUA sobre a cena
-   * 3D, onde o cartão precisa se descolar da imagem para continuar legível.
-   */
-  --v-sh-1: 0 0 0.5px rgba(0, 0, 0, 0.14), 0 1px 1px rgba(0, 0, 0, 0.24);
-  --v-sh-2: 0 0 6px rgba(0, 0, 0, 0.14), 0 4px 10px -2px rgba(0, 0, 0, 0.12);
-  --v-sh-3: 0 0 6px rgba(0, 0, 0, 0.16), 0 10px 28px -8px rgba(0, 0, 0, 0.2);
-
-  color: var(--v-ink);
-  font-family: var(--font-sans);
-  /* Tracking apertado universal — a assinatura tipográfica do sistema. */
-  letter-spacing: -0.01em;
+  color: #fff;
+  font-family: var(--vd-fonte);
   -webkit-font-smoothing: antialiased;
+}
+
+.vitrine .v-meta { font-size: 12px; line-height: 1.45; color: var(--v-ink-2); }
+.vitrine .v-body-sm { font-size: 13px; line-height: 1.6; color: var(--v-ink); }
+
+/* Cartão do POI no mapa: superfície clara, como o painel ao lado. */
+.vitrine .glassmorphism {
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(28, 31, 28, 0.14);
+  box-shadow: 0 6px 24px rgba(28, 31, 28, 0.12);
+  color: var(--vd-tinta);
+}
+
+.vitrine :is(button, a, input, select):focus-visible {
+  outline: 2px solid var(--vd-bronze);
+  outline-offset: 2px;
 }
 
 /* --- Tipografia ----------------------------------------------------------- */
 
-/*
- * Títulos na serifada da marca do projeto. O Starbucks troca para serifada em
- * momentos editoriais (a página de Rewards) — aqui o momento editorial é o
- * nome do empreendimento, que é o que a marca dele já resolve.
- */
-/*
- * Título. `tracking-wide` numa serifada display era o oposto do que ela pede:
- * abrir o espaçamento de uma Ivy Mode a 24px deixa as hastes finas soltas e o
- * nome perde corpo. Tracking negativo junta o desenho e devolve presença.
- */
-.vitrine .v-title {
-  font-family: var(--font-serif);
-  letter-spacing: -0.02em;
-  line-height: 1.12;
-  color: var(--v-ink);
-}
-
-/*
- * Rótulo de seção. Corpo pequeno com muito tracking: é o que permite
- * hierarquia SEM borda — o olho separa pelo peso, não por uma linha.
- *
- * Peso 700 e não 600: a sans da marca (Brandon) tem traço fino, e em caixa
- * alta a 11px o 600 desaparecia contra o corpo do texto — era o rótulo mais
- * apagado da tela justamente onde a hierarquia começa.
- */
-.vitrine .v-eyebrow {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
+.vitrine .vd-rotulo {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: var(--v-ink-2);
 }
+.vitrine .vd-micro {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.vitrine .vd-corpo {
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.8;
+}
+.vitrine .vd-titulo {
+  font-size: 17px;
+  font-weight: 300;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+  line-height: 1.35;
+}
+.vitrine .vd-num-grande {
+  font-size: 23px;
+  font-weight: 200;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.vitrine .vd-num { font-variant-numeric: tabular-nums; }
+.vitrine .vd-sombra-texto { text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5); }
 
-/*
- * CORPO DE TEXTO
- *
- * A vitrine inteira estava em 12px com tinta a 58% — tamanho de inspetor de
- * ferramenta, não de página que alguém lê para decidir uma compra. O
- * DESIGN.vitrine.md pede 16px de corpo e 14px de secundário, e reserva o
- * cinza-claro para METADADO, não para a leitura principal.
- */
-.vitrine .v-body {
-  font-size: 15px;
-  line-height: 1.6;
-  color: var(--v-ink);
-}
-.vitrine .v-body-sm {
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--v-ink);
-}
-/* Metadado: endereço, contagem, legenda. Aqui o cinza é correto. */
-.vitrine .v-meta {
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--v-ink-2);
-}
-
-.vitrine .v-muted { color: var(--v-ink-2); }
-.vitrine .v-faint { color: var(--v-ink-3); }
-
-/* Números de dinheiro e área alinhados: tabular evita o texto "dançar". */
-.vitrine .v-num { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+/* Texto secundário sobre vidro: nunca abaixo de .62. */
+.vitrine .vd-2 { color: rgba(255, 255, 255, 0.78); }
+.vitrine .vd-3 { color: rgba(255, 255, 255, 0.64); }
+.vitrine .vd-bronze { color: var(--vd-bronze); }
 
 /* --- Superfícies ---------------------------------------------------------- */
 
-.vitrine .v-panel {
-  background: var(--v-surface);
-  border-radius: var(--v-r-lg);
-  box-shadow: var(--v-sh-3);
-}
-
-.vitrine .v-card {
-  background: var(--v-surface);
-  border: 1px solid var(--v-line);
-  border-radius: var(--v-r);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-}
-.vitrine .v-card:hover {
-  border-color: var(--v-line-2);
-  box-shadow: var(--v-sh-2);
-}
-.vitrine .v-card[data-sel="1"] {
-  border-color: var(--v-accent);
-  box-shadow: 0 0 0 1px var(--v-accent), var(--v-sh-2);
-}
-
-/*
- * O ScrollArea do Radix envolve o conteúdo numa `table` de largura intrínseca.
- * Um carrossel horizontal dentro dela fazia a tabela assumir a soma de todos
- * os chips e alargava também os cards do Entorno, cortando o tempo à direita.
- * Nesta área a largura pertence ao painel; somente o carrossel pode rolar.
- */
-.vitrine .v-detail-scroll [data-radix-scroll-area-viewport] > div {
-  display: block !important;
-  width: 100% !important;
-  min-width: 0 !important;
-}
-
-/*
- * Faixa escura — o papel do "House Green". Fecha a página em cima e embaixo,
- * dando o ritmo creme → branco → escuro que o sistema pede. A cor sai da
- * marca do projeto, então cada empreendimento tem a sua faixa.
- */
-.vitrine .v-band {
-  background: var(--v-accent-deep);
+.vitrine .vd-vidro {
+  background: var(--vd-vidro);
+  border: 1px solid var(--vd-borda);
+  border-radius: 10px;
+  backdrop-filter: blur(16px) saturate(1.2);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
   color: #fff;
 }
-.vitrine .v-band .v-muted { color: rgba(255, 255, 255, 0.7); }
-
-/*
- * O painel do empreendimento usa `.glassmorphism` (definido no index.css para
- * o tema escuro). Reescrevê-lo aqui dentro do escopo da vitrine troca o casco
- * inteiro — desktop e a folha do celular — sem caçar a classe em 800 linhas.
- */
-.vitrine .glassmorphism,
-.vitrine .glassmorphism-light {
-  background: rgba(255, 255, 255, 0.97);
-  backdrop-filter: blur(20px) saturate(1.2);
-  -webkit-backdrop-filter: blur(20px) saturate(1.2);
-  border: 1px solid var(--v-line);
-  box-shadow: var(--v-sh-3);
+.vitrine .vd-vidro-barra {
+  background: var(--vd-vidro-barra);
+  border: 1px solid var(--vd-borda);
+  border-radius: 40px;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: #fff;
+}
+.vitrine .vd-claro {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(28, 31, 28, 0.14);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(28, 31, 28, 0.12);
+  color: var(--vd-tinta);
 }
 
-/* Filete de marca: dá identidade ao painel sem tingir toda a superfície. */
-/* O conteúdo editorial alterna creme e branco, como especificado no MD. */
-/* Vidro sobre a cena 3D: os controles flutuantes. */
-.vitrine .v-glass {
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
-  border-radius: var(--v-r-pill);
-  box-shadow: var(--v-sh-2);
+/* Todo painel rola por dentro, sem barra visível. */
+.vitrine .vd-scroll {
+  overflow-y: auto;
+  scrollbar-width: none;
+  overscroll-behavior: contain;
 }
+.vitrine .vd-scroll::-webkit-scrollbar { width: 0; height: 0; }
+
+.vitrine .vd-linha { border-top: 1px solid rgba(255, 255, 255, 0.1); }
+.vitrine .vd-claro .vd-linha,
+.vitrine .vd-linha-clara { border-top: 1px solid rgba(28, 31, 28, 0.1); }
+
+/* Cartão da direita — a posição comum a Projeto, Unidades e Galeria. */
+.vitrine .vd-painel {
+  position: absolute;
+  top: 68px;
+  right: 20px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100% - 68px - 88px);
+}
+
+@keyframes vd-entra {
+  from { opacity: 0; transform: translateX(8px); }
+  to { opacity: 1; transform: none; }
+}
+.vitrine .vd-entra { animation: vd-entra 0.24s ease-out both; }
+
+/* --- Ilha de navegação -----------------------------------------------------
+
+   Botões FIXOS de 42px: a pílula nunca muda de tamanho. O rótulo é uma
+   etiqueta absoluta fora da ilha, que só aparece no hover daquele item — sem
+   transição de largura, nenhum vizinho se move.
+   -------------------------------------------------------------------------- */
+.vitrine .vd-ilha {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 5px;
+  transform: translateY(-50%);
+  border-radius: 26px;
+  background: var(--vd-vidro-barra);
+  border: 1px solid var(--vd-borda);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.vitrine .vd-ilha-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border-radius: 50%;
+  color: #fff;
+  transition: background-color 0.14s ease;
+}
+.vitrine .vd-ilha-btn:hover { background: rgba(255, 255, 255, 0.12); }
+.vitrine .vd-ilha-btn[data-on="1"] { background: #fff; color: var(--vd-tinta); }
+.vitrine .vd-ilha-rotulo {
+  position: absolute;
+  left: 48px;
+  top: 50%;
+  padding: 8px 13px;
+  border-radius: 8px;
+  background: rgba(16, 20, 16, 0.86);
+  color: #fff;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-6px, -50%);
+  transition: opacity 0.14s ease, transform 0.18s ease;
+}
+.vitrine .vd-ilha-btn:hover .vd-ilha-rotulo,
+.vitrine .vd-ilha-btn:focus-visible .vd-ilha-rotulo {
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.vitrine .vd-ilha[data-claro="1"] {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(28, 31, 28, 0.12);
+  box-shadow: 0 6px 24px rgba(28, 31, 28, 0.12);
+}
+.vitrine .vd-ilha[data-claro="1"] .vd-ilha-btn { color: var(--vd-tinta); }
+.vitrine .vd-ilha[data-claro="1"] .vd-ilha-btn:hover { background: rgba(28, 31, 28, 0.08); }
+.vitrine .vd-ilha[data-claro="1"] .vd-ilha-btn[data-on="1"] { background: var(--vd-tinta); color: #fff; }
+
+/* Barra de seções do celular — substitui a ilha abaixo de 768px. */
+.vitrine .vd-barra-movel { display: none; }
 
 /* --- Controles ------------------------------------------------------------ */
 
-/*
- * `scale(0.95)` no toque é a micro-interação assinatura do sistema. Aplicada
- * em tudo que se clica, de uma vez.
- */
-.vitrine .v-icon-btn:active,
-.vitrine .v-pill:active,
-.vitrine .v-btn:active,
-.vitrine .v-btn-ghost:active,
-.vitrine .v-fab:active { transform: scale(0.95); }
+/* Ação circular do topo direito. */
+.vitrine .vd-acao {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(16, 20, 16, 0.5);
+  border: 1px solid var(--vd-borda);
+  color: #fff;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: background-color 0.14s ease;
+}
+.vitrine .vd-acao:hover { background: rgba(16, 20, 16, 0.7); }
+.vitrine .vd-acao[data-on="1"] { background: #fff; color: var(--vd-tinta); }
 
-.vitrine .v-icon-btn {
+/* Pílula de escolha (bloco, estação, abas). */
+.vitrine .vd-pilula {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 40px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.vitrine .vd-pilula:hover { background: rgba(255, 255, 255, 0.1); }
+.vitrine .vd-pilula[data-on="1"] {
+  background: #fff;
+  border-color: #fff;
+  color: var(--vd-tinta);
+}
+.vitrine .vd-pilula-vidro {
+  background: var(--vd-vidro-barra);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.vitrine .vd-claro .vd-pilula,
+.vitrine .vd-pilula-clara {
+  border-color: rgba(28, 31, 28, 0.18);
+  color: var(--vd-tinta);
+}
+.vitrine .vd-claro .vd-pilula:hover,
+.vitrine .vd-pilula-clara:hover { background: rgba(28, 31, 28, 0.06); }
+.vitrine .vd-claro .vd-pilula[data-on="1"],
+.vitrine .vd-pilula-clara[data-on="1"] {
+  background: var(--vd-tinta);
+  border-color: var(--vd-tinta);
+  color: #fff;
+}
+
+/* Seta de navegação (lazer, galeria). */
+.vitrine .vd-seta {
+  display: grid;
+  place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: var(--v-r-pill);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
-  color: var(--v-ink);
-  box-shadow: var(--v-sh-2);
-  transition: all 0.2s ease;
-}
-.vitrine .v-icon-btn:hover { background: #fff; }
-.vitrine .v-icon-btn[data-on="1"] {
-  background: var(--v-accent);
-  color: var(--v-accent-ink);
-}
-
-.vitrine .v-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 16px;
-  border-radius: var(--v-r-pill);
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(14px) saturate(1.25);
-  -webkit-backdrop-filter: blur(14px) saturate(1.25);
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--v-ink);
-  box-shadow: var(--v-sh-2);
-  transition: all 0.2s ease;
-}
-.vitrine .v-pill:hover { background: #fff; }
-.vitrine .v-pill[data-on="1"] {
-  background: var(--v-accent);
-  color: var(--v-accent-ink);
-}
-
-.vitrine :is(button, a, input, select, textarea):focus-visible {
-  outline: 2px solid var(--v-accent);
-  outline-offset: 2px;
-}
-
-/* O menu de ações compacto existe apenas onde a largura é disputada. */
-.vitrine .v-mobile-more,
-.vitrine .v-mobile-actions { display: none; }
-
-/* CTA preenchido — a pílula da marca. */
-.vitrine .v-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 20px;
-  border-radius: var(--v-r-pill);
-  border: 1px solid var(--v-accent);
-  background: var(--v-accent);
-  color: var(--v-accent-ink);
-  font-size: 14px;
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
-.vitrine .v-btn:hover {
-  background: var(--v-accent-hover);
-  border-color: var(--v-accent-hover);
-}
-
-/* CTA de contorno — mesma forma, sem preenchimento. */
-.vitrine .v-btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  height: 40px;
-  padding: 0 20px;
-  border-radius: var(--v-r-pill);
-  border: 1px solid var(--v-accent);
-  background: transparent;
-  color: var(--v-accent);
-  font-size: 14px;
-  font-weight: 600;
-  transition: all 0.2s ease;
-}
-.vitrine .v-btn-ghost:hover { background: var(--v-accent-soft); }
-
-/*
- * FAB circular — o elemento de elevação assinatura do sistema ("Frap"). Fica
- * sobre a cena 3D, em cima de qualquer coisa, e é a ação principal da tela.
- */
-.vitrine .v-fab {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
   border-radius: 50%;
-  background: var(--v-accent);
-  color: var(--v-accent-ink);
-  box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0.14);
-  transition: all 0.2s ease;
+  background: var(--vd-vidro-barra);
+  border: 1px solid var(--vd-borda);
+  color: #fff;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: background-color 0.14s ease;
 }
-.vitrine .v-fab:active { box-shadow: 0 0 6px rgba(0, 0, 0, 0.24), 0 8px 12px rgba(0, 0, 0, 0); }
+.vitrine .vd-seta:hover { background: rgba(16, 20, 16, 0.75); }
 
-/*
- * Segmentado (Disponível / Reservada / Vendida / Todas). Um trilho, sem
- * bordas entre os itens: o ativo é uma pastilha branca que se destaca por
- * elevação, não por contorno.
- */
-.vitrine .v-seg {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--v-r-pill);
-  background: var(--v-surface-3);
-}
-.vitrine .v-seg > button {
-  flex: 1;
-  height: 32px;
-  border-radius: var(--v-r-pill);
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--v-ink-2);
-  transition: all 0.2s ease;
-}
-.vitrine .v-seg > button:hover { color: var(--v-ink); }
-.vitrine .v-seg > button[data-on="1"] {
-  background: var(--v-surface);
-  color: var(--v-ink);
-  box-shadow: var(--v-sh-1);
-}
-
-/*
- * Chip de filtro (categorias da galeria, faixas da busca). Diferente do
- * `.v-chip`, que é ETIQUETA — só informa. Este é clicável, então tem a forma
- * de pílula do sistema, estado ligado e alvo de toque de 30px.
- */
-.vitrine .v-filter {
+/* CTA vazado e CTA bronze. */
+.vitrine .vd-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 40px;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: background-color 0.14s ease, border-color 0.14s ease, opacity 0.14s ease;
+}
+.vitrine .vd-btn-vazado {
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  color: #fff;
+}
+.vitrine .vd-btn-vazado:hover { background: rgba(255, 255, 255, 0.08); border-color: rgba(255, 255, 255, 0.5); }
+.vitrine .vd-btn-bronze {
+  background: var(--vd-bronze);
+  color: #13170f;
+}
+.vitrine .vd-btn-bronze:hover { opacity: 0.9; }
+.vitrine .vd-btn-tinta {
+  background: var(--vd-tinta);
+  color: #fff;
+}
+.vitrine .vd-btn-tinta:hover { opacity: 0.88; }
+.vitrine .vd-btn-vazado-claro {
+  border: 1px solid rgba(28, 31, 28, 0.22);
+  color: var(--vd-tinta);
+}
+.vitrine .vd-btn-vazado-claro:hover { background: rgba(28, 31, 28, 0.05); }
+.vitrine .vd-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Botão só de ícone, dentro de cartão. */
+.vitrine .vd-icone-btn {
+  display: grid;
+  place-items: center;
+  width: 30px;
   height: 30px;
-  padding: 0 13px;
-  border-radius: var(--v-r-pill);
-  border: 1px solid var(--v-line-2);
-  background: var(--v-surface);
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--v-ink-2);
-  transition: all 0.2s ease;
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.8);
+  transition: background-color 0.14s ease, color 0.14s ease;
 }
-.vitrine .v-filter:hover {
-  border-color: var(--v-ink-3);
-  color: var(--v-ink);
-}
-.vitrine .v-filter:active { transform: scale(0.95); }
-.vitrine .v-filter[data-on="1"] {
-  background: var(--v-accent);
-  border-color: var(--v-accent);
-  color: var(--v-accent-ink);
-  font-weight: 600;
-}
-/* A contagem acompanha o texto sem competir com ele. */
-.vitrine .v-filter > span {
-  font-variant-numeric: tabular-nums;
-  opacity: 0.55;
-}
+.vitrine .vd-icone-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.vitrine .vd-icone-btn[data-on="1"] { background: #fff; color: var(--vd-tinta); }
+.vitrine .vd-claro .vd-icone-btn,
+.vitrine .vd-icone-btn-claro { color: rgba(28, 31, 28, 0.72); }
+.vitrine .vd-claro .vd-icone-btn:hover,
+.vitrine .vd-icone-btn-claro:hover { background: rgba(28, 31, 28, 0.07); color: var(--vd-tinta); }
 
-/* Etiqueta de estado. Cor no ponto e no texto; o fundo fica quase branco. */
-.vitrine .v-chip {
-  display: inline-flex;
+/* Item de lista selecionável sobre vidro. */
+.vitrine .vd-item {
+  display: flex;
+  width: 100%;
   align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: var(--v-r-pill);
-  font-size: 12px;
-  font-weight: 600;
+  gap: 10px;
+  padding: 12px 16px;
+  text-align: left;
+  transition: background-color 0.12s ease;
 }
-.vitrine .v-dot {
+.vitrine .vd-item:hover { background: rgba(255, 255, 255, 0.06); }
+.vitrine .vd-item[data-on="1"] { background: rgba(255, 255, 255, 0.12); }
+.vitrine .vd-claro .vd-item:hover { background: rgba(28, 31, 28, 0.04); }
+.vitrine .vd-claro .vd-item[data-on="1"] { background: rgba(28, 31, 28, 0.07); }
+
+.vitrine .vd-ponto {
   width: 6px;
   height: 6px;
-  border-radius: 999px;
   flex-shrink: 0;
-}
-
-/*
- * Linha de propriedade: rótulo à esquerda, valor à direita, divisória fina
- * entre as linhas e nenhuma na última. É o que faz uma pilha de dados parecer
- * uma ficha, em vez de uma tabela.
- */
-.vitrine .v-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--v-line);
-  font-size: 14px;
-}
-.vitrine .v-row:last-child { border-bottom: 0; }
-.vitrine .v-row > span:first-child { color: var(--v-ink-2); font-size: 13px; }
-.vitrine .v-row > span:last-child {
-  color: var(--v-ink);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-/* --- Campos --------------------------------------------------------------- */
-
-.vitrine .v-input {
-  width: 100%;
-  height: 40px;
-  padding: 0 12px;
-  border-radius: var(--v-r-sm);
-  border: 1px solid var(--v-line-2);
-  background: var(--v-surface);
-  font-size: 14px;
-  color: var(--v-ink);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
-}
-.vitrine .v-input::placeholder { color: var(--v-ink-3); }
-.vitrine .v-input:focus {
-  outline: none;
-  border-color: var(--v-accent);
-  box-shadow: 0 0 0 3px var(--v-accent-soft);
-}
-
-/*
-  Campo com ícone dentro (a busca de unidades): abre espaço para a lupa à
-  esquerda e para o botão de limpar à direita.
-
-  Precisa existir como classe daqui, e não como `pl-9` do Tailwind, por
-  especificidade: `.vitrine .v-input` são dois seletores de classe e vence
-  qualquer utilitário de uma classe só, por mais tarde que ele venha na folha.
-  O `padding: 0 12px` acima portanto ganhava em silêncio — e o texto digitado
-  entrava por baixo da lupa.
-*/
-.vitrine .v-input.v-input-icone { padding-left: 36px; padding-right: 36px; }
-
-/* Faixa (área, preço, andar): trilho fino, polegar na cor da marca. */
-.vitrine .v-range { accent-color: var(--v-accent); }
-
-/* --- Gaveta de categorias --------------------------------------------------
-
-   O painel em repouso é o TRILHO: uma coluna estreita de abas sobre a cena 3D,
-   que é o que o visitante veio ver. Escolher uma categoria abre o painel
-   inteiro.
-
-   Cada aba traz ÍCONE EM CIMA E NOME EMBAIXO, sempre visíveis. A versão
-   anterior mostrava só ícones e revelava os nomes no hover — o que exige um
-   ponteiro. A vitrine roda em tablet no plantão de vendas, onde hover não
-   existe: ali eram cinco desenhos mudos e nenhuma forma de descobrir o que
-   faziam sem tocar em cada um. Rótulo permanente custa 40px de largura e
-   resolve isso para todo mundo, com ou sem mouse.
-   -------------------------------------------------------------------------- */
-.vitrine .v-painel-trilho {
-  width: 132px;
-  /* Sem superfície própria: quem tem forma são as abas. */
-  background: none;
-  box-shadow: none;
-  border: 0;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-/*
-  As abas flutuam: sem caixa em volta.
-
-  Havia um cartão branco agrupando as cinco, e ele criava uma segunda moldura
-  dentro de um painel que já é uma superfície — duas bordas para separar a mesma
-  coisa. Sem ele cada aba pousa direto sobre o painel e a coluna respira.
-*/
-.vitrine .v-gaveta {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  /*
-    Centradas na vertical.
-
-    No topo, a coluna deixava dois terços da altura vazios e o olho começava
-    num canto. No meio ela fica na linha natural do olhar e à distância do
-    polegar em qualquer tamanho de tela — e é a única coisa nesse painel, então
-    não disputa espaço com nada.
-  */
-  justify-content: center;
-  min-height: calc(100dvh - 2rem);
-}
-
-.vitrine .v-gaveta-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 96px;
-  padding: 14px 8px;
-  border-radius: var(--v-r);
-  background: var(--v-surface);
-  /* Sombra mais presente que a de cartão: aqui a aba pousa sobre a cena 3D,
-     que é imagem viva — sem descolamento ela se dissolve no fundo. */
-  box-shadow: var(--v-sh-2);
-  color: var(--v-accent);
-  text-align: center;
-  transition: background-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
-}
-.vitrine .v-gaveta-item:hover {
-  box-shadow: var(--v-sh-2);
-  transform: translateY(-1px);
-}
-.vitrine .v-gaveta-item:active { transform: scale(0.97); }
-.vitrine .v-gaveta-item:focus-visible {
-  outline: 2px solid var(--v-accent);
-  outline-offset: 2px;
-}
-
-/*
-  ABAS EM LINHA — celular em retrato.
-
-  Em pé, a altura é o que falta: cinco abas empilhadas comem a folha inteira e
-  sobra uma fresta para ler. Em linha elas viram uma faixa de navegação, como a
-  barra de abas de um aplicativo, e todo o resto da folha é conteúdo.
-
-  Rola na horizontal quando não couberem: melhor deslizar cinco abas legíveis
-  do que espremer todas até o rótulo virar reticências.
-*/
-.vitrine .v-gaveta-h {
-  flex-direction: row;
-  gap: 6px;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  min-height: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 4px;
-  scrollbar-width: none;
-}
-.vitrine .v-gaveta-h::-webkit-scrollbar { display: none; }
-.vitrine .v-gaveta-h .v-gaveta-item {
-  flex: 0 0 auto;
-  width: 88px;
-  min-height: 80px;
-  padding: 10px 6px;
-}
-.vitrine .v-gaveta-h .v-gaveta-rotulo {
-  font-size: 10.5px;
-  line-height: 1.2;
-}
-
-.vitrine .v-gaveta-rotulo {
-  /* Duas ou três linhas cabem: o nome inteiro vale mais que reticências,
-     porque é ele que diz o destino. */
-  font-size: 11.5px;
-  line-height: 1.3;
-  letter-spacing: 0.01em;
-  color: var(--v-ink-2);
-  overflow-wrap: anywhere;
-}
-.vitrine .v-gaveta-n {
-  font-variant-numeric: tabular-nums;
-  font-size: 10.5px;
-  color: var(--v-ink-3);
-}
-
-/* A troca ficha → cena só existe onde a ficha cobre o viewport inteiro. */
-.vitrine .v-unit-scene-cta,
-.vitrine .v-mobile-unit-stage { display: none; }
-
-
-/* Barra de rolagem discreta, na tinta clara. */
-.vitrine .v-scroll::-webkit-scrollbar { width: 10px; }
-.vitrine .v-scroll::-webkit-scrollbar-track { background: transparent; }
-.vitrine .v-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.14);
-  border-radius: 999px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-.vitrine .v-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.26);
-  background-clip: content-box;
-}
-
-/* Entrada dos painéis — 300ms na curva medida do sistema. */
-@keyframes v-in {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: none; }
-}
-.vitrine .v-in { animation: v-in 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94) both; }
-
-/* --- Controle solar ------------------------------------------------------ */
-@keyframes v-solar-enter {
-  from { opacity: 0; transform: translate(-50%, 18px) scale(0.97); }
-  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
-}
-
-@keyframes v-solar-glow {
-  0%, 100% { box-shadow: 0 0 0 5px rgba(255, 183, 53, 0.12), 0 4px 14px rgba(255, 166, 0, 0.22); }
-  50% { box-shadow: 0 0 0 9px rgba(255, 183, 53, 0.06), 0 6px 22px rgba(255, 166, 0, 0.32); }
-}
-
-.vitrine .v-solar {
-  padding: 18px 20px 13px;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(20px) saturate(1.3);
-  -webkit-backdrop-filter: blur(20px) saturate(1.3);
-  box-shadow: var(--v-sh-3);
-  animation: v-solar-enter 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.vitrine .v-solar::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, var(--v-accent), transparent);
-}
-
-.vitrine .v-solar-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.vitrine .v-solar-time {
-  color: var(--v-ink);
-  font-family: var(--font-serif);
-  font-size: 28px;
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: -0.035em;
-}
-
-.vitrine .v-solar-seasons {
-  display: flex;
-  gap: 2px;
-  padding: 3px;
-  border-radius: var(--v-r-pill);
-  background: var(--v-surface-3);
-}
-
-.vitrine .v-solar-seasons button {
-  min-height: 30px;
-  padding: 0 11px;
-  border-radius: var(--v-r-pill);
-  color: var(--v-ink-2);
-  font-size: 12px;
-  font-weight: 600;
-  transition: color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
-}
-
-.vitrine .v-solar-seasons button:hover { color: var(--v-ink); }
-.vitrine .v-solar-seasons button:active { transform: scale(0.95); }
-.vitrine .v-solar-seasons button[data-on="1"] {
-  color: var(--v-accent-ink);
-  background: var(--v-accent);
-  box-shadow: var(--v-sh-1);
-}
-
-.vitrine .v-solar-orbit {
-  position: relative;
-  height: 42px;
-  margin: 10px 3px -2px;
-}
-
-.vitrine .v-solar-arc {
-  position: absolute;
-  right: 21px;
-  bottom: 4px;
-  left: 21px;
-  height: 28px;
-  border-top: 1px dashed color-mix(in srgb, var(--v-accent) 42%, transparent);
-  border-radius: 50% 50% 0 0;
-}
-
-.vitrine .v-solar-edge {
-  position: absolute;
-  bottom: 0;
-  width: 17px;
-  height: 17px;
-  color: var(--v-ink-3);
-}
-
-.vitrine .v-solar-sun {
-  position: absolute;
-  left: var(--solar-x);
-  bottom: var(--solar-y);
-  display: grid;
-  width: 25px;
-  height: 25px;
-  place-items: center;
   border-radius: 50%;
-  color: var(--v-ink-3);
-  background: var(--v-surface);
-  transform: translateX(-50%);
-  transition: left 0.2s ease, bottom 0.2s ease, color 0.25s ease, background 0.25s ease;
 }
 
-.vitrine .v-solar-sun svg { width: 15px; height: 15px; }
-.vitrine .v-solar-sun[data-day="1"] {
-  color: #8a5200;
-  background: #ffc65b;
-  animation: v-solar-glow 2.8s ease-in-out infinite;
-}
-
-.vitrine .v-solar-range {
+/* Range fino: trilho de 2px, polegar branco de 12px. */
+.vitrine .vd-range {
+  -webkit-appearance: none;
+  appearance: none;
   width: 100%;
-  height: 18px;
-  accent-color: var(--v-accent);
-  cursor: ew-resize;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.vitrine .vd-range::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.vitrine .vd-range::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+}
+.vitrine .vd-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.vitrine .vd-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
 }
 
-.vitrine .v-solar-hours {
+/* --- Clima ---------------------------------------------------------------- */
+.vitrine .vd-clima {
+  position: absolute;
+  left: 172px;
+  right: 292px;
+  bottom: 24px;
+  z-index: 20;
   display: flex;
-  justify-content: space-between;
-  margin-top: -2px;
-  color: var(--v-ink-3);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
 }
 
-@media (max-width: 640px) {
-  .vitrine .v-solar { padding: 14px 14px 10px; border-radius: 18px; }
-  .vitrine .v-solar-head { align-items: flex-start; }
-  .vitrine .v-solar-time { font-size: 24px; }
-  .vitrine .v-solar-seasons { max-width: 54%; overflow-x: auto; }
-  .vitrine .v-solar-seasons button { min-width: max-content; padding-inline: 9px; }
+/* Escurecimento noturno: segue a hora, não um botão. */
+.vitrine .vd-noite {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(14, 26, 38, 0.5), rgba(10, 16, 20, 0.66));
+  mix-blend-mode: multiply;
+  transition: opacity 0.4s ease;
 }
 
-/* ========================================================================
-   CELULAR â€” a cena continua sendo o produto.
+/* --- Unidades --------------------------------------------------------------
+   O painel superior encurta para não colidir com o cartão da unidade: nunca
+   dois overlays na mesma faixa. Valores ajustados empiricamente no handoff.
+   -------------------------------------------------------------------------- */
+.vitrine .vd-unidades[data-com-cartao="1"] { max-height: calc(100% - 430px); }
+.vitrine .vd-unidade-card {
+  position: absolute;
+  right: 20px;
+  bottom: 24px;
+  z-index: 31;
+  width: 250px;
+}
+.vitrine .vd-planta { background: rgba(255, 255, 255, 0.06); }
 
-   As regras abaixo não apenas reduzem medidas: elas mudam a hierarquia. A
-   gaveta inicial fica compacta, ações secundárias saem do topo e detalhes que
-   antes eram laterais viram folhas inferiores alcançáveis pelo polegar.
-   ======================================================================== */
+/* --- Lazer ---------------------------------------------------------------- */
+.vitrine .vd-lazer-lista { max-height: calc(100% - 420px); }
+.vitrine .vd-lazer-info { max-height: 408px; }
+
+/* --- Celular ---------------------------------------------------------------
+   Sem ilha: barra de seções horizontal no rodapé; os cartões da direita
+   viram folhas inferiores; as ações do topo empilham em coluna.
+   -------------------------------------------------------------------------- */
 @media (max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) {
   .vitrine {
     -webkit-text-size-adjust: 100%;
     touch-action: manipulation;
   }
-
   .vitrine button,
-  .vitrine a,
-  .vitrine input,
-  .vitrine select { -webkit-tap-highlight-color: transparent; }
+  .vitrine a { -webkit-tap-highlight-color: transparent; }
 
-  .vitrine .v-icon-btn,
-  .vitrine .v-pill { min-width: 44px; height: 44px; }
+  .vitrine .vd-ilha { display: none; }
 
-  .vitrine .v-pill { padding-inline: 13px; }
-
-  .vitrine .v-scene-controls {
-    top: max(10px, env(safe-area-inset-top));
-    right: max(10px, env(safe-area-inset-right));
-    gap: 7px;
-  }
-
-  .vitrine .v-desktop-secondary { display: none; }
-  .vitrine .v-mobile-more { display: inline-flex; }
-
-  .vitrine .v-mobile-actions {
+  .vitrine .vd-barra-movel {
     position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    display: grid;
-    width: min(248px, calc(100vw - 20px));
-    overflow: hidden;
-    padding: 6px;
-    border: 1px solid var(--v-line);
-    border-radius: var(--v-r);
-    background: rgba(255, 255, 255, 0.98);
-    box-shadow: var(--v-sh-3);
-    backdrop-filter: blur(18px);
-  }
-
-  .vitrine .v-mobile-actions > button {
+    left: 10px;
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    z-index: 45;
     display: flex;
-    min-height: 44px;
-    align-items: center;
-    gap: 10px;
-    padding: 0 12px;
-    border-radius: 9px;
-    color: var(--v-ink);
-    font-size: 14px;
-    font-weight: 600;
-    text-align: left;
-  }
-  .vitrine .v-mobile-actions > button:hover,
-  .vitrine .v-mobile-actions > button:active { background: var(--v-surface-3); }
-  .vitrine .v-mobile-actions > button + button { border-top: 1px solid var(--v-line); }
-
-  .vitrine .v-panel-trigger {
-    top: max(10px, env(safe-area-inset-top));
-    left: max(10px, env(safe-area-inset-left));
-    max-width: calc(100vw - 170px);
-  }
-
-  /* Bússola abaixo da barra de ações: no centro do topo ela ficava por baixo
-     das seis pastilhas e deixava de ser legível/clicável. */
-  .vitrine > button[title^="Orienta"] {
-    top: calc(max(10px, env(safe-area-inset-top)) + 52px);
-    width: min(72vw, 280px);
-  }
-
-  .vitrine .v-mobile-sheet {
-    padding-bottom: env(safe-area-inset-bottom);
-    /* Blur de tela inteira é caro em GPUs móveis; a superfície já é opaca o
-       suficiente para manter contraste sem recompor a cena a cada quadro. */
-    background: rgba(255, 255, 255, 0.98);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    box-shadow: 0 -12px 36px rgba(25, 28, 31, 0.18);
-  }
-  .vitrine .v-mobile-sheet-menu { height: 170px; }
-  .vitrine .v-mobile-sheet-detail { height: min(76dvh, 720px); }
-
-  .vitrine .v-gaveta-h {
-    /* O Viewport do Radix usa uma mesa interna que cresce com o conteúdo.
-       Sem a largura explícita o trilho também crescia, em vez de rolar, e o
-       último destino ficava para fora da folha. */
-    width: calc(100vw - 2rem);
-    max-width: calc(100vw - 2rem);
-    justify-content: flex-start;
-    padding: 0 max(12px, env(safe-area-inset-right)) 8px max(12px, env(safe-area-inset-left));
-    scroll-padding-inline: 16px;
-    overscroll-behavior-x: contain;
-    touch-action: pan-x;
-    -webkit-overflow-scrolling: touch;
-  }
-  .vitrine .v-gaveta-h .v-gaveta-item {
-    width: 96px;
-    min-height: 76px;
-    padding: 9px 7px;
-  }
-
-  /* Busca e ficha da unidade usam a largura inteira. Deixar 20â€“30px da cena
-     aparecendo ao lado parecia um erro e criava um alvo de gesto acidental. */
-  .vitrine .v-unit-search,
-  .vitrine.v-unit-popup {
-    inset: 0;
-    width: 100%;
-    max-width: none;
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    border: 0;
-  }
-
-  .vitrine .v-unit-info-hidden-mobile,
-  .vitrine.v-unit-info-hidden-mobile { display: none !important; }
-
-  .vitrine .v-unit-scene-cta { display: block; }
-  .vitrine .v-mobile-unit-stage {
-    display: flex;
-    position: absolute;
-    right: max(12px, env(safe-area-inset-right));
-    bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
-    left: max(12px, env(safe-area-inset-left));
-    z-index: 80;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px;
-    border: 1px solid rgba(255, 255, 255, 0.55);
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.94);
-    box-shadow: var(--v-sh-3);
-    backdrop-filter: blur(18px);
-    -webkit-backdrop-filter: blur(18px);
-  }
-
-  .vitrine .v-unit-search .v-card button[title*="Favorit"],
-  .vitrine.v-unit-popup button[title*="Favorit"] { opacity: 1; }
-
-  /* POI vira folha inferior. Assim ele não compete com a barra superior e a
-     imagem permanece grande sem cobrir o ponto que acabou de ser visitado. */
-  .vitrine .v-poi-card {
-    top: auto;
-    right: max(10px, env(safe-area-inset-right));
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: max(10px, env(safe-area-inset-left));
-    width: auto;
-    max-height: min(58dvh, 520px);
-    border-radius: var(--v-r-lg);
-  }
-  .vitrine .v-poi-card img { height: min(25dvh, 190px); }
-
-  /* Pavimentos: cabeçalho seguro no topo, régua menor à esquerda e cartão de
-     leitura no rodapé. As três zonas deixam sempre um corredor livre para
-     girar a maquete. */
-  .vitrine .v-pav-header {
-    padding: max(10px, env(safe-area-inset-top)) 10px 10px;
-  }
-  .vitrine .v-pav-header .v-glass { padding: 8px 12px; }
-  .vitrine .v-pav-header .v-pill { padding-inline: 12px; }
-  .vitrine .v-pav-ruler {
-    top: calc(max(10px, env(safe-area-inset-top)) + 64px);
-    left: max(10px, env(safe-area-inset-left));
-    width: min(45vw, 178px);
-    max-height: 43dvh;
-    transform: none;
-  }
-  .vitrine .v-pav-card {
-    bottom: max(10px, env(safe-area-inset-bottom));
-    width: calc(100vw - 20px);
-    padding: 14px;
-  }
-  .vitrine .v-pav-card > div { gap: 10px; }
-  .vitrine .v-pav-card h3 { font-size: 17px; }
-  .vitrine .v-pav-card button { width: 100px; height: 88px; }
-  .vitrine .v-pav-card .v-muted { font-size: 12px; }
-  .vitrine .v-pav-hint {
-    bottom: max(14px, env(safe-area-inset-bottom));
-    width: calc(100vw - 24px);
-    text-align: center;
-  }
-
-  /* A barra solar deixa de ser um cartão alto de desktop. A leitura essencial
-     (hora, estação e slider) cabe numa única zona de polegar. */
-  .vitrine .v-solar {
-    bottom: max(10px, env(safe-area-inset-bottom));
-    max-width: calc(100vw - 20px);
-    padding: 12px 13px 9px;
-    border-radius: 16px;
-  }
-  .vitrine .v-solar .v-eyebrow,
-  .vitrine .v-solar .v-meta,
-  .vitrine .v-solar-orbit { display: none; }
-  .vitrine .v-solar-time { font-size: 22px; }
-  .vitrine .v-solar-seasons {
-    max-width: calc(100% - 72px);
+    gap: 2px;
+    padding: 4px;
     overflow-x: auto;
     scrollbar-width: none;
   }
-  .vitrine .v-solar-seasons::-webkit-scrollbar { display: none; }
-  .vitrine .v-solar-seasons button { min-width: max-content; min-height: 32px; }
-  .vitrine .v-solar-range { height: 24px; margin-top: 4px; }
-
-  /* Cabeçalhos de overlays respeitam recortes de iPhone/Android. */
-  .vitrine[data-testid="media-overlay"] > header {
-    padding-top: max(12px, env(safe-area-inset-top));
+  .vitrine .vd-barra-movel::-webkit-scrollbar { display: none; }
+  .vitrine .vd-barra-movel button {
+    display: flex;
+    flex: 1 0 auto;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 12px;
+    border-radius: 40px;
+    color: #fff;
   }
-}
+  .vitrine .vd-barra-movel button[data-on="1"] { background: #fff; color: var(--vd-tinta); }
 
-@media (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) and (orientation: landscape) {
+  .vitrine .vd-acoes { flex-direction: column; }
+  .vitrine .vd-acao { width: 44px; height: 44px; }
+  .vitrine .vd-orbitar,
+  .vitrine .vd-acao-extra { display: none; }
+
+  /* Cartões da direita viram folha inferior, acima da barra de seções. */
+  .vitrine .vd-painel,
+  .vitrine .vd-unidades[data-com-cartao="1"] {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: auto !important;
+    max-height: 64dvh;
+    z-index: 50;
+    border-radius: 20px 20px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .vitrine .vd-alca { display: flex; }
+
+  .vitrine .vd-unidade-card {
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 52;
+    width: auto;
+    max-height: 78dvh;
+    border-radius: 20px 20px 0 0;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  .vitrine .vd-clima {
+    left: 10px;
+    right: 10px;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
+    gap: 10px;
+    padding: 6px 14px;
+  }
+  .vitrine .vd-clima-extra { display: none; }
+
+  .vitrine .vd-alvo { min-width: 44px; min-height: 44px; }
+
+  .vitrine .vd-lazer-lista { display: none; }
+  .vitrine .vd-lazer-info {
+    left: 10px;
+    right: 10px !important;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px) !important;
+    width: auto !important;
+    max-height: 46dvh;
+  }
+  .vitrine .vd-lazer-alternador { left: 12px !important; }
+  .vitrine .vd-lazer-setas { left: 10px !important; right: 10px !important; }
+
+  .vitrine .vd-galeria-palco { padding: 64px 10px 150px !important; }
+  .vitrine .vd-galeria-legenda { display: none; }
+
   .vitrine .v-poi-card {
-    top: max(64px, env(safe-area-inset-top));
-    right: max(10px, env(safe-area-inset-right));
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: auto;
-    width: min(46vw, 340px);
-    max-height: none;
+    top: auto;
+    right: 10px;
+    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
+    left: 10px;
+    width: auto;
+    max-height: 50dvh;
   }
-  .vitrine .v-pav-ruler { max-height: calc(100dvh - 88px); }
-  .vitrine .v-pav-card {
-    right: max(10px, env(safe-area-inset-right));
-    bottom: max(10px, env(safe-area-inset-bottom));
-    left: auto;
-    width: min(52vw, 440px);
-    transform: none;
-  }
+
+  /* Bússola abaixo das ações empilhadas. */
+  .vitrine > button[title^="Orienta"] { top: 64px; }
 }
 
-/*
- * Scroll-driven animations usam a View Timeline API nativa. Não há listener
- * por frame nem dependência de animação: cada bloco progride conforme cruza a
- * área visível do ScrollArea. Navegadores sem suporte mantêm o layout normal.
- */
+.vitrine .vd-alca { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
-  .vitrine .v-in { animation: none; }
-  .vitrine .v-icon-btn:active,
-  .vitrine .v-pill:active,
-  .vitrine .v-btn:active,
-  .vitrine .v-btn-ghost:active,
-  .vitrine .v-fab:active { transform: none; }
+  .vitrine .vd-entra { animation: none; }
+  .vitrine .vd-ilha-rotulo { transition: none; }
+}
+
+/* --- Localização (desktop) -------------------------------------------------
+   O painel claro sobe até o topo (não há ações da cena aqui) e o cartão do
+   ponto e os controles do mapa abrem ao lado dele, nunca por baixo.
+   -------------------------------------------------------------------------- */
+@media (min-width: 768px) {
+  .vitrine .vd-local .vd-painel { top: 20px; max-height: calc(100% - 40px); }
+  .vitrine .vd-local .v-poi-card { top: 20px; right: 318px; }
+  .vitrine .vd-local .maplibregl-ctrl-top-right { right: 300px; }
 }

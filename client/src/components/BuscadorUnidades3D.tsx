@@ -1,30 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  Search, X, Eye, Maximize2, SlidersHorizontal,
-  Heart, LayoutGrid, List, ChevronDown, ArrowUpDown, ArrowLeft,
-  MessageCircle, Phone, Mail, Columns2,
-} from "lucide-react";
-import { montarMensagemContato, type ContatoCfg } from "@/lib/ivm-store";
+import { Columns3, Globe2, Layers, MessageCircle, X } from "lucide-react";
+import type { ContatoCfg } from "@/lib/ivm-store";
 import type { Scene3DHandle } from "@/components/Scene3D";
-import FaixaSlider, { faixaNoPasso } from "@/components/FaixaSlider";
 import { niveisDe, SEA_HEADING, DEFAULT_PAV_CFG, type PavimentosCfg, type NivelDef } from "@/lib/pavimentos";
 import { corteDoNivel } from "@/lib/unidades3d";
-import {
-  STATUS_META,
-  STATUS_CLARO,
-  STATUS_CLARO_FUNDO,
-  torresDe,
-  torreLabel,
-  type TorreDef,
-  type Unidade,
-  type UnidadeStatus,
-} from "@/lib/unidades";
+import { torresDe, torreLabel, type TorreDef, type Unidade } from "@/lib/unidades";
 import { CAMERA_UNIDADE_PADRAO, type Tipologia } from "@shared/schema";
 import {
-  faixasDe, formatArea, formatPreco, formatPrecoCurto, tipologiaDaUnidade,
-  unidadesComTipologia,
+  formatArea, formatPreco, tipologiaDaUnidade, unidadesComTipologia,
 } from "@/lib/tipologias";
+import {
+  Alca, CabecalhoCartao, COR_STATUS, canaisDeContato, precoAbreviado,
+} from "@/components/vitrine/comum";
 
 /**
  * Como o visitante está olhando a unidade escolhida.
@@ -38,17 +26,20 @@ import {
  */
 export type ModoFoco = "corte" | "vista" | "volume";
 
+/** A planta que vale para a unidade: a DELA, depois a do tipo (e a axonométrica legada). */
+export function plantaDaUnidade(u: Unidade, tipologias: Tipologia[]): string | undefined {
+  const t = tipologiaDaUnidade(u, tipologias);
+  return u.plantaUrl ?? t?.plantaUrl ?? t?.axonometricaUrl;
+}
+
 interface BuscadorUnidades3DProps {
   sceneRef: React.RefObject<Scene3DHandle | null>;
-  /** Identifica o projeto — separa os favoritos de um empreendimento dos do outro. */
-  projetoId?: string;
-  /** Canais de contato do projeto; sem eles o pop-up não mostra a seção. */
+  /** Canais de contato do projeto; sem eles o "Falar" não aparece. */
   contato?: ContatoCfg;
   /** Nome do empreendimento, usado no texto da mensagem de contato. */
   nomeEmpreendimento?: string;
   unidades: Unidade[];
-  plantas: { area: string; url: string }[];
-  /** Tipologias do projeto — trazem a axonométrica e os atributos do card. */
+  /** Tipologias do projeto — trazem planta e atributos herdados. */
   tipologias?: Tipologia[];
   torres?: TorreDef[];
   /** Nível aberto, para a página deitar a planta dele no chão. */
@@ -64,50 +55,24 @@ interface BuscadorUnidades3DProps {
   onModo?: (m: ModoFoco) => void;
   /** Unidades que passam no filtro — a página usa para montar as caixas. */
   onFiltrar?: (ids: string[]) => void;
-  /** Oculta lista e ficha apenas no celular, deixando a unidade visível na cena. */
-  mobileSceneOpen?: boolean;
-  /** Alterna da ficha cheia para a cena 3D no celular. */
-  onMostrarCenaMobile?: () => void;
+  /** Abre a tela Comparar plantas. */
+  onComparar: (incluirId?: string) => void;
+  /** Abre um tour 360 em tela cheia. */
+  onTour: (url: string, titulo: string) => void;
 }
 
-const STATUSES: UnidadeStatus[] = ["disponivel", "reservada", "vendida"];
-
-/** Cor + fundo do status na paleta clara (ver `STATUS_CLARO` em unidades.ts). */
-const corStatus = (s: UnidadeStatus) => ({ cor: STATUS_CLARO[s], fundo: STATUS_CLARO_FUNDO[s] });
-
-type Ordem = "numero" | "preco-asc" | "preco-desc" | "area-asc" | "area-desc";
-const ORDENS: { v: Ordem; l: string }[] = [
-  { v: "numero", l: "Unidade A–Z" },
-  { v: "preco-asc", l: "Menor preço" },
-  { v: "preco-desc", l: "Maior preço" },
-  { v: "area-asc", l: "Menor área" },
-  { v: "area-desc", l: "Maior área" },
-];
-
-type Faixa = [number, number];
-
 /**
- * Passo de cada slider de faixa. Constante, e não escrito no JSX, porque os
- * LIMITES precisam do mesmo número para as duas pontas serem alcançáveis —
- * ver `faixaNoPasso`. Preço anda em centavos: 1000 = R$ 10.
- */
-const PASSO = { area: 1, preco: 1000, quartos: 1 } as const;
-
-/**
- * Buscador de unidades ligado ao 3D: filtra o espelho por faixa (área, quartos,
- * andar, preço) além de torre, tipologia e status; ao escolher uma unidade,
- * corta o modelo no andar dela e mostra a vista real daquele nível.
+ * Unidades: lista de vidro à direita e cartão da unidade escolhida no canto
+ * inferior direito. Escolher uma unidade isola a caixa dela no espelho 3D e
+ * enquadra a câmera; o "pavimento" corta o prédio naquele andar.
  *
- * O GLB é uma fachada (sem geometria por unidade), então a ligação unidade→3D é
- * feita pelo pavimento — e o "interior" é o pop-up com a planta e os dados.
+ * Sem etiquetas de número sobre a torre — foram removidas por ruído visual.
  */
 export default function BuscadorUnidades3D({
   sceneRef,
-  projetoId,
   contato,
   nomeEmpreendimento = "",
   unidades: unidadesProp,
-  plantas,
   tipologias = [],
   torres,
   onNivel,
@@ -118,14 +83,12 @@ export default function BuscadorUnidades3D({
   onSelecionar,
   onModo,
   onFiltrar,
-  mobileSceneOpen = false,
-  onMostrarCenaMobile,
+  onComparar,
+  onTour,
 }: BuscadorUnidades3DProps) {
   /**
    * Área, quartos, suítes e vagas resolvidos ANTES de qualquer leitura: a
-   * unidade que não os declara herda os da sua tipologia. Feito aqui uma vez,
-   * a herança vale para a lista, os cards, os sliders de faixa, a ordenação e
-   * o pop-up — sem cada um deles ter de lembrar de olhar para a tipologia.
+   * unidade que não os declara herda os da sua tipologia.
    */
   const unidades = useMemo(
     () => unidadesComTipologia(unidadesProp, tipologias),
@@ -136,259 +99,46 @@ export default function BuscadorUnidades3D({
   const niveis = useMemo(() => niveisDe(pavCfg ?? {}, niveisProp), [pavCfg, niveisProp]);
   const cfg = useMemo(() => ({ ...DEFAULT_PAV_CFG, ...pavCfg }), [pavCfg]);
 
-  const [torre, setTorre] = useState<string>("");
-  const [status, setStatus] = useState<UnidadeStatus | "">("");
-  const [tipologiaId, setTipologiaId] = useState<string>("");
-  const [pavimento, setPavimento] = useState<number | null>(null);
-  const [busca, setBusca] = useState("");
-  const [modoInterno, setModoInterno] = useState<ModoFoco>("volume");
-  const modo = modoInterno;
+  const [torre, setTorre] = useState("");
+  const [modo, setModoInterno] = useState<ModoFoco>("volume");
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  const listaRef = useRef<HTMLUListElement>(null);
 
   /**
-   * Troca o modo e AVISA a página.
-   *
-   * A página precisa saber porque o modo decide a navegação da câmera: em
-   * "vista" ela pousa DENTRO da torre, e ali orbitar gira em torno de um ponto
-   * praticamente colado na câmera — um arraste curto vira o prédio inteiro.
-   * Nos outros dois a câmera olha de fora, e a órbita é o gesto certo.
+   * Troca o modo e AVISA a página: o modo decide a navegação da câmera (em
+   * "vista" ela pousa DENTRO da torre, e ali orbitar não serve).
    */
   function setModo(m: ModoFoco) {
     setModoInterno(m);
     onModo?.(m);
   }
-  const [lightbox, setLightbox] = useState<string | null>(null);
-  const [avancados, setAvancados] = useState(false);
-  const [ordem, setOrdem] = useState<Ordem>("numero");
-  const [visual, setVisual] = useState<"lista" | "grade">("lista");
-  /**
-   * Favoritos por PROJETO, guardados no navegador.
-   *
-   * Antes viviam só em memória: o cliente marcava cinco unidades, atualizava a
-   * página e perdia a seleção inteira — num plantão de vendas, é a lista de
-   * interesse dele que ia embora. A chave leva o projeto para dois
-   * empreendimentos não misturarem favoritos no mesmo navegador.
-   */
-  const chaveFavoritos = `ivm-favoritos:${projetoId ?? "sem-projeto"}`;
-  const [favoritos, setFavoritos] = useState<Set<string>>(() => {
-    try {
-      const bruto = localStorage.getItem(`ivm-favoritos:${projetoId ?? "sem-projeto"}`);
-      return new Set<string>(bruto ? (JSON.parse(bruto) as string[]) : []);
-    } catch {
-      return new Set<string>();
-    }
-  });
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(chaveFavoritos, JSON.stringify(Array.from(favoritos)));
-    } catch {
-      /* navegação privada ou cota cheia: os favoritos valem só nesta sessão */
-    }
-  }, [favoritos, chaveFavoritos]);
-  const [soFavoritos, setSoFavoritos] = useState(false);
-  const [popup, setPopup] = useState<Unidade | null>(null);
-  const [modoComparacao, setModoComparacao] = useState(false);
-  const [comparacaoIds, setComparacaoIds] = useState<string[]>([]);
-  const [comparacaoAberta, setComparacaoAberta] = useState(false);
-  const resultadosRef = useRef<HTMLDivElement>(null);
-
-  /**
-   * Limites vindos dos dados: um filtro só aparece se o projeto o preencheu.
-   *
-   * Alargados até a grade do passo de cada slider (ver `faixaNoPasso`), e não
-   * só na hora de desenhar: estes mesmos números são o estado inicial das
-   * faixas e a referência de "o usuário mexeu nisto?". Arredondar só num dos
-   * lugares faria arrastar até o fim da barra contar como filtro ativo.
-   */
-  const limites = useMemo(() => {
-    const f = faixasDe(unidades);
-    return {
-      area: faixaNoPasso(f.area, PASSO.area),
-      preco: faixaNoPasso(f.preco, PASSO.preco),
-      quartos: faixaNoPasso(f.quartos, PASSO.quartos),
-      pavimento: f.pavimento,
-    };
+  /** Faixa de área: um corte mínimo, em metros inteiros. */
+  const limitesArea = useMemo(() => {
+    const v = unidades.map((u) => u.areaPrivativa).filter((a): a is number => typeof a === "number" && Number.isFinite(a));
+    return v.length ? [Math.floor(Math.min(...v)), Math.ceil(Math.max(...v))] as [number, number] : null;
   }, [unidades]);
-  const [fArea, setFArea] = useState<Faixa | null>(null);
-  const [fPreco, setFPreco] = useState<Faixa | null>(null);
-  const [fQuartos, setFQuartos] = useState<Faixa | null>(null);
-
-  /**
-   * Reabre as faixas nos extremos quando os LIMITES mudam de valor.
-   *
-   * Depender do objeto `limites` era o mesmo que depender de `unidades`:
-   * `faixasDe` devolve um objeto novo a cada chamada e `aplicarCrm` devolve um
-   * array novo a cada atualização. Com o CRM em modo `endpoint` e um intervalo
-   * de refresh, os sliders do visitante voltavam sozinhos ao máximo no meio da
-   * busca — um espelho atualizado não é motivo para desfazer o filtro dele.
-   * A assinatura só muda quando algum extremo muda de fato.
-   */
-  const assinaturaLimites = JSON.stringify(limites);
-  useEffect(() => {
-    setFArea(limites.area);
-    setFPreco(limites.preco);
-    setFQuartos(limites.quartos);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [assinaturaLimites]);
-
-  const pavimentosDisponiveis = useMemo(
-    () => Array.from(new Set(unidades.map((u) => u.pavimento))).sort((a, b) => b - a),
-    [unidades],
-  );
+  const [areaMin, setAreaMin] = useState<number | null>(null);
+  const assinaturaArea = limitesArea?.join("-") ?? "";
+  // Só volta ao mínimo quando o LIMITE muda de valor — um refresh do CRM não
+  // pode desfazer o filtro do visitante.
+  useEffect(() => { setAreaMin(limitesArea?.[0] ?? null); }, [assinaturaArea]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sel = useMemo(
     () => unidades.find((u) => u.id === selecionadaId) ?? null,
     [unidades, selecionadaId],
   );
 
-  // A unidade pode chegar selecionada antes deste painel existir (por exemplo,
-  // ao escolhe-la na lista de pavimentos). Nesse caso nao houve um clique aqui
-  // para disparar o voo da camera, entao enquadramos depois que a cena montou.
-  useEffect(() => {
-    if (!sel) {
-      setPopup(null);
-      return;
-    }
-
-    setModo("volume");
-    setPopup(sel);
-    let cancelado = false;
-    let timer: number | undefined;
-    const focar = (tentativa = 0) => {
-      if (cancelado) return;
-      sceneRef.current?.cutAtFloor(null);
-      const enquadrou = sceneRef.current?.frameUnit(
-        sel.id,
-        sel.camera ?? CAMERA_UNIDADE_PADRAO,
-      );
-      // Na troca pavimento -> unidades, as caixas entram na cena em outro
-      // efeito do React. Aguarda a entidade existir, sem exigir segundo clique.
-      if (!enquadrou && tentativa < 8) {
-        timer = window.setTimeout(() => focar(tentativa + 1), 80);
-      }
-    };
-    const frame = window.requestAnimationFrame(() => focar());
-    return () => {
-      cancelado = true;
-      window.cancelAnimationFrame(frame);
-      if (timer != null) window.clearTimeout(timer);
-    };
-  }, [sel?.id, sceneRef]);
-
-  /** Tipologias realmente usadas pelas unidades. */
-  const tipsUsadas = useMemo(() => {
-    const ids = new Set(unidades.map((u) => u.tipologiaId ?? u.tipologia));
-    return tipologias.filter((t) => ids.has(t.id) || ids.has(t.nome));
-  }, [tipologias, unidades]);
-
-  /**
-   * Ha algum filtro avancado para mostrar?
-   *
-   * Os tres filtros do painel sao condicionais, cada um por um bom motivo:
-   * faixa de quartos so existe se houver variacao, e torre e tipologia so
-   * fazem sentido com mais de uma opcao — filtrar entre um item unico nao
-   * filtra nada. Num empreendimento de torre unica e tipologia unica os tres
-   * caem, e sobrava um botao "Filtros avancados" que abria um painel VAZIO.
-   *
-   * Um controle de revelacao sem conteudo e pior do que ausencia: o visitante
-   * clica, nada acontece, e a conclusao razoavel e que a vitrine travou.
-   *
-   * A condicao repete as tres de dentro do painel de proposito — e ela que
-   * garante que o botao e o conteudo aparecem e somem juntos.
-   */
-  const temFiltrosAvancados = !!(limites.quartos && fQuartos)
-    || TORRES.length > 1
-    || tipsUsadas.length > 1;
-
-  const tipDe = (u: Unidade) => tipologiaDaUnidade(u, tipologias);
-  /**
-   * Imagem do card: a planta.
-   *
-   * Antes a axonométrica vinha na frente. Ela deixou de ser cadastrável — era
-   * um segundo render por tipologia que ninguém produzia — e o campo só
-   * sobrevive para os projetos que já tinham uma. Onde houver, ela ainda é
-   * usada; onde não houver (todos os novos), a planta ocupa o lugar.
-   */
-  /**
-   * A planta que vale para a unidade, nesta ordem: a DELA, depois a do tipo.
-   *
-   * A busca por nome em `plantas` saiu daqui. Aquela lista é a unificada do
-   * projeto — inclui as plantas de PAVIMENTO — e casava pelo rótulo, então uma
-   * unidade acabava exibindo o desenho de um andar inteiro em vez do próprio
-   * apartamento. Uma unidade sem planta e sem tipologia agora não mostra
-   * imagem, que é honesto: nada é melhor que a planta errada.
-   */
-  const plantaDe = (u: Unidade) => u.plantaUrl ?? tipDe(u)?.plantaUrl;
-  const imagemDe = (u: Unidade) => plantaDe(u) ?? tipDe(u)?.axonometricaUrl;
-
-  const dentro = (v: number | undefined, f: Faixa | null) =>
-    !f || v == null || (v >= f[0] && v <= f[1]);
-
-  /**
-   * A faixa saiu dos extremos? Nos extremos ela não filtra nada — é o estado
-   * "não mexi nisso", e não "quero tudo o que tem esse dado".
-   */
-  const faixaMexida = (f: Faixa | null, limite: Faixa | null) =>
-    !!f && !!limite && (f[0] !== limite[0] || f[1] !== limite[1]);
-
-  /**
-   * Preço é o único atributo em que a ausência do dado é significativa: uma
-   * unidade sem preço cadastrado não é barata nem cara, e deixá-la passar por
-   * um slider mexido fazia "até R$ 500 mil" devolver unidades de preço
-   * desconhecido — o filtro dizia uma coisa e o resultado mostrava outra.
-   *
-   * Com o slider intacto ela continua na lista: sumir de um filtro que ninguém
-   * usou seria esconder estoque real do corretor.
-   */
-  const dentroDoPreco = (u: Unidade) =>
-    u.preco == null ? !faixaMexida(fPreco, limites.preco) : dentro(u.preco, fPreco);
+  const disponiveis = unidades.filter((u) => u.status === "disponivel").length;
 
   const resultados = useMemo(() => {
-    const q = busca.trim().toLowerCase();
-    const lista = unidades
-      .filter((u) => (!torre || u.torre === torre) && (!status || u.status === status))
-      .filter((u) => pavimento == null || u.pavimento === pavimento)
-      .filter((u) => !tipologiaId || u.tipologiaId === tipologiaId || u.tipologia === tipologiaId)
-      .filter((u) => !soFavoritos || favoritos.has(u.id))
-      .filter((u) => dentro(u.areaPrivativa, fArea))
-      .filter(dentroDoPreco)
-      .filter((u) => dentro(u.quartos, fQuartos))
-      .filter((u) => !q || u.numero.toLowerCase().includes(q) || u.tipologia.toLowerCase().includes(q));
-
-    const porNumero = (a: Unidade, b: Unidade) =>
-      b.pavimento - a.pavimento || a.numero.localeCompare(b.numero);
-    // Unidades sem o dado da ordenação vão para o fim, em vez de fingir zero.
-    const porCampo = (campo: "preco" | "areaPrivativa", asc: boolean) => (a: Unidade, b: Unidade) => {
-      const va = a[campo];
-      const vb = b[campo];
-      if (va == null && vb == null) return porNumero(a, b);
-      if (va == null) return 1;
-      if (vb == null) return -1;
-      return asc ? va - vb : vb - va;
-    };
-
-    const cmp =
-      ordem === "preco-asc" ? porCampo("preco", true)
-      : ordem === "preco-desc" ? porCampo("preco", false)
-      : ordem === "area-asc" ? porCampo("areaPrivativa", true)
-      : ordem === "area-desc" ? porCampo("areaPrivativa", false)
-      : porNumero;
-
-    return [...lista].sort(cmp);
-    // `limites` entra porque o filtro de preço compara a faixa com os extremos.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unidades, torre, status, pavimento, tipologiaId, busca, soFavoritos, favoritos, fArea, fPreco, fQuartos, ordem, limites]);
-
-  // Mantem a lista sincronizada com selecoes vindas da tela de pavimentos.
-  // O scroll fica restrito a gaveta esquerda e centraliza o card ativo.
-  useEffect(() => {
-    if (!sel) return;
-    const frame = window.requestAnimationFrame(() => {
-      const card = resultadosRef.current?.querySelector<HTMLElement>('[data-sel="1"]');
-      card?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [sel?.id, resultados, visual]);
+    const filtroArea = limitesArea && areaMin != null && areaMin > limitesArea[0];
+    return unidades
+      .filter((u) => !torre || u.torre === torre)
+      // Sem área cadastrada, a unidade só some quando o filtro foi mexido.
+      .filter((u) => !filtroArea || (u.areaPrivativa != null && u.areaPrivativa >= (areaMin as number)))
+      .sort((a, b) => b.pavimento - a.pavimento || a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+  }, [unidades, torre, areaMin, limitesArea]);
 
   // Publica o filtro para a página montar as caixas do espelho 3D.
   useEffect(() => {
@@ -396,62 +146,67 @@ export default function BuscadorUnidades3D({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [resultados]);
 
-  // Limpa o corte ao sair, para não deixar o prédio "cortado" na cena.
-  useEffect(() => {
-    return () => {
-      sceneRef.current?.cutAtFloor(null);
-    };
-  }, [sceneRef]);
-
   /**
-   * Nível de uma unidade — casando TORRE e pavimento, nesta ordem.
-   *
-   * Antes casava só pelo pavimento, e com níveis por bloco isso pegava o
-   * primeiro "5º Pavimento" da lista: clicar numa unidade da River abria o
-   * corte da Sea. O casamento por pavimento sozinho fica como reserva, para
-   * os projetos cujos níveis não estão separados por bloco.
+   * A unidade pode chegar selecionada antes deste painel existir, ou por
+   * clique na caixa da cena. Não houve clique na lista para disparar o voo da
+   * câmera, então enquadramos aqui — esperando as caixas entrarem na cena.
    */
+  useEffect(() => {
+    if (!sel) return;
+    setModo("volume");
+    let cancelado = false;
+    let timer: number | undefined;
+    const focar = (tentativa = 0) => {
+      if (cancelado) return;
+      sceneRef.current?.cutAtFloor(null);
+      const enquadrou = sceneRef.current?.frameUnit(sel.id, sel.camera ?? CAMERA_UNIDADE_PADRAO);
+      if (!enquadrou && tentativa < 8) timer = window.setTimeout(() => focar(tentativa + 1), 80);
+    };
+    const frame = window.requestAnimationFrame(() => focar());
+    // A linha escolhida entra na área visível da lista.
+    const frameLista = window.requestAnimationFrame(() => {
+      listaRef.current?.querySelector<HTMLElement>('[data-on="1"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    return () => {
+      cancelado = true;
+      window.cancelAnimationFrame(frame);
+      window.cancelAnimationFrame(frameLista);
+      if (timer != null) window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sel?.id, sceneRef]);
+
+  // Limpa o corte ao sair, para não deixar o prédio "cortado" na cena.
+  useEffect(() => () => { sceneRef.current?.cutAtFloor(null); }, [sceneRef]);
+
+  /** Nível de uma unidade — casando TORRE e pavimento, nesta ordem. */
   const nivelDe = (u: Unidade) =>
     niveis.find((n) => n.torreId === u.torre && n.pavimento === u.pavimento) ??
     niveis.find((n) => !n.torreId && n.pavimento === u.pavimento);
 
-  /**
-   * Escolher uma unidade tem três leituras: o volume dela no espelho 3D, o corte
-   * do prédio no andar e a vista real a partir daquele nível.
-   */
-  function escolher(u: Unidade, como: "volume" | "corte" | "vista" = "volume") {
-    onSelecionar?.(u);
+  /** Volume da unidade no espelho 3D, ou o andar cortado visto de cima. */
+  function ver(u: Unidade, como: ModoFoco) {
     setModo(como);
-    const nivel = nivelDe(u);
     if (como === "volume") {
-      // O espelho 3D precisa do prédio inteiro visível para ler a distribuição.
+      onNivel?.(null);
       sceneRef.current?.cutAtFloor(null);
-      // Voa para o enquadramento configurado da unidade (ângulo, inclinação e
-      // distância definidos no editor); sem ele, o padrão do projeto.
       sceneRef.current?.frameUnit(u.id, u.camera ?? CAMERA_UNIDADE_PADRAO);
       return;
     }
-    // Sem nível correspondente não há corte a fazer — acontece quando os níveis
-    // foram editados por bloco e o andar desta unidade ficou de fora. Antes a
-    // função simplesmente retornava, e o botão do pop-up não fazia NADA: um
-    // enquadramento externo é uma resposta pior que o corte, mas é uma resposta.
+    const nivel = nivelDe(u);
+    // Sem nível correspondente, um enquadramento externo ainda é uma resposta.
     if (!nivel) {
       onNivel?.(null);
       sceneRef.current?.cutAtFloor(null);
       sceneRef.current?.viewCutExternal();
       return;
     }
-    // A página precisa saber qual nível está aberto: é dela que sai a planta
-    // deitada no chão, que é PROP do Scene3D e não passa pelo `sceneRef`.
     onNivel?.(nivel);
     const corte = corteDoNivel(nivel);
     sceneRef.current?.cutAtFloor(corte);
     if (como === "vista") sceneRef.current?.viewFromFloor(nivel.camH, cfg.viewHeading ?? SEA_HEADING);
-    // Corte: de cima, no mesmo enquadramento derivado da régua de pavimentos —
-    // pular entre unidades de andares diferentes tem de dar a mesma leitura.
     else if (corte) sceneRef.current?.viewCorteDeCima(
-      // Usa exatamente o alvo, a inclinacao e o giro salvos para o andar.
-      // Apenas abre um pouco o enquadramento para compensar as gavetas laterais.
       corte, (nivel.camDist ?? cfg.camDist) * 1.2, nivel.camPitch ?? cfg.camPitch,
       nivel.camGiro ?? cfg.camGiro, 1.4, nivel.plantaArea,
     );
@@ -459,15 +214,10 @@ export default function BuscadorUnidades3D({
   }
 
   /**
-   * Volta ao estado de partida: prédio inteiro, todas as unidades.
-   *
-   * Escolher uma unidade encadeia três coisas — corte no andar, isolamento da
-   * caixa e um enquadramento próprio — e desfazê-las uma a uma exigia saber que
-   * as três existem. O caminho de volta tem de ser um gesto só, no mesmo lugar
-   * em que a ida aconteceu.
+   * Desfaz a escolha inteira — corte, isolamento e enquadramento. Fechar o
+   * cartão tem de desfazer o que abri-lo fez.
    */
   function mostrarTodas() {
-    setPopup(null);
     setModo("volume");
     onNivel?.(null);
     onSelecionar?.(null);
@@ -475,771 +225,188 @@ export default function BuscadorUnidades3D({
     sceneRef.current?.frameBuilding();
   }
 
-  function alternarFavorito(id: string) {
-    setFavoritos((s) => {
-      const n = new Set(s);
-      if (n.has(id)) n.delete(id);
-      else n.add(id);
-      return n;
-    });
-  }
-
-  function alternarComparacao(id: string) {
-    setComparacaoIds((ids) => {
-      if (ids.includes(id)) return ids.filter((atual) => atual !== id);
-      // A terceira escolha substitui a mais antiga, facilitando experimentar
-      // alternativas sem desmontar a comparação inteira.
-      return ids.length < 2 ? [...ids, id] : [ids[1], id];
-    });
-  }
-
-  function sairDaComparacao() {
-    setModoComparacao(false);
-    setComparacaoIds([]);
-  }
-
-  function limparFiltros() {
-    setTorre("");
-    setStatus("");
-    setTipologiaId("");
-    setPavimento(null);
-    setBusca("");
-    setSoFavoritos(false);
-    setFArea(limites.area);
-    setFPreco(limites.preco);
-    setFQuartos(limites.quartos);
-  }
-
-  const temFiltro =
-    !!torre || !!status || pavimento != null || !!tipologiaId || !!busca.trim() || soFavoritos ||
-    faixaMexida(fArea, limites.area) ||
-    faixaMexida(fPreco, limites.preco) ||
-    faixaMexida(fQuartos, limites.quartos);
+  const tipDe = (u: Unidade) => tipologiaDaUnidade(u, tipologias);
+  const canalGeral = canaisDeContato(contato, nomeEmpreendimento)[0];
 
   return (
     <>
-      {/*
-        Painel colado à borda esquerda, de altura cheia — como na referência.
-        Antes ele flutuava com margem em volta, e a margem é justamente o que
-        faz a tela parecer feita de blocos soltos: o painel vira mais uma
-        caixa sobre a cena, em vez de uma coluna de leitura.
-      */}
-      <div className={`v-unit-search v-scroll absolute inset-y-0 left-0 z-40 flex w-[380px] max-w-full flex-col bg-[var(--v-surface)] shadow-[var(--v-sh-3)] ${mobileSceneOpen ? "v-unit-info-hidden-mobile" : ""}`}>
-        <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
-          <div className="min-w-0">
-            <h2 className="v-title text-[22px]">Unidades</h2>
-            <p className="v-faint mt-1 text-[12px]">
-              <span className="v-num font-semibold text-[var(--v-ink)]">{resultados.length}</span>
-              {" de "}{unidades.length} no empreendimento
-            </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button onClick={onClose} title="Fechar"
-              className="grid h-9 w-9 place-items-center rounded-[var(--v-r-sm)] text-[var(--v-ink-3)] transition-colors hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]">
-              <X className="h-4 w-4" />
+      <aside
+        className="vd-painel vd-unidades vd-vidro vd-entra v-unit-search w-[298px] overflow-hidden"
+        data-com-cartao={sel ? "1" : undefined}
+        aria-label="Unidades"
+      >
+        <Alca onFechar={onClose} />
+        <CabecalhoCartao
+          rotulo="Unidades"
+          extra={
+            <span className="vd-micro vd-num vd-bronze" title="Disponíveis / total">
+              <span className="max-md:hidden">{disponiveis} / {unidades.length}</span>
+              <span className="md:hidden">{unidades.length} unidades / {disponiveis} livres</span>
+            </span>
+          }
+          acao={
+            <button type="button" onClick={onClose} className="vd-icone-btn vd-alvo"
+              title="Fechar" aria-label="Fechar unidades">
+              <X className="h-4 w-4" strokeWidth={1.5} />
             </button>
-          </div>
-        </header>
+          }
+        />
 
-        {/* Filtros */}
-        <div className="space-y-4 px-6 pb-5">
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--v-ink-3)]" />
-            <input
-              value={busca}
-              onChange={(e) => setBusca(e.target.value)}
-              placeholder="Nº da unidade ou tipologia"
-              className="v-input v-input-icone"
-            />
-            {temFiltro && (
-              <button onClick={limparFiltros} title="Limpar filtros"
-                className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full text-[var(--v-ink-3)] hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]">
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Faixas: só aparecem quando o projeto tem o dado. */}
-          {(limites.area || limites.preco) && (
-            <div className="space-y-3.5">
-              {limites.area && fArea && (
-                /* O limite do slider é um corte, não uma medida: ele anda de
-                   metro em metro e a etiqueta acompanha. Quem mostra a área
-                   exata é a ficha da unidade. */
-                <FaixaSlider label="Área" min={limites.area[0]} max={limites.area[1]} step={PASSO.area}
-                  value={fArea} onChange={setFArea} format={(v) => formatArea(Math.round(v))} />
-              )}
-              {limites.preco && fPreco && (
-                <FaixaSlider label="Preço" min={limites.preco[0]} max={limites.preco[1]} step={PASSO.preco}
-                  value={fPreco} onChange={setFPreco} format={(v) => `R$ ${formatPrecoCurto(v)}`} />
-              )}
-            </div>
-          )}
-
-          <div className="v-seg">
-            {[...STATUSES.map((s) => ({ v: s as string, l: STATUS_META[s].label })), { v: "", l: "Todas" }].map((o) => (
-              <button key={o.v} onClick={() => setStatus(o.v as UnidadeStatus | "")}
-                data-on={status === o.v ? "1" : undefined}>
-                {o.l}
-              </button>
-            ))}
-          </div>
-
-          <label className="block">
-            <span className="v-eyebrow mb-2 block">Pavimento</span>
-            <select
-              value={pavimento ?? ""}
-              onChange={(e) => setPavimento(e.target.value === "" ? null : Number(e.target.value))}
-              className="v-input cursor-pointer"
-            >
-              <option value="">Todos os pavimentos</option>
-              {pavimentosDisponiveis.map((andar) => (
-                <option key={andar} value={andar}>{andar}º pavimento</option>
-              ))}
-            </select>
-          </label>
-
-          {temFiltrosAvancados && (
-            <button onClick={() => setAvancados((v) => !v)}
-              className="flex items-center gap-1.5 text-[12px] font-medium text-[var(--v-ink-2)] transition-colors hover:text-[var(--v-ink)]">
-              <SlidersHorizontal className="h-3.5 w-3.5" /> Filtros avançados
-              <ChevronDown className={`h-3.5 w-3.5 transition-transform ${avancados ? "rotate-180" : ""}`} />
-            </button>
-          )}
-
-          {temFiltrosAvancados && avancados && (
-            <div className="v-in space-y-3.5 border-t border-[var(--v-line)] pt-4">
-              {limites.quartos && fQuartos && (
-                <FaixaSlider label="Quartos" min={limites.quartos[0]} max={limites.quartos[1]} step={PASSO.quartos}
-                  value={fQuartos} onChange={setFQuartos} />
-              )}
-              {TORRES.length > 1 && (
-                <Chips label="Torre" value={torre} onChange={setTorre}
-                  options={[{ v: "", l: "Todas" }, ...TORRES.map((t) => ({ v: t.id, l: t.label }))]} />
-              )}
-              {tipsUsadas.length > 1 && (
-                <Chips label="Tipologia" value={tipologiaId} onChange={setTipologiaId}
-                  options={[{ v: "", l: "Todas" }, ...tipsUsadas.map((t) => ({ v: t.id, l: t.nome }))]} />
-              )}
-            </div>
-          )}
-        </div>
-
-        {/*
-          Faixa de resultados sobre a superfície secundária: é a mudança de
-          fundo que separa "o que eu procuro" de "o que encontrei", sem
-          precisar de mais uma borda.
-        */}
-        <div className="flex items-center gap-2 border-y border-[var(--v-line)] bg-[var(--v-surface-2)] px-6 py-2.5">
-          <span className="v-eyebrow mr-auto">
-            {resultados.length} {resultados.length === 1 ? "resultado" : "resultados"}
-          </span>
-          <div className="flex items-center gap-1 text-[var(--v-ink-2)]">
-            <ArrowUpDown className="h-3.5 w-3.5 shrink-0" />
-            <select value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)}
-              className="cursor-pointer bg-transparent text-[12px] font-medium outline-none hover:text-[var(--v-ink)]">
-              {ORDENS.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
-            </select>
-          </div>
-          <button onClick={() => setSoFavoritos((v) => !v)} title="Só favoritas"
-            className={`flex h-7 items-center gap-1 rounded-[6px] px-1.5 transition-colors ${
-              soFavoritos ? "bg-rose-50 text-rose-600" : "text-[var(--v-ink-3)] hover:text-[var(--v-ink)]"}`}>
-            <Heart className="h-3.5 w-3.5" fill={soFavoritos ? "currentColor" : "none"} />
-            {favoritos.size > 0 && <span className="v-num text-[11px] font-semibold">{favoritos.size}</span>}
-          </button>
-          {resultados.length >= 2 && (
-            <button onClick={() => modoComparacao ? sairDaComparacao() : setModoComparacao(true)}
-              title={modoComparacao ? "Cancelar comparação" : "Selecionar dois apartamentos para comparar"}
-              data-testid="btn-comparar-unidades"
-              className={`flex h-7 items-center gap-1 rounded-[6px] px-2 text-[11px] font-semibold transition-colors ${
-                modoComparacao
-                  ? "bg-[var(--v-accent-soft)] text-[var(--v-accent)]"
-                  : "text-[var(--v-ink-3)] hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]"
-              }`}>
-              <Columns2 className="h-3.5 w-3.5" />
-              {modoComparacao ? "Cancelar" : "Comparar"}
-            </button>
-          )}
-          <button onClick={() => setVisual(visual === "lista" ? "grade" : "lista")}
-            title={visual === "lista" ? "Ver em grade" : "Ver em lista"}
-            className="grid h-7 w-7 place-items-center rounded-[6px] text-[var(--v-ink-3)] transition-colors hover:text-[var(--v-ink)]">
-            {visual === "lista" ? <LayoutGrid className="h-4 w-4" /> : <List className="h-4 w-4" />}
-          </button>
-        </div>
-
-        {/* Resultados */}
-        <div ref={resultadosRef} className="v-scroll min-h-0 flex-1 overflow-y-auto bg-[var(--v-surface-2)] px-5 py-4">
-          {resultados.length === 0 ? (
-            <p className="v-faint py-14 text-center text-[13px]">Nenhuma unidade com esses filtros.</p>
-          ) : (
-            <div className={visual === "grade" ? "grid grid-cols-2 gap-3" : "space-y-3"}>
-              {resultados.map((u) => (
-                <CardUnidade key={u.id} u={u} torres={torres} imagem={imagemDe(u)}
-                  compacto={visual === "grade"}
-                  selecionada={sel?.id === u.id} favorita={favoritos.has(u.id)}
-                  emComparacao={comparacaoIds.includes(u.id)}
-                  onFavoritar={() => alternarFavorito(u.id)}
-                  onClick={() => {
-                    if (modoComparacao) alternarComparacao(u.id);
-                    else { escolher(u); setPopup(u); }
-                  }} />
+        <div className="shrink-0 space-y-3 px-4 pb-3">
+          {TORRES.length > 1 && (
+            <div className="vd-scroll flex gap-1.5 overflow-x-auto" role="group" aria-label="Bloco">
+              {[{ id: "", label: "Todos" }, ...TORRES].map((t) => (
+                <button key={t.id || "todos"} type="button" className="vd-pilula !h-7 shrink-0 !px-3"
+                  data-on={torre === t.id ? "1" : undefined} onClick={() => setTorre(t.id)}>
+                  {t.label}
+                </button>
               ))}
             </div>
           )}
+
+          {limitesArea && areaMin != null && limitesArea[0] < limitesArea[1] && (
+            <label className="block">
+              <span className="flex items-baseline justify-between">
+                <span className="vd-micro vd-3">Área</span>
+                <span className="vd-num text-[11px] vd-2">a partir de {areaMin} m²</span>
+              </span>
+              <input type="range" className="vd-range" min={limitesArea[0]} max={limitesArea[1]} step={1}
+                value={areaMin} onChange={(e) => setAreaMin(Number(e.target.value))}
+                aria-label="Área mínima" aria-valuetext={`${areaMin} metros quadrados`} />
+            </label>
+          )}
+
+          {unidades.length >= 2 && (
+            <button type="button" className="vd-btn vd-btn-vazado !h-9 w-full"
+              onClick={() => onComparar(sel?.id)} data-testid="btn-comparar-unidades">
+              <Columns3 className="h-3.5 w-3.5" strokeWidth={1.5} /> Comparar plantas
+            </button>
+          )}
         </div>
 
-        {modoComparacao && (
-          <div className="border-t border-[var(--v-line)] bg-[var(--v-surface)] px-5 py-3 shadow-[0_-10px_25px_rgba(25,28,31,0.08)]"
-            data-testid="barra-comparacao">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <p className="text-[12px] font-medium text-[var(--v-ink)]">
-                {comparacaoIds.length === 0 ? "Escolha dois apartamentos" : comparacaoIds.length === 1 ? "Escolha mais um apartamento" : "Pronto para comparar"}
-              </p>
-              <span className="v-meta">{comparacaoIds.length} / 2</span>
-            </div>
-            <button type="button" disabled={comparacaoIds.length !== 2}
-              onClick={() => setComparacaoAberta(true)} data-testid="btn-abrir-comparacao"
-              className="v-btn-primary flex h-10 w-full items-center justify-center gap-2 rounded-[var(--v-r-sm)] disabled:cursor-not-allowed disabled:opacity-35">
-              <Columns2 className="h-4 w-4" /> Comparar apartamentos
-            </button>
+        <ul ref={listaRef} className="vd-scroll vd-linha min-h-0 flex-1">
+          {resultados.length === 0 && (
+            <li className="vd-micro vd-3 px-4 py-10 text-center">Nenhuma unidade com esses filtros.</li>
+          )}
+          {resultados.map((u) => {
+            const cor = COR_STATUS[u.status];
+            const resumo = [
+              u.areaPrivativa != null ? formatArea(u.areaPrivativa) : null,
+              `${u.pavimento}º`,
+              torreLabel(u.torre, torres),
+            ].filter(Boolean).join(" · ");
+            return (
+              <li key={u.id}>
+                <button type="button" className="vd-item" data-on={sel?.id === u.id ? "1" : undefined}
+                  data-testid={`unidade-card-${u.id}`}
+                  aria-label={`Unidade ${u.numero}, ${cor.label}`}
+                  onClick={() => onSelecionar?.(sel?.id === u.id ? null : u)}>
+                  <span className="vd-ponto" style={{ background: cor.escuro }} title={cor.label} />
+                  <span className="min-w-0 flex-1">
+                    <span className="vd-num block text-[13px] font-medium">{u.numero}</span>
+                    <span className="vd-num mt-0.5 block truncate text-[10.5px] tracking-[0.04em] vd-3">{resumo}</span>
+                  </span>
+                  <span className="vd-num shrink-0 text-[12px] vd-2">
+                    {u.status === "vendida" ? "—" : precoAbreviado(u.preco)}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+
+        {canalGeral && (
+          <div className="shrink-0 p-3 md:hidden">
+            <a href={canalGeral.href} target="_blank" rel="noreferrer"
+              className="vd-btn vd-btn-bronze !h-[46px] w-full">
+              <MessageCircle className="h-4 w-4" strokeWidth={1.5} /> Falar com o corretor
+            </a>
           </div>
         )}
+      </aside>
 
-      </div>
+      {sel && (() => {
+        const cor = COR_STATUS[sel.status];
+        const tip = tipDe(sel);
+        const planta = plantaDaUnidade(sel, tipologias);
+        const canal = canaisDeContato(contato, nomeEmpreendimento, sel.numero)[0];
+        const resumo = [
+          tip?.nome ?? sel.tipologia,
+          sel.quartos != null ? `${sel.quartos} quartos` : null,
+          sel.suites != null ? `${sel.suites} suítes` : null,
+          sel.vagas != null ? `${sel.vagas} vagas` : null,
+          sel.areaPrivativa != null ? formatArea(sel.areaPrivativa) : null,
+          `${sel.pavimento}º pav. · ${torreLabel(sel.torre, torres)}`,
+        ].filter(Boolean).join(" · ");
+        return (
+          <section className="vd-unidade-card vd-vidro vd-entra vd-scroll p-4" key={sel.id}
+            aria-label={`Unidade ${sel.numero}`} data-testid="cartao-unidade">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0">
+                <p className="vd-num text-[16px] font-light tracking-[0.08em]">Unidade {sel.numero}</p>
+                <p className="vd-micro mt-1 flex items-center gap-1.5" style={{ color: cor.escuro }}>
+                  <span className="vd-ponto" style={{ background: cor.escuro }} />
+                  {cor.label}
+                </p>
+              </div>
+              <div className="ml-auto flex shrink-0">
+                <button type="button" className="vd-icone-btn vd-alvo"
+                  data-on={modo === "corte" ? "1" : undefined}
+                  onClick={() => ver(sel, modo === "corte" ? "volume" : "corte")}
+                  title={modo === "corte" ? "Voltar à unidade" : "Ver o pavimento"}
+                  aria-label={modo === "corte" ? "Voltar à unidade" : "Ver o pavimento"}>
+                  <Layers className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </button>
+                <button type="button" className="vd-icone-btn vd-alvo"
+                  onClick={() => onComparar(sel.id)} title="Comparar" aria-label="Comparar esta planta">
+                  <Columns3 className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </button>
+                <button type="button" className="vd-icone-btn vd-alvo" onClick={mostrarTodas}
+                  title="Fechar" aria-label="Fechar a unidade" data-testid="btn-mostrar-todas">
+                  <X className="h-3.5 w-3.5" strokeWidth={1.5} />
+                </button>
+              </div>
+            </div>
 
-      {/* Pop-up da unidade: a planta e a ficha — é o "interior" da experiência. */}
-      {popup && (
-        <PopupUnidade
-          u={popup}
-          tipologia={tipDe(popup)}
-          imagem={imagemDe(popup)}
-          planta={plantaDe(popup)}
-          torres={torres}
-          contato={contato}
-          nomeEmpreendimento={nomeEmpreendimento}
-          modo={modo}
-          favorita={favoritos.has(popup.id)}
-          onFavoritar={() => alternarFavorito(popup.id)}
-          onAmpliar={(url) => setLightbox(url)}
-          onVerNo3D={(como) => {
-            escolher(popup, como);
-            onMostrarCenaMobile?.();
-          }}
-          mobileSceneOpen={mobileSceneOpen}
-          onMostrarTodas={mostrarTodas}
-          /**
-           * O ✕ DESFAZ a escolha; não apenas esconde o cartão.
-           *
-           * Escolher uma unidade encadeia três coisas na cena — corte no andar,
-           * isolamento da caixa e enquadramento próprio. Fechando só o cartão,
-           * as três continuavam valendo: o visitante ficava olhando um prédio
-           * cortado, com uma unidade acesa e nenhum controle à vista para
-           * voltar. O gesto de fechar tem de desfazer o que o de abrir fez.
-           */
-          onClose={mostrarTodas}
-        />
-      )}
+            {planta && (
+              <button type="button" onClick={() => setLightbox(planta)}
+                className="vd-planta mt-3 block h-[150px] w-full overflow-hidden rounded-[6px]"
+                title="Ampliar a planta" aria-label="Ampliar a planta">
+                <img src={planta} alt={`Planta da unidade ${sel.numero}`} className="h-full w-full object-contain p-2" />
+              </button>
+            )}
 
-      {comparacaoAberta && comparacaoIds.length === 2 && (() => {
-        const escolhidas = comparacaoIds
-          .map((id) => unidades.find((u) => u.id === id))
-          .filter((u): u is Unidade => !!u);
-        return escolhidas.length === 2 ? (
-          <ComparadorUnidades
-            unidades={escolhidas as [Unidade, Unidade]}
-            plantas={[plantaDe(escolhidas[0]), plantaDe(escolhidas[1])]}
-            torres={torres}
-            onClose={() => setComparacaoAberta(false)}
-            onAmpliar={(url) => setLightbox(url)}
-          />
-        ) : null;
+            <p className="vd-num mt-3 text-[19px] font-extralight">
+              {sel.status === "vendida" ? "Vendida" : formatPreco(sel.preco)}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed tracking-[0.03em] vd-2">{resumo}</p>
+
+            {(tip?.tour360Url || canal) && (
+              <div className="mt-4 flex gap-2">
+                {tip?.tour360Url && (
+                  <button type="button" className="vd-btn vd-btn-vazado flex-1"
+                    onClick={() => onTour(tip.tour360Url as string, `Unidade ${sel.numero}`)}>
+                    <Globe2 className="h-3.5 w-3.5" strokeWidth={1.5} /> 360°
+                  </button>
+                )}
+                {canal && (
+                  <a href={canal.href} target="_blank" rel="noreferrer" className="vd-btn vd-btn-bronze flex-1">
+                    <MessageCircle className="h-3.5 w-3.5" strokeWidth={1.5} /> Falar
+                  </a>
+                )}
+              </div>
+            )}
+          </section>
+        );
       })()}
 
-      {lightbox &&
-        createPortal(
-          <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 backdrop-blur-sm"
-            onClick={() => setLightbox(null)}>
-            <img src={lightbox} alt="" className="max-h-[85vh] max-w-[90vw] rounded-lg object-contain" />
-          </div>,
-          document.body,
-        )}
+      {lightbox && createPortal(
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/90 p-6"
+          onClick={() => setLightbox(null)} role="dialog" aria-label="Planta ampliada">
+          <img src={lightbox} alt="" className="max-h-[88vh] max-w-[92vw] rounded-[6px] bg-white object-contain p-4" />
+        </div>,
+        document.body,
+      )}
     </>
-  );
-}
-
-type LinhaComparacao = {
-  label: string;
-  valores: [string, string];
-  brutos: [string | number | undefined, string | number | undefined];
-  diferenca?: string;
-};
-
-/** Compara duas unidades em uma matriz alinhada e mantém as plantas lado a lado. */
-function ComparadorUnidades({ unidades, plantas, torres, onClose, onAmpliar }: {
-  unidades: [Unidade, Unidade];
-  plantas: [string | undefined, string | undefined];
-  torres?: TorreDef[];
-  onClose: () => void;
-  onAmpliar: (url: string) => void;
-}) {
-  const [a, b] = unidades;
-  const mostrar = (v: string | number | undefined, sufixo = "") => v == null || v === "" ? "—" : `${v}${sufixo}`;
-  const delta = (va?: number, vb?: number, formatar?: (n: number) => string) => {
-    if (va == null || vb == null || va === vb) return undefined;
-    const d = vb - va;
-    return `${d > 0 ? "+" : "−"}${formatar ? formatar(Math.abs(d)) : Math.abs(d)}`;
-  };
-  const linhas: LinhaComparacao[] = [
-    { label: "Tipologia", valores: [mostrar(a.tipologia), mostrar(b.tipologia)], brutos: [a.tipologia, b.tipologia] },
-    { label: "Preço", valores: [formatPreco(a.preco), formatPreco(b.preco)], brutos: [a.preco, b.preco], diferenca: delta(a.preco, b.preco, formatPreco) },
-    { label: "Área privativa", valores: [formatArea(a.areaPrivativa), formatArea(b.areaPrivativa)], brutos: [a.areaPrivativa, b.areaPrivativa], diferenca: delta(a.areaPrivativa, b.areaPrivativa, (n) => formatArea(n)) },
-    { label: "Área total", valores: [formatArea(a.areaTotal), formatArea(b.areaTotal)], brutos: [a.areaTotal, b.areaTotal], diferenca: delta(a.areaTotal, b.areaTotal, (n) => formatArea(n)) },
-    { label: "Quartos", valores: [mostrar(a.quartos), mostrar(b.quartos)], brutos: [a.quartos, b.quartos], diferenca: delta(a.quartos, b.quartos) },
-    { label: "Suítes", valores: [mostrar(a.suites), mostrar(b.suites)], brutos: [a.suites, b.suites], diferenca: delta(a.suites, b.suites) },
-    { label: "Vagas", valores: [mostrar(a.vagas), mostrar(b.vagas)], brutos: [a.vagas, b.vagas], diferenca: delta(a.vagas, b.vagas) },
-    { label: "Pavimento", valores: [mostrar(a.pavimento, "º"), mostrar(b.pavimento, "º")], brutos: [a.pavimento, b.pavimento], diferenca: delta(a.pavimento, b.pavimento, (n) => `${n} andar${n === 1 ? "" : "es"}`) },
-    { label: "Torre", valores: [torreLabel(a.torre, torres), torreLabel(b.torre, torres)], brutos: [a.torre, b.torre] },
-    { label: "Orientação", valores: [mostrar(a.orientacao), mostrar(b.orientacao)], brutos: [a.orientacao, b.orientacao] },
-    { label: "Disponibilidade", valores: [STATUS_META[a.status].label, STATUS_META[b.status].label], brutos: [a.status, b.status] },
-  ];
-  const diferem = (linha: LinhaComparacao) => linha.brutos[0] !== linha.brutos[1];
-  const totalDiferencas = linhas.filter(diferem).length + (plantas[0] !== plantas[1] ? 1 : 0);
-
-  useEffect(() => {
-    const anterior = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const aoTeclar = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", aoTeclar);
-    return () => {
-      document.body.style.overflow = anterior;
-      window.removeEventListener("keydown", aoTeclar);
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div className="vitrine fixed inset-0 z-[9999] overflow-hidden bg-[var(--v-bg)] animate-in fade-in duration-200"
-      data-testid="comparador-unidades" role="dialog" aria-modal="true" aria-label="Comparação de apartamentos">
-      <div className="flex h-full flex-col">
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[var(--v-line)] bg-[var(--v-surface)] px-4 py-3 sm:px-7 sm:py-4">
-          <div className="min-w-0">
-            <p className="v-eyebrow">Comparação de apartamentos</p>
-            <h2 className="v-title mt-1 truncate text-[20px] sm:text-[26px]">Unidade {a.numero} × Unidade {b.numero}</h2>
-            <p className="v-meta mt-0.5 sm:hidden">{totalDiferencas} {totalDiferencas === 1 ? "diferença encontrada" : "diferenças encontradas"}</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-3">
-            <span className="v-chip !hidden sm:!inline-flex">{totalDiferencas} {totalDiferencas === 1 ? "diferença" : "diferenças"}</span>
-            <button type="button" onClick={onClose} data-testid="btn-fechar-comparacao" aria-label="Fechar comparação"
-              className="v-icon-btn !h-10 !w-10 !bg-[var(--v-surface-3)] !shadow-none">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
-
-        <div className="v-scroll min-h-0 flex-1 overflow-y-auto">
-          <main className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-7 sm:py-7">
-            <div className="mb-3 grid grid-cols-2 gap-2 sm:gap-4">
-              {unidades.map((u, i) => (
-                <div key={u.id} className="v-card overflow-hidden p-0">
-                  <div className="flex items-center justify-between gap-2 border-b border-[var(--v-line)] px-3 py-2.5 sm:px-4">
-                    <div className="min-w-0">
-                      <p className="v-title truncate text-[14px] sm:text-[17px]">Unidade {u.numero}</p>
-                      <p className="v-meta mt-0.5 truncate">{u.tipologia}</p>
-                    </div>
-                    <span className="v-chip !hidden sm:!inline-flex" style={{ color: STATUS_CLARO[u.status], background: STATUS_CLARO_FUNDO[u.status] }}>
-                      {STATUS_META[u.status].label}
-                    </span>
-                  </div>
-                  {plantas[i] ? (
-                    <button type="button" onClick={() => onAmpliar(plantas[i] as string)}
-                      aria-label={`Ampliar planta da unidade ${u.numero}`}
-                      className="group relative block aspect-[4/3] w-full bg-white sm:aspect-[16/10]">
-                      <img src={plantas[i]} alt={`Planta da unidade ${u.numero}`}
-                        className="h-full w-full object-contain p-2 sm:p-5" />
-                      <span className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[var(--v-ink)] opacity-0 shadow-[var(--v-sh-1)] transition-opacity group-hover:opacity-100 group-focus:opacity-100">
-                        <Maximize2 className="h-4 w-4" />
-                      </span>
-                    </button>
-                  ) : (
-                    <div className="v-faint grid aspect-[4/3] place-items-center bg-[var(--v-surface-3)] text-[11px] sm:aspect-[16/10]">Planta não cadastrada</div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <div className={`mb-4 rounded-[var(--v-r-sm)] border px-3 py-2 text-center text-[11px] font-medium ${
-              plantas[0] === plantas[1]
-                ? "border-[var(--v-line)] bg-[var(--v-surface)] text-[var(--v-ink-2)]"
-                : "border-[var(--v-accent)]/35 bg-[var(--v-accent-soft)] text-[var(--v-accent)]"
-            }`}>
-              {plantas[0] === plantas[1] ? "As duas unidades usam a mesma planta" : "As plantas são diferentes — toque em cada uma para ampliar"}
-            </div>
-
-            <section className="overflow-hidden rounded-[var(--v-r)] border border-[var(--v-line)] bg-[var(--v-surface)]" aria-label="Diferenças entre as unidades">
-              <div className="grid grid-cols-[minmax(82px,.72fr)_minmax(0,1fr)_minmax(0,1fr)] border-b border-[var(--v-line)] bg-[var(--v-surface-2)]">
-                <span className="v-eyebrow px-2 py-3 sm:px-4">Informação</span>
-                {[a, b].map((u) => <span key={u.id} className="v-eyebrow border-l border-[var(--v-line)] px-2 py-3 text-center sm:px-4">Unid. {u.numero}</span>)}
-              </div>
-              {linhas.map((linha) => {
-                const diferente = diferem(linha);
-                return (
-                  <div key={linha.label} data-different={diferente ? "1" : undefined}
-                    className={`grid grid-cols-[minmax(82px,.72fr)_minmax(0,1fr)_minmax(0,1fr)] border-b border-[var(--v-line)] last:border-b-0 ${diferente ? "bg-[var(--v-accent-soft)]/45" : ""}`}>
-                    <span className="v-meta flex items-center px-2 py-3 sm:px-4">{linha.label}</span>
-                    <span className="flex min-w-0 items-center justify-center border-l border-[var(--v-line)] px-2 py-3 text-center text-[12px] font-semibold text-[var(--v-ink)] sm:px-4 sm:text-[14px]">{linha.valores[0]}</span>
-                    <span className="flex min-w-0 flex-col items-center justify-center border-l border-[var(--v-line)] px-2 py-3 text-center text-[12px] font-semibold text-[var(--v-ink)] sm:px-4 sm:text-[14px]">
-                      {linha.valores[1]}
-                      {linha.diferenca && <small className="mt-0.5 text-[9px] font-semibold text-[var(--v-accent)] sm:text-[10px]">{linha.diferenca}</small>}
-                    </span>
-                  </div>
-                );
-              })}
-            </section>
-          </main>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
-/** Card da unidade — o formato da referência: imagem, código, status e atributos. */
-function CardUnidade({
-  u, torres, imagem, selecionada, favorita, onFavoritar, onClick, compacto,
-  emComparacao,
-}: {
-  u: Unidade;
-  torres?: TorreDef[];
-  imagem?: string;
-  selecionada: boolean;
-  favorita: boolean;
-  onFavoritar: () => void;
-  onClick: () => void;
-  emComparacao: boolean;
-  compacto?: boolean;
-}) {
-  const meta = STATUS_META[u.status];
-  const cor = corStatus(u.status);
-  return (
-    <div
-      onClick={onClick}
-      data-sel={selecionada ? "1" : undefined}
-      data-compare={emComparacao ? "1" : undefined}
-      data-testid={`unidade-card-${u.id}`}
-      className={`v-card group relative cursor-pointer overflow-hidden ${compacto ? "" : "flex"} ${
-        emComparacao ? "ring-2 ring-[var(--v-accent)]" : ""
-      }`}
-    >
-      {/*
-        A axonométrica ganhou peso: é ela que o cliente reconhece antes de ler
-        qualquer número. Fundo neutro e `contain` — a imagem é um desenho, e
-        recortá-la para preencher tira justamente o contorno da planta.
-      */}
-      <div className={`shrink-0 overflow-hidden bg-[var(--v-surface-3)] ${
-        compacto ? "h-28 w-full" : "order-last h-auto w-[112px] self-stretch"}`}>
-        {imagem ? (
-          <img src={imagem} alt="" loading="lazy"
-            className="h-full w-full object-contain transition-transform duration-500 group-hover:scale-[1.04]" />
-        ) : (
-          <div className="v-faint grid h-full min-h-[92px] place-items-center text-[10px]">sem planta</div>
-        )}
-      </div>
-
-      <div className="min-w-0 flex-1 px-3.5 py-3">
-        <div className="mb-1.5 flex items-center gap-2">
-          <span className="v-title truncate text-[15px] font-semibold">{u.numero}</span>
-          <span className="v-chip" style={{ background: cor.fundo, color: cor.cor }}>
-            <span className="v-dot" style={{ background: cor.cor }} />
-            {meta.label}
-          </span>
-        </div>
-
-        {/* O preço fora da lista de atributos: é a informação que decide. */}
-        {u.preco != null && (
-          <p className="v-num mb-1.5 text-[15px] font-semibold">{formatPreco(u.preco)}</p>
-        )}
-
-        <div className="-mb-1">
-          {u.areaPrivativa != null && (
-            <div className="v-row"><span>Área</span><span>{formatArea(u.areaPrivativa)}</span></div>
-          )}
-          {u.quartos != null && (
-            <div className="v-row"><span>Quartos</span><span>{u.quartos}</span></div>
-          )}
-          <div className="v-row">
-            <span>Andar</span>
-            <span>{u.pavimento}º · {torreLabel(u.torre, torres)}</span>
-          </div>
-        </div>
-      </div>
-
-      <button
-        onClick={(e) => { e.stopPropagation(); onFavoritar(); }}
-        title={favorita ? "Remover dos favoritos" : "Favoritar"}
-        className={`absolute right-2 top-2 grid h-7 w-7 place-items-center rounded-full bg-white/85 shadow-[var(--v-sh-1)] backdrop-blur transition-opacity ${
-          favorita ? "text-rose-500" : "text-[var(--v-ink-3)] opacity-0 group-hover:opacity-100 focus:opacity-100"
-        }`}
-      >
-        <Heart className="h-3.5 w-3.5" fill={favorita ? "currentColor" : "none"} />
-      </button>
-    </div>
-  );
-}
-
-/**
- * Pop-up da unidade: planta ampliável + ficha completa. É o que substitui um
- * tour de interior — sem modelagem 3D interna, e por isso roda igual no celular.
- */
-function PopupUnidade({
-  u, tipologia, imagem, planta, torres, modo, favorita, contato, nomeEmpreendimento,
-  onFavoritar, onAmpliar, onVerNo3D, mobileSceneOpen,
-  onMostrarTodas, onClose,
-}: {
-  u: Unidade;
-  tipologia?: Tipologia;
-  imagem?: string;
-  planta?: string;
-  torres?: TorreDef[];
-  contato?: ContatoCfg;
-  /** Vai no texto da mensagem e no assunto do e-mail. */
-  nomeEmpreendimento: string;
-  modo: "volume" | "corte" | "vista";
-  favorita: boolean;
-  onFavoritar: () => void;
-  onAmpliar: (url: string) => void;
-  onVerNo3D: (como: "volume" | "corte" | "vista") => void;
-  mobileSceneOpen: boolean;
-  /** Desfaz corte, isolamento e enquadramento — volta ao prédio inteiro. */
-  onMostrarTodas: () => void;
-  onClose: () => void;
-}) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  /**
-   * Canais oferecidos: só os que o projeto preencheu. WhatsApp vira a ação
-   * primária quando existe — é o canal em que uma corretora responde rápido, e
-   * o único que carrega a mensagem já escrita.
-   */
-  const canaisContato = (() => {
-    const c = contato;
-    if (!c) return [];
-    const out: { id: string; href: string; label: string; icone: React.ReactNode; primario?: boolean }[] = [];
-    const texto = montarMensagemContato(c.mensagem, {
-      unidade: u.numero,
-      empreendimento: nomeEmpreendimento,
-    });
-    const zap = (c.whatsapp ?? "").replace(/\D/g, "");
-    if (zap) {
-      out.push({
-        id: "whatsapp",
-        href: `https://wa.me/${zap}?text=${encodeURIComponent(texto)}`,
-        label: "WhatsApp",
-        icone: <MessageCircle className="h-4 w-4" />,
-        primario: true,
-      });
-    }
-    if (c.telefone?.trim()) {
-      out.push({
-        id: "telefone",
-        href: `tel:${c.telefone.replace(/[^\d+]/g, "")}`,
-        label: "Ligar",
-        icone: <Phone className="h-4 w-4" />,
-      });
-    }
-    if (c.email?.trim()) {
-      const assunto = `${nomeEmpreendimento} — unidade ${u.numero}`;
-      out.push({
-        id: "email",
-        href: `mailto:${c.email.trim()}?subject=${encodeURIComponent(assunto)}&body=${encodeURIComponent(texto)}`,
-        label: "E-mail",
-        icone: <Mail className="h-4 w-4" />,
-      });
-    }
-    return out;
-  })();
-
-  const meta = STATUS_META[u.status];
-  const linhas: [string, string][] = [
-    ["Tipologia", u.tipologia || "—"],
-    ["Torre", torreLabel(u.torre, torres)],
-    ["Pavimento", `${u.pavimento}º`],
-    ...(u.areaPrivativa != null ? ([["Área privativa", formatArea(u.areaPrivativa)]] as [string, string][]) : []),
-    ...(u.areaTotal != null ? ([["Área total", formatArea(u.areaTotal)]] as [string, string][]) : []),
-    ...(u.quartos != null ? ([["Quartos", String(u.quartos)]] as [string, string][]) : []),
-    ...(u.suites != null ? ([["Suítes", String(u.suites)]] as [string, string][]) : []),
-    ...(u.vagas != null ? ([["Vagas", String(u.vagas)]] as [string, string][]) : []),
-    ...(u.orientacao ? ([["Orientação", u.orientacao]] as [string, string][]) : []),
-  ];
-
-  const cor = corStatus(u.status);
-
-  return (
-    <aside className={`v-unit-popup vitrine fixed inset-y-0 right-0 z-[90] w-[390px] max-w-full border-l border-[var(--v-line)] bg-[var(--v-surface)] shadow-[-18px_0_45px_rgba(25,28,31,0.14)] animate-in slide-in-from-right duration-300 ${mobileSceneOpen ? "v-unit-info-hidden-mobile" : ""}`}>
-      <div className="v-in v-scroll h-full overflow-y-auto">
-        <header className="flex items-start justify-between gap-3 px-6 pb-4 pt-6">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="v-title text-[26px]">Unidade {u.numero}</h2>
-              <span className="v-chip" style={{ background: cor.fundo, color: cor.cor }}>
-                <span className="v-dot" style={{ background: cor.cor }} />
-                {meta.label}
-              </span>
-            </div>
-            {u.preco != null && (
-              <p className="v-num mt-2 text-[22px] font-semibold">{formatPreco(u.preco)}</p>
-            )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <button onClick={onFavoritar} title={favorita ? "Remover dos favoritos" : "Favoritar"}
-              className={`grid h-9 w-9 place-items-center rounded-full transition-colors ${
-                favorita ? "text-rose-500" : "text-[var(--v-ink-3)] hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]"}`}>
-              <Heart className="h-4 w-4" fill={favorita ? "currentColor" : "none"} />
-            </button>
-            <button onClick={onClose} title="Fechar"
-              className="grid h-9 w-9 place-items-center rounded-full text-[var(--v-ink-3)] transition-colors hover:bg-[var(--v-surface-3)] hover:text-[var(--v-ink)]">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
-
-        {imagem && (
-          <button onClick={() => onAmpliar(planta ?? imagem)}
-            className="group relative mx-6 mb-5 block overflow-hidden rounded-[var(--v-r)] bg-[var(--v-surface-3)]"
-            title="Ampliar">
-            <img src={imagem} alt={u.tipologia} className="max-h-72 w-full object-contain p-3" />
-            <span className="absolute right-3 top-3 grid h-8 w-8 place-items-center rounded-full bg-white/90 text-[var(--v-ink)] opacity-0 shadow-[var(--v-sh-1)] transition group-hover:opacity-100">
-              <Maximize2 className="h-4 w-4" />
-            </span>
-          </button>
-        )}
-
-        {/* Ficha em coluna única: duas colunas de pares rótulo/valor forçam o
-            olho a saltar, e é o que fazia isto parecer formulário. */}
-        <div className="px-6">
-          {linhas.map(([k, v]) => (
-            <div key={k} className="v-row"><span>{k}</span><span>{v}</span></div>
-          ))}
-        </div>
-
-        {tipologia?.descricao && (
-          <p className="v-muted px-6 pt-4 text-[13px] leading-relaxed">{tipologia.descricao}</p>
-        )}
-
-        {/* No celular a ficha ocupa o viewport inteiro. Este gesto troca a
-            leitura dos dados pela unidade isolada na cena. */}
-        <div className="v-unit-scene-cta px-6 pt-5">
-          <button
-            type="button"
-            data-testid="btn-ver-unidade-3d"
-            /* Sempre restaura o volume da unidade. Apenas esconder a ficha
-               preservava o corte do último "Vista do andar". */
-            onClick={() => onVerNo3D("volume")}
-            className="v-btn-primary flex h-12 w-full items-center justify-center gap-2 rounded-[var(--v-r-sm)]"
-          >
-            <Eye className="h-4 w-4" />
-            Ver unidade {u.numero} em 3D
-          </button>
-        </div>
-
-        <div className="flex gap-2 px-6 pt-5">
-          {modo === "volume" ? (
-            <Acao ativo={false} onClick={() => onVerNo3D("corte")}
-              icon={<Eye className="h-4 w-4" />} label="Vista do andar" />
-          ) : (
-            <Acao ativo={false} onClick={() => onVerNo3D("volume")}
-              icon={<ArrowLeft className="h-4 w-4" />} label="Voltar para a unidade" />
-          )}
-          {tipologia?.tour360Url && (
-            <a href={tipologia.tour360Url} target="_blank" rel="noreferrer" className="v-btn flex-1">
-              Tour 360º
-            </a>
-          )}
-        </div>
-
-        {/* Saída do foco, logo abaixo da entrada nele. */}
-        <div className="px-6 pt-2">
-          <button onClick={onMostrarTodas}
-            data-testid="btn-mostrar-todas"
-            className="w-full rounded-[10px] border border-[var(--v-line)] py-2 text-[12px] text-[var(--v-ink-2)] transition-colors hover:border-[var(--v-line-2)] hover:text-[var(--v-ink)]">
-            Mostrar todas as unidades
-          </button>
-        </div>
-
-        {/*
-          Fim do funil. Sem isto o visitante encontrava o apartamento certo e
-          não tinha o que fazer em seguida — a experiência terminava no elogio.
-          A mensagem já vai escrita com o número da unidade, para o corretor
-          receber a conversa sabendo do que se trata.
-        */}
-        {canaisContato.length > 0 && (
-          <div className="px-6 pb-6 pt-4">
-            <p className="v-eyebrow mb-2">Falar sobre esta unidade</p>
-            <div className="flex flex-wrap gap-2">
-              {canaisContato.map((c) => (
-                <a key={c.id} href={c.href} target="_blank" rel="noreferrer"
-                  className={`flex h-10 min-w-[7rem] flex-1 items-center justify-center gap-1.5 rounded-[var(--v-r-sm)] text-[12.5px] font-medium transition-colors ${
-                    c.primario
-                      ? "bg-[var(--v-accent)] text-white hover:opacity-90"
-                      : "border border-[var(--v-line-2)] text-[var(--v-ink)] hover:bg-[var(--v-surface-3)]"
-                  }`}>
-                  {c.icone} {c.label}
-                </a>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function Chips({
-  label, value, onChange, options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { v: string; l: string; cor?: string }[];
-}) {
-  return (
-    <div>
-      <span className="v-eyebrow mb-2 block">{label}</span>
-      <div className="flex flex-wrap gap-1.5">
-        {options.map((o) => (
-          <button key={o.v} onClick={() => onChange(o.v)}
-            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[12px] transition-colors ${
-              value === o.v
-                ? "border-[var(--v-accent)] bg-[var(--v-accent-soft)] font-semibold text-[var(--v-accent)]"
-                : "border-[var(--v-line-2)] text-[var(--v-ink-2)] hover:border-[var(--v-ink-3)] hover:text-[var(--v-ink)]"
-            }`}>
-            {o.cor && <span className="v-dot" style={{ background: o.cor }} />}
-            {o.l}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function Acao({
-  ativo, onClick, icon, label,
-}: {
-  ativo: boolean;
-  onClick: () => void;
-  icon: React.ReactNode;
-  label: string;
-}) {
-  return (
-    <button onClick={onClick}
-      className={`flex h-10 flex-1 items-center justify-center gap-1.5 rounded-[var(--v-r-sm)] text-[12.5px] font-medium transition-colors ${
-        ativo
-          ? "bg-[var(--v-accent)] text-white"
-          : "border border-[var(--v-line-2)] text-[var(--v-ink)] hover:bg-[var(--v-surface-3)]"
-      }`}>
-      {icon} {label}
-    </button>
   );
 }
