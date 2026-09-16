@@ -5,6 +5,7 @@ import type { ItemLista } from "@shared/schema";
 import Panorama360 from "@/components/Panorama360";
 import { doisDigitos, useMovel } from "./comum";
 import SelecaoVidro from "./SelecaoVidro";
+import VideoEmLoop from "./VideoEmLoop";
 
 /**
  * Lazer como PEÇA DE MÍDIA: imagem ou vídeo do ambiente com a informação ao
@@ -134,7 +135,7 @@ export default function LazerView({ itens, onFechar }: {
               if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.5) ir(dx < 0 ? 1 : -1);
             }}>
             {mostrandoVideo ? (
-              <video key={`v-${item.id}`} src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline
+              <VideoEmLoop key={`v-${item.id}`} src={item.videoUrl as string} poster={item.imagemUrl}
                 className="pointer-events-none h-full w-full object-contain" />
             ) : item.imagemUrl ? (
               <img key={`i-${item.id}`} src={item.imagemUrl} alt={item.titulo} draggable={false}
@@ -195,7 +196,7 @@ export default function LazerView({ itens, onFechar }: {
     <div className="absolute inset-0 z-20 overflow-hidden bg-[#101410]" data-testid="lazer-view">
       <div className="absolute inset-0" key={`${item.id}-${mostrandoVideo}`}>
         {mostrandoVideo ? (
-          <video src={item.videoUrl} poster={item.imagemUrl} autoPlay muted loop playsInline
+          <VideoEmLoop src={item.videoUrl as string} poster={item.imagemUrl}
             className="h-full w-full object-cover animate-in fade-in duration-500" />
         ) : item.imagemUrl ? (
           <img src={item.imagemUrl} alt={item.titulo}
