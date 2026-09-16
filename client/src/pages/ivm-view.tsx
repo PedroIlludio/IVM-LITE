@@ -230,7 +230,18 @@ export default function IvmViewPage() {
   }, [project]);
 
   const emp = project?.data.empreendimento ?? null;
-  const building = useMemo(() => (project ? projectToBuilding3D(project.data) : null), [project]);
+  /**
+   * A vitrine ABRE na vista marcada com estrela no editor — é o que o editor
+   * promete ("a vista marcada com estrela é a que abre a experiência
+   * pública"). A "câmera inicial" do projeto é o enquadramento bruto do
+   * viewport de edição e só vale quando nenhuma vista foi marcada.
+   */
+  const building = useMemo(() => {
+    if (!project) return null;
+    const b = projectToBuilding3D(project.data);
+    const principal = vistaPrincipal(project.data.config.sectionCameras ?? []);
+    return principal ? { ...b, camera: principal } : b;
+  }, [project]);
   const mapaBase = useMemo(() => (project ? projectMapaBase(project.data) : null), [project]);
   const buildings = useMemo(() => (building ? [building] : []), [building]);
   const tz = project?.data.config.tzOffset ?? -3;

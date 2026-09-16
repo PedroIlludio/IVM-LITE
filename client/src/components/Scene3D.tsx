@@ -5053,63 +5053,27 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // --- Câmeras ------------------------------------------------------------------
 
   /**
-   * Faz a camera salva mirar o centro real do predio com o horizonte nivelado.
+   * Voa para uma câmera salva EXATAMENTE como foi gravada: posição, azimute e
+   * inclinação. Só o `roll` é zerado, para um giro acidental na captura não
+   * inclinar o horizonte.
    *
-   * As vistas guardam posicao + HPR, mas nao guardam um alvo. Reaplicar esse
-   * HPR literalmente conserva dois defeitos da captura: o pivo deslocado do
-   * GLB deixa o predio fora do centro e qualquer `roll` acidental inclina o
-   * mundo. A posicao continua sendo exatamente a escolhida no editor; somente
-   * a orientacao e reconstruida a partir do centro medido e da vertical local.
+   * Antes a orientação era reconstruída para mirar o centro medido do modelo.
+   * Isso amarrava a vista ao 3D: com um GLB cujo volume calculado não bate com
+   * o prédio (caso real: modelo com peças replicadas por instancing, cuja
+   * esfera o Cesium mede errado), toda vista salva abria olhando para o céu.
+   * Quem grava a vista decide para onde ela olha.
    */
-  function orientacaoParaCentro(cam: CameraView, alvo: Cartesian3) {
-    const destino = Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height);
-    const direcao = Cartesian3.normalize(
-      Cartesian3.subtract(alvo, destino, new Cartesian3()),
-      new Cartesian3(),
-    );
-    // A normal elipsoidal e o "para cima" estavel deste lugar. Projeta-la no
-    // plano da lente produz um `up` perpendicular a mira, sem introduzir roll.
-    const vertical = Ellipsoid.WGS84.geodeticSurfaceNormal(alvo, new Cartesian3());
-    const acima = Cartesian3.subtract(
-      vertical,
-      Cartesian3.multiplyByScalar(
-        direcao,
-        Cartesian3.dot(vertical, direcao),
-        new Cartesian3(),
-      ),
-      new Cartesian3(),
-    );
-    // Vista exatamente vertical: nao ha horizonte unico. Nesse caso heading
-    // continua definindo qual lado fica no topo, mas roll e sempre zerado.
-    if (Cartesian3.magnitudeSquared(acima) < CesiumMath.EPSILON12) {
-      return {
-        heading: CesiumMath.toRadians(cam.heading),
-        pitch: CesiumMath.toRadians(-90),
-        roll: 0,
-      };
-    }
-    Cartesian3.normalize(acima, acima);
-    return { direction: direcao, up: acima };
-  }
-
-  function flyToCamera(cam: CameraView, duration = 1.5, centralizarPredio = true) {
+  function flyToCamera(cam: CameraView, duration = 1.5) {
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
     soltarOrbita();
-    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
-      ?? buildingsRef.current[0];
-    // Durante a carga, o placeholder já oferece um alvo estável. Assim uma
-    // vista clicada cedo não reaplica roll nem espera o GLB para centralizar.
-    const esfera = centralizarPredio && b ? esferaDoPredio(b) : undefined;
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
-      orientation: esfera
-        ? orientacaoParaCentro(cam, esfera.center)
-        : {
-            heading: CesiumMath.toRadians(cam.heading),
-            pitch: CesiumMath.toRadians(cam.pitch),
-            roll: 0,
-          },
+      orientation: {
+        heading: CesiumMath.toRadians(cam.heading),
+        pitch: CesiumMath.toRadians(cam.pitch),
+        roll: 0,
+      },
       duration,
     });
   }
@@ -5141,7 +5105,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // 800 m: um enquadramento de POI é de aproximação; acima disso ele não
       // está mostrando o ponto, está mostrando outra coisa.
       if (Number.isFinite(distancia) && distancia < 800) {
-        flyToCamera(cam, 1.6, false);
+        flyToCamera(cam, 1.6);
         return;
       }
     }
