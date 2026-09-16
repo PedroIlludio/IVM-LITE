@@ -2809,6 +2809,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     for (const node of Array.from(nodesRef.current.values())) {
       const m = node.model;
       if (!m) continue;
+      /*
+        Luz GRAVADA no modelo (ver `CaixaGlb.luzGravada`): projeta sombra na
+        cidade, mas não recebe — a própria malha se sombreando vira uma trama
+        riscada sobre materiais unlit. E, de dia, nada de realce: a cor que veio
+        é a luz que o artista gravou.
+      */
+      const luzGravada = !!(node.loadedUrl && caixaGlbRef.current.get(node.loadedUrl)?.luzGravada);
+      m.shadows = luzGravada ? ShadowMode.CAST_ONLY : ShadowMode.ENABLED;
       // O realce claro existe para o prédio não virar silhueta contra a
       // cidade escurecida. No estúdio não há cidade escurecida — o modelo fica
       // com a cor dele.
@@ -2819,9 +2827,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       } else {
         m.color = Color.fromCssColorString("#e6eef2");
         m.colorBlendMode = ColorBlendMode.MIX;
-        m.colorBlendAmount = 0.3;
+        m.colorBlendAmount = luzGravada ? 0 : 0.3;
       }
     }
+    requestRender();
   }
 
   /**
@@ -3668,6 +3677,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          */
         medicaoGlbEmCursoRef.current.delete(url);
         aplicarRecorteTerreno();
+        // A medição pode chegar depois do modelo: só então se sabe se ele
+        // traz luz gravada.
+        aplicarAparenciaModelo();
       })
       .finally(() => medicaoGlbEmCursoRef.current.delete(url));
   }

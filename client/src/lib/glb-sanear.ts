@@ -54,6 +54,48 @@ interface PrimitivaGltf {
 interface DocGltf {
   meshes?: { primitives?: PrimitivaGltf[] }[];
   materials?: MaterialGltf[];
+  nodes?: NoGltf[];
+}
+
+interface NoGltf {
+  scale?: number[];
+  matrix?: number[];
+}
+
+/**
+ * Menor escala aceita num eixo. Mesmo valor e mesma regra do saneador do
+ * servidor (`server/sanearGlb.ts`) — este é o que roda no envio para o
+ * Supabase, e sem a regra aqui um nó achatado (`scale: [1, 0, 1]`, comum em
+ * plano ou spline do 3ds Max) chegava à cena: o Cesium inverte a matriz a cada
+ * quadro, `Matrix4.inverse` lança "matrix is not invertible" e o render para.
+ */
+const ESCALA_MINIMA = 1e-4;
+
+/** Determinante do bloco linear de uma matriz glTF (column-major). */
+function det3(m: number[]): number {
+  const [a, b, c] = [m[0], m[1], m[2]];
+  const [d, e, f] = [m[4], m[5], m[6]];
+  const [g, h, i] = [m[8], m[9], m[10]];
+  return a * (e * i - f * h) - d * (b * i - c * h) + g * (b * f - c * e);
+}
+
+/** Tira do zero as transformações que não podem ser invertidas. */
+function corrigirEscalas(nos: NoGltf[]): number {
+  let tocados = 0;
+  for (const no of nos) {
+    if (no.scale?.some((v) => Math.abs(v) < ESCALA_MINIMA)) {
+      no.scale = no.scale.map((v) =>
+        Math.abs(v) < ESCALA_MINIMA ? (v < 0 ? -ESCALA_MINIMA : ESCALA_MINIMA) : v,
+      );
+      tocados++;
+    } else if (no.matrix?.length === 16 && Math.abs(det3(no.matrix)) < 1e-12) {
+      for (const d of [0, 5, 10]) {
+        if (Math.abs(no.matrix[d]) < ESCALA_MINIMA) no.matrix[d] = ESCALA_MINIMA;
+      }
+      tocados++;
+    }
+  }
+  return tocados;
 }
 
 export interface ResultadoSaneamento {
@@ -157,8 +199,12 @@ function definirCanal(t: RefTextura, canal: number) {
  * primitiva sem o canal 3 estragaria a que tem o canal 3 e o usa corretamente.
  */
 function corrigirDoc(doc: DocGltf): string[] {
+  const escalas = corrigirEscalas(doc.nodes ?? []);
+  const deEscala = escalas
+    ? [`${escalas} peça(s) com escala zero ajustada(s) (paravam o render)`]
+    : [];
   const materiais = doc.materials;
-  if (!materiais?.length || !doc.meshes?.length) return [];
+  if (!materiais?.length || !doc.meshes?.length) return deEscala;
 
   // Quantas primitivas usam cada material — decide entre corrigir no lugar e
   // clonar.
@@ -210,7 +256,10 @@ function corrigirDoc(doc: DocGltf): string[] {
     }
   }
 
-  return Array.from(correcoes, ([texto, n]) => (n > 1 ? `${texto} (${n}×)` : texto));
+  return [
+    ...deEscala,
+    ...Array.from(correcoes, ([texto, n]) => (n > 1 ? `${texto} (${n}×)` : texto)),
+  ];
 }
 
 /** Alinha um comprimento de chunk ao múltiplo de 4 que o GLB exige. */

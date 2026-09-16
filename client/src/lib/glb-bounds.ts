@@ -26,6 +26,15 @@ export interface CaixaGlb {
   max: [number, number, number];
   /** Silhuetas horizontais reais, gravadas pelo importador em `scene.extras`. */
   contornos?: Array<Array<[number, number]>>;
+  /**
+   * O modelo traz a iluminação GRAVADA (materiais `KHR_materials_unlit`).
+   *
+   * Esse tipo de exportação já contém luz, sombra de contato e oclusão nas
+   * cores dos vértices. Sobre ele, a sombra dinâmica do Cesium vira uma trama
+   * riscada (a malha sombreando a si mesma) e o realce de cor lava a luz que
+   * veio pronta — o prédio fica opaco e quadriculado.
+   */
+  luzGravada?: boolean;
 }
 
 const IVM_FOOTPRINT_KEY = "ivmFootprintV1";
@@ -55,6 +64,7 @@ interface DocGltf {
   nodes?: NoGltf[];
   meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
   accessors?: AccessorGltf[];
+  extensionsUsed?: string[];
 }
 
 /** Aceita apenas contornos finitos e com tamanho seguro vindos do arquivo. */
@@ -246,5 +256,10 @@ export async function medirGlb(url: string): Promise<CaixaGlb | null> {
   const raizes = doc.scenes?.[doc.scene ?? 0]?.nodes ?? doc.nodes.map((_, i) => i);
   for (const raiz of raizes) visitar(raiz, Matrix4.IDENTITY.clone(), 0);
 
-  return achou ? { min, max, contornos: lerContornos(doc) } : null;
+  return achou
+    ? {
+        min, max, contornos: lerContornos(doc),
+        luzGravada: doc.extensionsUsed?.includes("KHR_materials_unlit") ?? false,
+      }
+    : null;
 }
