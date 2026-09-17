@@ -3,21 +3,17 @@ import { useEffect, useRef } from "react";
 /** Quanto antes do fim o vídeo volta ao começo, em segundos. */
 const ANTECIPACAO = 0.25;
 
-/** Acima disto o vídeo não é guardado em memória: toca direto da rede. */
-const LIMITE_COPIA_BYTES = 80 * 1024 * 1024;
-
 /**
- * Vídeo de fundo em loop SEM a pausa na emenda.
+ * Vídeo de fundo em loop sem parar no último quadro.
  *
- * Duas causas para o vídeo congelar ao recomeçar, e uma resposta para cada:
+ * O `loop` nativo só volta ao início DEPOIS que o vídeo termina: ele para no
+ * último quadro e então busca o começo. Aqui o retorno acontece um pouco antes
+ * do fim, com o vídeo ainda tocando.
  *
- * 1. O `loop` nativo só volta DEPOIS do fim: para no último quadro e então
- *    busca o começo. Aqui o retorno acontece um pouco antes, ainda tocando.
- * 2. Voltar ao início pede de novo aquele trecho ao servidor quando ele saiu
- *    do buffer — numa conexão comum, é o vídeo parado por um tempo a cada
- *    volta. Por isso o arquivo é baixado inteiro UMA vez, em segundo plano, e
- *    a partir da primeira volta toca dessa cópia local: nenhuma emenda depende
- *    mais da rede.
+ * O `src` nunca é trocado depois de montado: trocar reinicia o elemento e
+ * mostra a capa por um instante — uma piscada a cada vez. Foi o que aconteceu
+ * quando se tentou tocar de uma cópia local baixada em segundo plano (que ainda
+ * dobrava o download); a tentativa foi desfeita.
  *
  * O `loop` nativo fica ligado como rede de segurança (aba em segundo plano
  * atrasa o quadro de verificação).
@@ -33,40 +29,15 @@ export default function VideoEmLoop({ src, poster, className }: {
     const v = ref.current;
     if (!v) return;
     let quadro = 0;
-    let copia: string | null = null;
-    let trocou = false;
-    const ctrl = new AbortController();
-
-    // Cópia local, em segundo plano. Falhou ou é grande demais: segue da rede.
-    fetch(src, { signal: ctrl.signal })
-      .then(async (r) => {
-        const tam = Number(r.headers.get("content-length") ?? 0);
-        if (!r.ok || tam > LIMITE_COPIA_BYTES) return;
-        const blob = await r.blob();
-        if (!ctrl.signal.aborted && blob.size <= LIMITE_COPIA_BYTES) copia = URL.createObjectURL(blob);
-      })
-      .catch(() => {});
-
     const verificar = () => {
       const d = v.duration;
-      if (Number.isFinite(d) && d > ANTECIPACAO * 4 && v.currentTime >= d - ANTECIPACAO) {
-        if (copia && !trocou) {
-          // A troca acontece na emenda, onde o salto já é esperado.
-          trocou = true;
-          v.src = copia;
-        }
+      if (Number.isFinite(d) && d > ANTECIPACAO * 4 && !v.seeking && v.currentTime >= d - ANTECIPACAO) {
         v.currentTime = 0;
-        if (v.paused) void v.play().catch(() => {});
       }
       quadro = requestAnimationFrame(verificar);
     };
     quadro = requestAnimationFrame(verificar);
-
-    return () => {
-      ctrl.abort();
-      cancelAnimationFrame(quadro);
-      if (copia) URL.revokeObjectURL(copia);
-    };
+    return () => cancelAnimationFrame(quadro);
   }, [src]);
 
   return (
