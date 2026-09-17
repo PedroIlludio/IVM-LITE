@@ -21,7 +21,6 @@ import {
   getUser,
   onAuthChange,
   signIn,
-  signUp,
   signOut,
   type IvmProject,
   type ProjectData,
@@ -96,8 +95,12 @@ export default function AdminPage() {
   return signedIn ? <Dashboard /> : <AuthForm />;
 }
 
+/**
+ * Só ENTRAR. As contas são criadas pela equipe no painel do Supabase
+ * (Authentication → Users), com o cadastro público desligado — ver a migração
+ * `0005_equipe_editores`.
+ */
 function AuthForm() {
-  const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -107,10 +110,9 @@ function AuthForm() {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const err = mode === "in" ? await signIn(email, password) : await signUp(email, password);
+    const err = await signIn(email, password);
     setBusy(false);
     if (err) setMsg(err);
-    else if (mode === "up") setMsg("Conta criada. Confirme o e-mail (se solicitado) e faça login.");
   }
 
   return (
@@ -122,7 +124,7 @@ function AuthForm() {
           <span className="tool-eyebrow text-[var(--ed-dim)]">IVM Lite · Admin</span>
         </div>
         <h1 className="mb-5 text-[32px] font-normal leading-9 tracking-[-0.019em] text-white">
-          {mode === "in" ? "Entrar" : "Criar conta"}
+          Entrar
         </h1>
         <input
           type="email"
@@ -143,16 +145,12 @@ function AuthForm() {
           className="tool-pill-primary flex w-full items-center justify-center gap-2 px-3 py-2 text-[14px]"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-          {mode === "in" ? "Entrar" : "Criar conta"}
+          Entrar
         </button>
         {msg && <p className="mt-3 text-[12px] text-[var(--ed-accent-soft)]">{msg}</p>}
-        <button
-          type="button"
-          onClick={() => setMode(mode === "in" ? "up" : "in")}
-          className="mt-4 w-full text-center text-[14px] text-[var(--ed-dim)] transition-colors hover:text-white"
-        >
-          {mode === "in" ? "Criar uma conta" : "Já tenho conta — entrar"}
-        </button>
+        <p className="mt-4 text-center text-[12px] text-[var(--ed-dim)]">
+          Acesso interno. Peça sua conta a quem administra o Supabase.
+        </p>
       </form>
     </div>
   );

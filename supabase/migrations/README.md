@@ -8,6 +8,17 @@ Aplicar **em ordem**, pelo SQL Editor do Supabase.
 | `0002_incorporadoras.sql` | Multi-tenant: tabela `incorporadoras`, `ivm_lites.incorporadora_id`, slug único por tenant | aqui |
 | `0003_storage_ivm_assets.sql` | Bucket `ivm-assets` + RLS do Storage (upload de GLB, plantas e fotos) | aqui |
 | `0004_ivm_lites_data.sql` | Coluna `data` (jsonb) — onde o projeto inteiro vive | aqui |
+| `0005_equipe_editores.sql` | Todo usuário autenticado vê e edita todos os projetos e incorporadoras | aqui |
+
+## Contas de editor (a partir do 0005)
+
+- Criar em **Authentication → Users → Add user → Create new user** (marque
+  "Auto Confirm User"). O `/admin` não oferece mais cadastro.
+- **Obrigatório:** desligar **Authentication → Sign In / Providers → "Allow new
+  users to sign up"**. Com o cadastro público ligado, qualquer pessoa consegue
+  criar uma conta pela API (a chave anônima é pública) e, a partir do 0005,
+  editar tudo.
+- Tirar o acesso de alguém: apagar (ou banir) o usuário em Authentication → Users.
 
 Num Supabase NOVO, rode os quatro na ordem. Se o banco já está em uso (as tabelas
 de `0001` existem), rode apenas o `0002`, o `0003` e o `0004`.

@@ -587,11 +587,6 @@ export async function signIn(email: string, password: string) {
   const { error } = await sb.auth.signInWithPassword({ email, password });
   return error?.message;
 }
-export async function signUp(email: string, password: string) {
-  const sb = await getSupabase();
-  const { error } = await sb.auth.signUp({ email, password });
-  return error?.message;
-}
 export async function signOut() {
   if (MODO_LOCAL) return;
   const sb = await getSupabase();
@@ -739,29 +734,22 @@ function toProject(row: unknown): IvmProject {
 }
 
 /**
- * Projetos do PAINEL — só os do usuário logado.
+ * Projetos do PAINEL — TODOS, para qualquer editor logado.
  *
- * Antes a consulta não filtrava nada, e o RLS sozinho não resolve: a política
- * `ivm_lites_public_read` libera a leitura de tudo que está publicado, para
- * qualquer um. O efeito no /admin era todo mundo enxergando a carteira inteira
- * de projetos alheios e podendo abrir o editor de qualquer um — o salvamento
- * até era recusado depois (`ivm_lites_owner_all`), mas só depois do trabalho
- * feito, com uma mensagem que não explica nada.
+ * O IVM Lite é operado por uma equipe interna: todo usuário autenticado é
+ * editor e trabalha em qualquer projeto (migração `0005_equipe_editores`). As
+ * contas são criadas só no Supabase, com o cadastro público desligado.
  *
- * Ler o que é público é papel da VITRINE (`getProjectBySlug` e afins). O
- * painel é a área de trabalho de uma pessoa, então a consulta se limita ao
- * dono. Sem sessão não há painel nenhum: devolve vazio em vez de listar o que
- * está publicado.
+ * Sem sessão não há painel: devolve vazio em vez de listar o que está
+ * publicado — ler o que é público é papel da VITRINE (`getProjectBySlug`).
  */
 export async function listProjects(): Promise<IvmProject[]> {
   if (MODO_LOCAL) return (await local.localListProjects()).map(normalizeRow);
   const sb = await getSupabase();
   const { data: sessao } = await sb.auth.getUser();
-  const dono = sessao.user?.id;
-  if (!dono) return [];
+  if (!sessao.user) return [];
   const run = (sel: string) =>
-    sb.from("ivm_lites").select(sel).eq("owner", dono)
-      .order("updated_at", { ascending: false });
+    sb.from("ivm_lites").select(sel).order("updated_at", { ascending: false });
   let res = await run(PROJECT_SELECT);
   // Banco ainda não migrado: refaz sem o join para o painel seguir funcionando.
   if (semIncorporadoras(res.error)) res = await run(PROJECT_SELECT_BASE);
