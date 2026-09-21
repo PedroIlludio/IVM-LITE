@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
-  Loader2, Plus, Pencil, Eye, Trash2, LogOut, Globe, Lock,
+  Loader2, Plus, Pencil, Eye, Trash2, LogOut, Globe, Lock, Download,
   Building, AlertTriangle, Copy,
 } from "lucide-react";
 import type { Empreendimento, Incorporadora } from "@shared/schema";
@@ -11,6 +11,7 @@ import {
   updateProject,
   deleteProject,
   duplicateProject,
+  quintaSeedProject,
   listIncorporadoras,
   createIncorporadora,
   temIncorporadoras,
@@ -21,6 +22,7 @@ import {
   getUser,
   onAuthChange,
   signIn,
+  signUp,
   signOut,
   type IvmProject,
   type ProjectData,
@@ -95,12 +97,8 @@ export default function AdminPage() {
   return signedIn ? <Dashboard /> : <AuthForm />;
 }
 
-/**
- * Só ENTRAR. As contas são criadas pela equipe no painel do Supabase
- * (Authentication → Users), com o cadastro público desligado — ver a migração
- * `0005_equipe_editores`.
- */
 function AuthForm() {
+  const [mode, setMode] = useState<"in" | "up">("in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -110,9 +108,10 @@ function AuthForm() {
     e.preventDefault();
     setBusy(true);
     setMsg(null);
-    const err = await signIn(email, password);
+    const err = mode === "in" ? await signIn(email, password) : await signUp(email, password);
     setBusy(false);
     if (err) setMsg(err);
+    else if (mode === "up") setMsg("Conta criada. Confirme o e-mail (se solicitado) e faça login.");
   }
 
   return (
@@ -124,7 +123,7 @@ function AuthForm() {
           <span className="tool-eyebrow text-[var(--ed-dim)]">IVM Lite · Admin</span>
         </div>
         <h1 className="mb-5 text-[32px] font-normal leading-9 tracking-[-0.019em] text-white">
-          Entrar
+          {mode === "in" ? "Entrar" : "Criar conta"}
         </h1>
         <input
           type="email"
@@ -145,12 +144,16 @@ function AuthForm() {
           className="tool-pill-primary flex w-full items-center justify-center gap-2 px-3 py-2 text-[14px]"
         >
           {busy && <Loader2 className="h-4 w-4 animate-spin" />}
-          Entrar
+          {mode === "in" ? "Entrar" : "Criar conta"}
         </button>
         {msg && <p className="mt-3 text-[12px] text-[var(--ed-accent-soft)]">{msg}</p>}
-        <p className="mt-4 text-center text-[12px] text-[var(--ed-dim)]">
-          Acesso interno. Peça sua conta a quem administra o Supabase.
-        </p>
+        <button
+          type="button"
+          onClick={() => setMode(mode === "in" ? "up" : "in")}
+          className="mt-4 w-full text-center text-[14px] text-[var(--ed-dim)] transition-colors hover:text-white"
+        >
+          {mode === "in" ? "Criar uma conta" : "Já tenho conta — entrar"}
+        </button>
       </form>
     </div>
   );
@@ -251,9 +254,39 @@ function Dashboard() {
     }
   }
 
+  /**
+   * Importa o piloto ou, se já existir, repõe os dados originais dele. O
+   * "repor" existe porque o seed evolui (ex.: ganhou o espelho de vendas) e o
+   * projeto já importado ficaria para trás.
+   */
+  async function importQuinta() {
+    setBusy(true);
+    try {
+      const seed = await quintaSeedProject();
+      const existente = projects?.find((p) => p.slug === seed.slug);
+      if (existente) {
+        if (!confirm("Repor o piloto com os dados originais? As edições feitas nele serão perdidas.")) return;
+        await updateProject(existente.id, { name: seed.name, data: seed.data, published: true });
+        setMsg("Piloto reposto ✓");
+      } else {
+        // já publicado, sob a incorporadora escolhida (se houver)
+        await createProject(seed.name, seed.slug, seed.data, true, incSel || null);
+        setMsg("Quinta das Mangueiras importado e publicado ✓");
+      }
+      await reload();
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "erro ao importar");
+    } finally {
+      setBusy(false);
+      setTimeout(() => setMsg(null), 5000);
+    }
+  }
+
+  const hasQuinta = projects?.some((p) => p.slug === "quinta-das-mangueiras");
+
   return (
     <div className="tool min-h-screen bg-[var(--ed-canvas)] text-white">
-      <header className="flex items-center justify-between gap-3 border-b border-[var(--ed-line)] px-4 py-3 sm:px-6 sm:py-4">
+      <header className="flex items-center justify-between border-b border-[var(--ed-line)] px-6 py-4">
         <div className="flex items-center gap-3">
           <Globe className="h-4 w-4 text-white" />
           {/* Display da spec: peso 400 com tracking negativo. A spec proíbe
@@ -276,7 +309,7 @@ function Dashboard() {
         )}
       </header>
 
-      <main className="mx-auto max-w-6xl p-3 sm:p-6">
+      <main className="mx-auto max-w-4xl p-6">
         {/* A migração 0002 é aplicada à mão no Supabase; sem ela a plataforma
             funciona, mas só no endereço legado /v/{slug}. */}
         {migracaoOk === false && (
@@ -313,7 +346,7 @@ function Dashboard() {
                 ))
               )}
             </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
+            <div className="flex gap-2">
               <input
                 value={novaInc}
                 onChange={(e) => setNovaInc(e.target.value)}
@@ -338,12 +371,12 @@ function Dashboard() {
         )}
 
         {/* Novo projeto */}
-        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+        <div className="mb-3 flex flex-wrap gap-2">
           {incorporadoras.length > 0 && (
             <select
               value={incSel}
               onChange={(e) => setIncSel(e.target.value)}
-              className={`${CAMPO} w-full sm:w-auto`}
+              className={`${CAMPO} w-auto`}
             >
               <option value="" className="bg-[#0a0a0a]">Sem incorporadora</option>
               {incorporadoras.map((i) => (
@@ -358,13 +391,13 @@ function Dashboard() {
             onChange={(e) => setNewName(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && create()}
             placeholder="Nome do novo IVM Lite (ex: Edifício Aurora)"
-            className={`${CAMPO} min-w-0 w-full flex-1`}
+            className={`${CAMPO} min-w-[16rem] flex-1`}
           />
           {/* A pílula branca preenchida da tela — a ação principal do painel. */}
           <button
             onClick={create}
             disabled={busy}
-            className="tool-pill-primary flex w-full shrink-0 items-center justify-center gap-2 px-5 py-2 text-[14px] sm:w-auto"
+            className="tool-pill-primary flex shrink-0 items-center gap-2 px-5 py-2 text-[14px]"
           >
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Criar
           </button>
@@ -378,6 +411,18 @@ function Dashboard() {
           </p>
         )}
 
+        {projects && (
+          <button
+            onClick={importQuinta}
+            disabled={busy}
+            className="tool-pill mb-5 flex items-center gap-2 px-3.5 py-1.5 text-[14px] text-[var(--ed-body)]"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {hasQuinta
+              ? "Repor o piloto “Quinta das Mangueiras” com os dados originais"
+              : "Importar o piloto “Quinta das Mangueiras” (Maragogi)"}
+          </button>
+        )}
         {msg && <p className="mb-3 text-[14px] text-white">{msg}</p>}
 
         {projects === null ? (
@@ -387,61 +432,44 @@ function Dashboard() {
         ) : projects.length === 0 ? (
           <div className="tool-card flex flex-col items-center gap-2 px-6 py-12 !bg-[var(--ed-soft)]">
             <span className="tool-eyebrow text-[var(--ed-dim)]">Nenhum projeto</span>
-            <p className="text-[16px] text-[var(--ed-body)]">Crie seu primeiro empreendimento acima.</p>
+            <p className="text-[16px] text-[var(--ed-body)]">Crie um acima ou importe o piloto.</p>
           </div>
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-2">
             {projects.map((p) => (
               <div
                 key={p.id}
-                className="tool-card group overflow-hidden"
+                className="tool-card flex items-center justify-between gap-3 px-4 py-3"
               >
-                <div className="flex aspect-[16/9] w-full items-center justify-center overflow-hidden border-b border-[var(--ed-line)] bg-[var(--ed-soft)]">
-                  {p.data?.empreendimento?.thumbnailUrl ? (
-                    <img
-                      src={p.data.empreendimento.thumbnailUrl}
-                      alt={`Capa de ${p.name}`}
-                      className="h-full w-full object-cover object-center transition-transform duration-300 group-hover:scale-[1.02]"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 text-[var(--ed-dim)]">
-                      <Building className="h-8 w-8 opacity-50" />
-                      <span className="tool-eyebrow">Sem capa</span>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-3 p-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      {/* Peso 400 — a spec não negrita; o tamanho faz a hierarquia. */}
-                      <span className="truncate text-[16px] font-normal tracking-[-0.01em] text-white">{p.name}</span>
-                      {p.published ? (
-                        <span className="tool-eyebrow rounded-full border border-white/30 px-2 py-0.5 text-white">
-                          publicado
-                        </span>
-                      ) : (
-                        <span className="tool-eyebrow rounded-full border border-[var(--ed-line)] px-2 py-0.5 text-[var(--ed-dim)]">
-                          rascunho
-                        </span>
-                      )}
-                      {p.data?.config?.modelUrl && (
-                        <span className="tool-eyebrow rounded-full border border-[var(--ed-line)] px-2 py-0.5 text-[var(--ed-dim)]">
-                          3d
-                        </span>
-                      )}
-                    </div>
-                    <span className="font-mono text-[12px] text-[var(--ed-dim)]">{projectPath(p)}</span>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {/* Peso 400 — a spec não negrita; o tamanho faz a hierarquia. */}
+                    <span className="truncate text-[16px] font-normal tracking-[-0.01em] text-white">{p.name}</span>
+                    {p.published ? (
+                      <span className="tool-eyebrow rounded-full border border-white/30 px-2 py-0.5 text-white">
+                        publicado
+                      </span>
+                    ) : (
+                      <span className="tool-eyebrow rounded-full border border-[var(--ed-line)] px-2 py-0.5 text-[var(--ed-dim)]">
+                        rascunho
+                      </span>
+                    )}
+                    {p.data?.config?.modelUrl && (
+                      <span className="tool-eyebrow rounded-full border border-[var(--ed-line)] px-2 py-0.5 text-[var(--ed-dim)]">
+                        3d
+                      </span>
+                    )}
                   </div>
-
-                  <div className="flex flex-wrap items-center gap-1.5 border-t border-[var(--ed-line)] pt-3">
+                  <span className="font-mono text-[12px] text-[var(--ed-dim)]">{projectPath(p)}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-1.5">
                   {incorporadoras.length > 0 && (
                     <select
                       value={p.incorporadora?.id ?? ""}
                       onChange={(e) => moverPara(p, e.target.value)}
                       disabled={busy}
                       title="Incorporadora — define o início da URL pública"
-                      className={`${CAMPO} min-w-0 flex-1 !py-1.5 !text-[12px]`}
+                      className={`${CAMPO} max-w-[9rem] !py-1.5 !text-[12px]`}
                     >
                       <option value="" className="bg-[#0a0a0a]">Sem incorporadora</option>
                       {incorporadoras.map((i) => (
@@ -494,7 +522,6 @@ function Dashboard() {
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
-                  </div>
                 </div>
               </div>
             ))}

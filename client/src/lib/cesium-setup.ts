@@ -1,7 +1,5 @@
 import {
   Viewer,
-  Credit,
-  CreditDisplay,
   ShadowMode,
   createGooglePhotorealistic3DTileset,
   GoogleMaps,
@@ -85,171 +83,106 @@ export function patchDegradedWebGL() {
  * fotogrametria do Google, é a mais cara possível justamente no aparelho mais
  * fraco. O celular do corretor no plantão é o caso real, não a exceção.
  */
+export type PerfilQualidade = "alto" | "baixo";
+
+/** O que o usuário escolheu — `auto` deixa a detecção decidir. */
+export type QualidadeOpcao = "auto" | PerfilQualidade;
+
+const CHAVE_QUALIDADE = "ivm-qualidade";
+
 /**
- * O aparelho é fraco?
- *
- * Extraído de `ajustesDoAparelho` para a PÁGINA poder fazer a mesma pergunta —
- * ela decide se a vitrine abre pela fotogrametria ou pelo mini mapa. Duas
- * definições de "aparelho fraco" acabariam divergindo, e um tablet tratado
- * como fraco pelo render e como forte pela abertura teria o pior dos dois.
+ * Preferência gravada. Existe porque a detecção erra nos dois sentidos: um
+ * notebook fraco de plantão pede `baixo`, e um tablet bom ligado no telão pede
+ * `alto`. Aceita também `?qualidade=alto` na URL, que é como se força numa
+ * máquina emprestada sem mexer em configuração.
  */
-export function ehAparelhoLeve(): boolean {
+export function qualidadeEscolhida(): QualidadeOpcao {
+  try {
+    const naUrl = new URLSearchParams(window.location.search).get("qualidade");
+    if (naUrl === "alto" || naUrl === "baixo" || naUrl === "auto") {
+      localStorage.setItem(CHAVE_QUALIDADE, naUrl);
+      return naUrl;
+    }
+    const salvo = localStorage.getItem(CHAVE_QUALIDADE);
+    if (salvo === "alto" || salvo === "baixo" || salvo === "auto") return salvo;
+  } catch {
+    /* localStorage bloqueado (modo privado): segue no automático */
+  }
+  return "auto";
+}
+
+export function definirQualidade(v: QualidadeOpcao) {
+  try {
+    localStorage.setItem(CHAVE_QUALIDADE, v);
+  } catch {
+    /* sem persistência: vale só para esta sessão */
+  }
+}
+
+/**
+ * Detecção por capacidade, não por user-agent: o que interessa é quantos
+ * núcleos, quanta memória e que tamanho de tela o aparelho tem — sniffar o
+ * nome do navegador envelhece mal e erra em tablet.
+ *
+ * `deviceMemory` e `hardwareConcurrency` não existem em todo navegador; a
+ * ausência não conta como sinal de fraqueza (senão todo Safari cairia em
+ * `baixo`), só a presença com valor baixo conta.
+ */
+export function detectarPerfil(): PerfilQualidade {
+  if (typeof window === "undefined") return "alto";
   const nav = navigator as Navigator & { deviceMemory?: number };
-  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
+
   const poucosNucleos = (nav.hardwareConcurrency ?? 8) <= 4;
-  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 900;
+  const poucaMemoria = (nav.deviceMemory ?? 8) <= 4;
+  const telaEstreita = Math.min(window.innerWidth, window.innerHeight) < 700;
+  // Ponteiro grosso = dedo. Sozinho não decide (há laptop com touch), mas
+  // somado à tela estreita é a assinatura do celular.
   const toque = window.matchMedia?.("(pointer: coarse)").matches ?? false;
 
-  /**
-   * Tablet e celular: ponteiro grosso + tela não-grande. É a assinatura do
-   * aparelho de plantão de vendas, e casa melhor com a realidade do que medir
-   * memória — que muito navegador nem informa.
-   */
-  return (toque && telaEstreita) || poucaMemoria || poucosNucleos;
+  const sinais = [poucosNucleos, poucaMemoria, telaEstreita && toque];
+  return sinais.filter(Boolean).length >= 2 ? "baixo" : "alto";
 }
 
-/**
- * Ajustes de render.
- *
- * Houve dois perfis com um seletor para o visitante, e eles saíram porque o
- * perfil leve entregava OUTRA experiência: as caixas do espelho de vendas sem
- * cor e a planta do pavimento sem desenhar. Depois se descobriu que a causa
- * disso nunca foi o perfil — era o OIT (ver `orderIndependentTranslucency`
- * abaixo), e o MSAA só mascarava o defeito por usar outro buffer.
- *
- * Com a causa resolvida, aliviar aparelho fraco volta a ser possível. A regra
- * que sobrou do episódio, e que vale para sempre: **cortar custo, nunca
- * informação**. Menos tiles, sombra menor, render em resolução mais baixa —
- * tudo isso o visitante não percebe como falta. Unidade sem cor, ele percebe.
- *
- * Por isso não há mais escolha para o usuário: há uma adaptação automática, e
- * ela só mexe em coisas que ninguém consegue nomear olhando a tela.
- */
-function ajustesDoAparelho() {
-  const aparelhoLeve = ehAparelhoLeve();
-
-  return {
-    /**
-     * MSAA sempre desligado; FXAA cobre o serrilhado por uma fração do custo.
-     * Multiamostragem recalcula cada pixel de borda N vezes e é o item mais
-     * caro da lista numa GPU integrada.
-     */
-    msaa: 0,
-    fxaa: true,
-
-    /** Sombras seguem existindo — a simulação solar é argumento de venda. */
-    sombras: true,
-    /** O que cai no aparelho leve é a RESOLUÇÃO do mapa de sombra, não o recurso. */
-    sombraTam: aparelhoLeve ? 1024 : 2048,
-    /** Sombra suave custa amostras extras por pixel; no tablet vira sombra dura. */
-    sombraSuave: !aparelhoLeve,
-
-    /**
-     * Erro de tela do tileset: maior = menos tiles da fotogrametria = menos
-     * geometria, textura e memória. É o controle de maior efeito num tablet, e
-     * o custo visual é a cidade ao redor ficar um pouco menos detalhada — o
-     * empreendimento em si é o GLB, que não passa por aqui.
-     */
-    sse: aparelhoLeve ? 32 : 20,
-
-    /**
-     * Escala de render. Num tablet de tela densa, a cena é desenhada em muito
-     * mais pixels do que a tela precisa mostrar; 0.8 corta ~36% dos pixels e
-     * quase não se nota, porque o upscale acontece numa densidade alta.
-     */
-    escalaRender: aparelhoLeve ? 0.8 : 1,
-  };
+/** Perfil em vigor: a escolha do usuário quando há uma, senão a detecção. */
+export function perfilEmVigor(): PerfilQualidade {
+  const escolha = qualidadeEscolhida();
+  return escolha === "auto" ? detectarPerfil() : escolha;
 }
+
+interface AjustesQualidade {
+  msaa: number;
+  fxaa: boolean;
+  sombras: boolean;
+  sombraTam: number;
+  /** Erro de tela do tileset: maior = menos tiles, menos carga, menos detalhe. */
+  sse: number;
+}
+
+const QUALIDADE: Record<PerfilQualidade, AjustesQualidade> = {
+  alto: { msaa: 4, fxaa: true, sombras: true, sombraTam: 2048, sse: 20 },
+  // Sombras seguem LIGADAS no perfil baixo, em 1024: a simulação solar é o
+  // argumento de venda da cena, e uma vitrine sem sombra é outra experiência,
+  // não a mesma mais leve. O que cai é a resolução do mapa, não o recurso.
+  baixo: { msaa: 0, fxaa: false, sombras: true, sombraTam: 1024, sse: 36 },
+};
 
 interface CreatedViewer {
   viewer: Viewer;
-  /**
-   * `null` quando a cena foi montada SEM fotogrametria (ver o parametro
-   * `fotogrametria`). Nulo aqui nao e falha: e o modo em que o entorno vem do
-   * GLB do projeto. Quem consome precisa tratar a ausencia como normal.
-   */
+  /** Nulo quando a base do mundo é um GLB do projeto, e não a do Google. */
   tileset: Cesium3DTileset | null;
+  /** Perfil efetivamente aplicado (para a interface poder exibi-lo). */
+  perfil: PerfilQualidade;
 }
 
-// --- Fotogrametria: timeout e retry -----------------------------------------
-
-/** Tentativas de baixar a raiz da fotogrametria antes de desistir. */
-const TILESET_TENTATIVAS = 3;
-/** Teto de espera POR tentativa. */
-const TILESET_TIMEOUT_MS = 15000;
-
-/**
- * Baixa a raiz da fotogrametria do Google com prazo e nova tentativa.
- *
- * `createGooglePhotorealistic3DTileset` é um `fetch` só, do `root.json` em
- * `tile.googleapis.com`, e o `fetch` do navegador NÃO tem prazo: numa conexão
- * instável — 4G de plantão de vendas, wi-fi de estande — ele fica pendente
- * indefinidamente. Sem isto a promise nunca resolvia nem rejeitava, e a vitrine
- * ficava girando para sempre; o único caminho de volta era o F5, que num tablet
- * na mão do cliente ninguém dá.
- *
- * Pendente para sempre é o pior dos estados: não vira erro, então nada na tela
- * podia dizer o que houve. Com prazo, a falha passa a existir — e o que existe
- * pode ser tentado de novo e contado ao visitante.
- */
-async function carregarTilesetDoGoogle(): Promise<Cesium3DTileset> {
-  let ultimoErro: unknown;
-
-  for (let tentativa = 1; tentativa <= TILESET_TENTATIVAS; tentativa++) {
-    let expirar: ReturnType<typeof setTimeout> | undefined;
-    try {
-      return await Promise.race([
-        createGooglePhotorealistic3DTileset({ onlyUsingWithGoogleGeocoder: true }),
-        new Promise<never>((_, rejeitar) => {
-          expirar = setTimeout(
-            () => rejeitar(new Error(
-              `A fotogrametria do Google não respondeu em ${TILESET_TIMEOUT_MS / 1000}s.`,
-            )),
-            TILESET_TIMEOUT_MS,
-          );
-        }),
-      ]);
-    } catch (e) {
-      ultimoErro = e;
-      /**
-       * Credencial recusada não melhora insistindo — só atrasa em 45s a única
-       * mensagem que resolve o problema (chave, billing, restrição de domínio).
-       * Repetir serve para rede; para 403 é teimosia.
-       *
-       * O 404 entra na mesma lista porque o `tile.googleapis.com` responde
-       * `404 NOT_FOUND` — "Requested entity was not found" — quando a chave
-       * existe mas o PROJETO do Google Cloud não pode servir os tiles (billing
-       * desativado, Map Tiles API não habilitada). É a resposta menos
-       * intuitiva da API: parece rota errada e é credencial. Sem esta linha o
-       * caso mais comum de erro de configuração era repetido 3 vezes e
-       * anunciado ao visitante como "a conexão parece instável", mandando
-       * investigar o wi-fi do estande por um problema que está no console do
-       * Google.
-       */
-      const msg = e instanceof Error ? e.message : String(e);
-      if (/(?:401|403|404|api.?key|billing|forbidden|unauthorized|not.?found)/i.test(msg)) {
-        throw new Error(
-          "A fotogrametria do Google recusou a credencial. Confira, no Google Cloud: "
-          + "billing ativo no projeto, Map Tiles API habilitada e a restrição de "
-          + "domínio da GOOGLE_MAPS_API_KEY incluindo este site.",
-          { cause: e },
-        );
-      }
-      // Espera crescente: se a rede caiu, voltar no mesmo instante encontra a
-      // mesma rede caída.
-      if (tentativa < TILESET_TENTATIVAS) {
-        await new Promise((r) => setTimeout(r, tentativa * 2000));
-      }
-    } finally {
-      clearTimeout(expirar);
-    }
-  }
-
-  throw new Error(
-    `A fotogrametria do Google não respondeu depois de ${TILESET_TENTATIVAS} tentativas — `
-    + "a conexão parece instável.",
-    { cause: ultimoErro },
-  );
+export interface OpcoesViewer {
+  /**
+   * Não baixa a fotogrametria do Google.
+   *
+   * O projeto traz o próprio mapa 3D (ver `Mapa3DCfg`), e nesse caso a captura
+   * do Google não é só redundante: ela disputa o mesmo espaço com o GLB, cobra
+   * banda e exige chave da API que o projeto não precisa ter.
+   */
+  semFotogrametria?: boolean;
 }
 
 /**
@@ -257,34 +190,21 @@ async function carregarTilesetDoGoogle(): Promise<Cesium3DTileset> {
  * todas as correções descobertas: WebGL degradado blindado, throttle de
  * requests desligado (senão os tiles do Google nunca são emitidos), IBL do
  * tileset desligada e sombras solares ativas.
+ *
+ * Com `semFotogrametria`, devolve o mesmo Viewer sem tileset algum — a
+ * superfície passa a ser o que a cena adicionar depois.
  */
 export async function createVision3DViewer(
   container: HTMLElement,
   apiKey: string,
-  /**
-   * Pedir a fotogrametria do Google.
-   *
-   * `false` monta a cena inteira — camera, luz, sombras, GLB — e simplesmente
-   * NAO fala com o Google. Nao confundir com `cidade={false}` no Scene3D, que
-   * apenas ESCONDE (`tileset.show`) um tileset ja baixado: aqui o pedido nem
-   * sai, entao nem a falha nem a cobranca do root tileset acontecem.
-   *
-   * E o que sustenta o botao da vitrine: quando a fotogrametria nao vem, o
-   * visitante entra numa cena que nao depende dela.
-   */
-  fotogrametria = true,
+  opcoes: OpcoesViewer = {},
 ): Promise<CreatedViewer> {
   // Must run before Viewer creates WebGL and reads ContextLimits. Running it
   // afterward leaves the first render broken on remote/software GPUs.
   patchDegradedWebGL();
 
-  const q = ajustesDoAparelho();
-
-  /* A aplicação acessa o Google Map Tiles diretamente pela chave abaixo; não
-     usa serviço nem conteúdo do Cesium ion. Retira apenas a marca padrão do
-     renderer. Os créditos Google e dos provedores dos tiles continuam sendo
-     inseridos pelo tileset e permanecem visíveis. */
-  CreditDisplay.cesiumCredit = new Credit("<span aria-hidden=\"true\"></span>", true);
+  const perfil = perfilEmVigor();
+  const q = QUALIDADE[perfil];
 
   const viewer = new Viewer(container, {
     // preserveDrawingBuffer: sem isto o navegador descarta o buffer logo após
@@ -307,44 +227,10 @@ export async function createVision3DViewer(
     selectionIndicator: false,
     infoBox: false,
     shadows: q.sombras,
-    /**
-     * O painel vermelho do Cesium não fala com o visitante.
-     *
-     * Quando um shader falha, o Cesium abre uma caixa com stack trace de
-     * `Cesium.js` minificado e PARA de renderizar — numa vitrine de plantão de
-     * vendas isso é a tela morrendo com um texto de depuração por cima. Pior,
-     * a caixa não diz o que fazer nem oferece saída.
-     *
-     * Desligado aqui, o erro chega em `scene.renderError`, e o `Scene3D` decide:
-     * se o culpado for um GLB de terceiros (o mini mapa), ele sai de cena e a
-     * vitrine continua; se não, vira a tela de erro da própria vitrine, que tem
-     * linguagem de gente e um botão de tentar de novo.
-     */
-    showRenderLoopErrors: false,
     // PERFORMANCE: só renderiza quando algo muda (câmera, tiles novos, sol,
     // seleção). Sem isto o Cesium redesenha 60x/s a mesma cena — o que travava
     // a navegação nesta máquina (WebGL degradado/remoto). As mutações chamam
     // scene.requestRender() explicitamente em Scene3D.
-    /**
-     * Translucidez por mistura clássica, não por OIT.
-     *
-     * O Cesium liga sozinho a *order-independent translucency*, que resolve a
-     * ordem dos objetos transparentes com buffers auxiliares e extensões de
-     * WebGL. Nesta base de máquinas (WebGL degradado) esse caminho falha
-     * calado: as caixas do espelho de vendas desenham sem cor e a planta do
-     * pavimento não aparece — as duas são geometria translúcida.
-     *
-     * O sintoma vinha amarrado ao MSAA por acidente: com multiamostragem ligada
-     * o Cesium usa outro buffer e o defeito sumia, o que fazia parecer culpa do
-     * perfil de qualidade. Não era — era o OIT. Desligado, a translucidez volta
-     * a funcionar SEM exigir MSAA 4×, que é o que travava a cena.
-     *
-     * O preço é a ordenação: dois translúcidos sobrepostos podem desenhar fora
-     * de ordem em ângulos rasantes. Numa cena de caixas separadas por andar
-     * isso quase não aparece — e um artefato de ordem é muito melhor do que não
-     * mostrar a informação.
-     */
-    orderIndependentTranslucency: false,
     requestRenderMode: true,
     // O relógio fica fixo no instante solar, então nenhuma passagem de tempo de
     // simulação deve provocar render. O nome correto é maximumRenderTimeChange:
@@ -355,47 +241,14 @@ export async function createVision3DViewer(
 
   const scene = viewer.scene;
 
-  // Sombras: 2048 (era 4096) já reduz muito o custo por frame mantendo
-  // qualidade para a simulação solar. As sombras
+  // Sombras: 2048 no perfil alto (era 4096) já reduzia muito o custo por frame
+  // mantendo qualidade para a simulação solar; 1024 no perfil baixo. As sombras
   // suaves são o extra que sai primeiro — são um segundo passe de filtragem.
-  viewer.shadowMap.softShadows = q.sombraSuave;
+  viewer.shadowMap.softShadows = perfil === "alto";
   viewer.shadowMap.size = q.sombraTam;
-  /**
-   * Alcance e bias calibrados para cenas de arquitetura.
-   *
-   * O valor antigo espalhava os 2048 px do mapa de sombra por 6 km. Num GLB
-   * de BIM muito triangulado (o SESI tem mais de 10 milhões de vértices), a
-   * profundidade de uma parede e a da própria sombra caíam no mesmo intervalo:
-   * cada triângulo alternava entre iluminado e sombreado ao mover a câmera —
-   * o "shadow acne" que parecia a parede piscando.
-   *
-   * Dois quilômetros ainda cobrem com folga o empreendimento e sua vizinhança,
-   * mas entregam 3x mais precisão que 6 km. O normal offset continua ligado e
-   * o bias de primitivas sobe para os mesmos valores conservadores que o
-   * próprio Cesium usa no terreno. Isso afasta a comparação da superfície o
-   * bastante para estabilizar faces coplanares sem desligar as sombras solares.
-   */
-  viewer.shadowMap.maximumDistance = 2000;
-  viewer.shadowMap.normalOffset = true;
-  const primitiveBias = (viewer.shadowMap as unknown as {
-    _primitiveBias?: { normalOffsetScale: number; depthBias: number };
-  })._primitiveBias;
-  if (primitiveBias) {
-    primitiveBias.normalOffsetScale = 0.5;
-    primitiveBias.depthBias = 0.0001;
-  }
+  viewer.shadowMap.maximumDistance = 6000;
   viewer.shadowMap.enabled = q.sombras;
   viewer.shadowMap.darkness = 0.45;
-
-  /**
-   * Render em resolução reduzida no aparelho leve.
-   *
-   * É o corte de custo mais direto que existe: metade do trabalho por frame
-   * vem do número de pixels. Num tablet de tela densa a diferença mal aparece,
-   * porque o upscale acontece numa densidade alta — e nada de INFORMAÇÃO se
-   * perde, só nitidez.
-   */
-  viewer.resolutionScale = q.escalaRender;
   if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
 
   // Luz solar um pouco mais forte para o modelo GLB (vidro escuro) ler melhor.
@@ -405,10 +258,11 @@ export async function createVision3DViewer(
   // Anti-aliasing: MSAA suaviza as arestas de geometria (silhueta do prédio,
   // linhas) e FXAA suaviza o resto. Com requestRenderMode a cena fica ociosa
   // (0 frames), então o custo do AA só aparece durante a interação — vale a
-  // qualidade num desktop.
+  // qualidade num desktop. No perfil baixo os dois saem: o serrilhado numa tela
+  // de 5" com densidade alta praticamente não se vê, e o passe de pós-processo
+  // é justamente o que custa caro numa GPU integrada de celular.
   scene.msaaSamples = q.msaa;
   scene.postProcessStages.fxaa.enabled = q.fxaa;
-
   scene.fog.enabled = false;
   // Não recolorir/relightar globalmente a cada frame.
   scene.highDynamicRange = false;
@@ -454,6 +308,10 @@ export async function createVision3DViewer(
    * calibração, não amostrada em tempo de execução.
    */
 
+  // A base vem de um GLB do projeto: nada de Google daqui para baixo — nem a
+  // chave, nem o throttle, nem o tileset.
+  if (opcoes.semFotogrametria) return { viewer, tileset: null, perfil };
+
   GoogleMaps.defaultApiKey = apiKey;
 
   // CRÍTICO: com o throttle padrão os tiles do Google ficam com prioridade
@@ -464,27 +322,9 @@ export async function createVision3DViewer(
   // apenas 1 prédio por vez, ao selecionar.
   RequestScheduler.throttleRequests = false;
 
-  /**
-   * Sem fotogrametria a cena ja esta pronta aqui: tudo o que resta nesta
-   * funcao configura o tileset, e nao ha tileset. Sair antes e o que garante
-   * que nenhum pedido ao Google sai neste modo.
-   */
-  if (!fotogrametria) return { viewer, tileset: null };
-
-  let tileset: Cesium3DTileset;
-  try {
-    tileset = await carregarTilesetDoGoogle();
-  } catch (e) {
-    /**
-     * Sem isto cada tentativa frustrada deixa um Viewer e um contexto WebGL
-     * órfãos. Antes não importava — falhar era o fim da linha. Agora que existe
-     * "Tentar de novo", eles se acumulariam até o navegador derrubar o contexto
-     * mais antigo (o limite costuma ser 8 a 16) e a cena parar de desenhar por
-     * um motivo que nada na tela explicaria.
-     */
-    if (!viewer.isDestroyed()) viewer.destroy();
-    throw e;
-  }
+  const tileset = await createGooglePhotorealistic3DTileset({
+    onlyUsingWithGoogleGeocoder: true,
+  });
   // A fotogrametria já traz iluminação/sombras na textura. Fazê-la participar
   // novamente do shadow map duplica milhares de comandos e, com clipping
   // polygons, ativa um bug do Cesium em que o sampler ainda não tem `_target`.
@@ -497,5 +337,5 @@ export async function createVision3DViewer(
   if (tileset.environmentMapManager) tileset.environmentMapManager.enabled = false;
   viewer.scene.primitives.add(tileset);
 
-  return { viewer, tileset };
+  return { viewer, tileset, perfil };
 }

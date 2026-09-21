@@ -12,32 +12,18 @@ import { Matrix4, Cartesian3, Quaternion, Matrix3 } from "cesium";
  * de qualquer vértice. Vale inclusive para malha comprimida com Draco: a
  * compressão troca o `bufferView`, o accessor continua declarando os extremos.
  *
- * A silhueta real não faz parte do padrão glTF. Por isso o importador calcula a
- * projeção dos triângulos uma única vez, antes de compactar, e a grava em
- * `scene.extras.ivmFootprintV1`. Este leitor recupera a anotação junto do mesmo
- * cabeçalho. GLBs antigos continuam devolvendo a caixa para enquadramento,
- * mas ela não deve ser usada como recorte: isso abriria o quadrado que a
- * silhueta existe justamente para evitar.
+ * LIMITE CONHECIDO: isto dá uma CAIXA, não a silhueta. A forma real do prédio
+ * não está nos metadados — num GLB agrupado por material (o caso comum de
+ * exportação), cada malha atravessa o empreendimento inteiro e a união das
+ * caixas devolve o mesmo retângulo. A silhueta só existe nos vértices
+ * comprimidos, e decodificá-los no navegador custaria segundos e centenas de MB.
  */
 
 /** Caixa alinhada aos eixos, no referencial do modelo como o Cesium o usa. */
 export interface CaixaGlb {
   min: [number, number, number];
   max: [number, number, number];
-  /** Silhuetas horizontais reais, gravadas pelo importador em `scene.extras`. */
-  contornos?: Array<Array<[number, number]>>;
-  /**
-   * O modelo traz a iluminação GRAVADA (materiais `KHR_materials_unlit`).
-   *
-   * Esse tipo de exportação já contém luz, sombra de contato e oclusão nas
-   * cores dos vértices. Sobre ele, a sombra dinâmica do Cesium vira uma trama
-   * riscada (a malha sombreando a si mesma) e o realce de cor lava a luz que
-   * veio pronta — o prédio fica opaco e quadriculado.
-   */
-  luzGravada?: boolean;
 }
-
-const IVM_FOOTPRINT_KEY = "ivmFootprintV1";
 
 const MAGIC_GLTF = 0x46546c67; // "glTF"
 const CHUNK_JSON = 0x4e4f534a; // "JSON"
@@ -51,67 +37,12 @@ interface NoGltf {
   scale?: number[];
 }
 
-interface AccessorGltf {
-  min?: number[];
-  max?: number[];
-  componentType?: number;
-  normalized?: boolean;
-}
-
 interface DocGltf {
   scene?: number;
-  scenes?: { nodes?: number[]; extras?: Record<string, unknown> }[];
+  scenes?: { nodes?: number[] }[];
   nodes?: NoGltf[];
   meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
-  accessors?: AccessorGltf[];
-  extensionsUsed?: string[];
-}
-
-/** Aceita apenas contornos finitos e com tamanho seguro vindos do arquivo. */
-function lerContornos(doc: DocGltf): Array<Array<[number, number]>> | undefined {
-  const cru = doc.scenes?.[doc.scene ?? 0]?.extras?.[IVM_FOOTPRINT_KEY];
-  if (!Array.isArray(cru) || cru.length > 64) return undefined;
-  const contornos: Array<Array<[number, number]>> = [];
-  for (const anel of cru) {
-    if (!Array.isArray(anel) || anel.length < 3 || anel.length > 4096) continue;
-    const pontos: Array<[number, number]> = [];
-    for (const ponto of anel) {
-      if (!Array.isArray(ponto) || ponto.length < 2) {
-        pontos.length = 0;
-        break;
-      }
-      const x = Number(ponto[0]);
-      const y = Number(ponto[1]);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        pontos.length = 0;
-        break;
-      }
-      pontos.push([x, y]);
-    }
-    if (pontos.length >= 3) contornos.push(pontos);
-  }
-  return contornos.length ? contornos : undefined;
-}
-
-/**
- * Converte extremos de accessors inteiros normalizados para o valor que o
- * shader realmente recebe.
- *
- * `KHR_mesh_quantization` costuma guardar POSITION como `i16_norm`. Nesse
- * caso `accessor.min/max` continuam sendo os inteiros do buffer (por exemplo
- * -32767..32767), enquanto a matriz do no foi calculada para -1..1. Aplicar a
- * matriz diretamente aos inteiros infla a caixa dezenas de milhares de vezes.
- */
-function valorDoAccessor(valor: number, accessor: AccessorGltf): number {
-  if (!accessor.normalized) return valor;
-  switch (accessor.componentType) {
-    case 5120: return Math.max(valor / 127, -1); // BYTE
-    case 5121: return valor / 255; // UNSIGNED_BYTE
-    case 5122: return Math.max(valor / 32767, -1); // SHORT
-    case 5123: return valor / 65535; // UNSIGNED_SHORT
-    case 5125: return valor / 4294967295; // UNSIGNED_INT
-    default: return valor;
-  }
+  accessors?: { min?: number[]; max?: number[] }[];
 }
 
 /** Matriz local do nó: `matrix` explícita ou a composição T·R·S. */
@@ -172,28 +103,16 @@ function lerJson(buffer: ArrayBuffer): DocGltf | null {
  */
 async function baixarCabecalho(url: string): Promise<ArrayBuffer | null> {
   try {
-    // O arquivo pode ter sido reprocessado mantendo o mesmo URL. `no-store` é
-    // essencial nesse caso: reutilizar o JSON anterior faz a cena acreditar
-    // que o GLB ainda não possui `ivmFootprintV1` e voltar ao recorte quadrado.
-    const opcoes = { cache: "no-store" as const };
-    const r1 = await fetch(url, {
-      ...opcoes,
-      headers: { Range: "bytes=0-19" },
-    });
+    const r1 = await fetch(url, { headers: { Range: "bytes=0-19" } });
     if (r1.status === 206) {
       const cab = await r1.arrayBuffer();
       if (cab.byteLength >= 20) {
         const tamJson = new DataView(cab).getUint32(12, true);
-        const r2 = await fetch(url, {
-          ...opcoes,
-          // O intervalo HTTP é inclusivo: bytes 0..19 são o cabeçalho e o
-          // JSON ocupa exatamente os `tamJson` bytes seguintes.
-          headers: { Range: `bytes=0-${19 + tamJson}` },
-        });
+        const r2 = await fetch(url, { headers: { Range: `bytes=0-${20 + tamJson}` } });
         if (r2.ok) return await r2.arrayBuffer();
       }
     }
-    const inteiro = await fetch(url, opcoes);
+    const inteiro = await fetch(url);
     return inteiro.ok ? await inteiro.arrayBuffer() : null;
   } catch {
     return null;
@@ -231,8 +150,8 @@ export async function medirGlb(url: string): Promise<CaixaGlb | null> {
       for (const prim of doc.meshes?.[no.mesh]?.primitives ?? []) {
         const acc = doc.accessors?.[prim.attributes?.POSITION ?? -1];
         if (!acc?.min || !acc?.max) continue;
-        const [x0, y0, z0] = acc.min.map((v) => valorDoAccessor(v, acc));
-        const [x1, y1, z1] = acc.max.map((v) => valorDoAccessor(v, acc));
+        const [x0, y0, z0] = acc.min;
+        const [x1, y1, z1] = acc.max;
         // Os oito cantos, porque o nó pode girar: transformar só min e max
         // daria caixa errada em qualquer modelo com rotação na hierarquia.
         for (const cx of [x0, x1]) {
@@ -256,10 +175,5 @@ export async function medirGlb(url: string): Promise<CaixaGlb | null> {
   const raizes = doc.scenes?.[doc.scene ?? 0]?.nodes ?? doc.nodes.map((_, i) => i);
   for (const raiz of raizes) visitar(raiz, Matrix4.IDENTITY.clone(), 0);
 
-  return achou
-    ? {
-        min, max, contornos: lerContornos(doc),
-        luzGravada: doc.extensionsUsed?.includes("KHR_materials_unlit") ?? false,
-      }
-    : null;
+  return achou ? { min, max } : null;
 }

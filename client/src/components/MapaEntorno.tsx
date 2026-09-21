@@ -43,15 +43,6 @@ interface Props {
   estiloCategorias?: EstiloPoi;
   /** Cor do empreendimento e do traçado — a da marca do projeto. */
   cor?: string;
-  /**
-   * Repinta o Positron na paleta da vitrine (areia e água). Só a vitrine pede;
-   * o editor segue com o estilo original, que é mais legível para desenhar.
-   */
-  paleta?: "areia";
-  /** Sem zoom (+/−) e sem a faixa de créditos — a vitrine usa gestos e a própria moldura. */
-  semControles?: boolean;
-  /** Margem do enquadramento da rota no desktop — a área coberta por painéis. */
-  respiro?: { top: number; right: number; bottom: number; left: number };
   selecionadoId?: string | null;
   onSelecionar?: (id: string | null) => void;
   /** Modo edição: pinos arrastáveis e clique no mapa reposiciona o escolhido. */
@@ -80,7 +71,7 @@ function Pino({ categoria, estilo, ativo }: {
   const cor = corDaCategoriaPoi(categoria, estilo);
   return (
     <span
-      className="relative flex items-center justify-center rounded-full border-2 border-white transition-transform"
+      className="flex items-center justify-center rounded-full border-2 border-white transition-transform"
       style={{
         width: ativo ? 34 : 26,
         height: ativo ? 34 : 26,
@@ -89,62 +80,9 @@ function Pino({ categoria, estilo, ativo }: {
         cursor: "pointer",
       }}
     >
-      <Icone className="relative z-[1] text-white" style={{ width: ativo ? 17 : 13, height: ativo ? 17 : 13 }} />
+      <Icone className="text-white" style={{ width: ativo ? 17 : 13, height: ativo ? 17 : 13 }} />
     </span>
   );
-}
-
-/** Recorta uma linha até uma fração do seu comprimento, sem saltar entre vértices. */
-function trechoDaRota(pontos: [number, number][], progresso: number): [number, number][] {
-  if (pontos.length < 2 || progresso >= 1) return pontos;
-  if (progresso <= 0) return [pontos[0], pontos[0]];
-  const tamanhos = pontos.slice(1).map((p, i) => Math.hypot(p[0] - pontos[i][0], p[1] - pontos[i][1]));
-  const total = tamanhos.reduce((s, n) => s + n, 0);
-  if (!total) return pontos;
-  let restante = total * progresso;
-  const trecho: [number, number][] = [pontos[0]];
-  for (let i = 0; i < tamanhos.length; i++) {
-    const tamanho = tamanhos[i];
-    if (restante >= tamanho) {
-      trecho.push(pontos[i + 1]);
-      restante -= tamanho;
-      continue;
-    }
-    const t = tamanho ? restante / tamanho : 0;
-    trecho.push([
-      pontos[i][0] + (pontos[i + 1][0] - pontos[i][0]) * t,
-      pontos[i][1] + (pontos[i + 1][1] - pontos[i][1]) * t,
-    ]);
-    break;
-  }
-  return trecho;
-}
-
-/**
- * Paleta da vitrine sobre o Positron: chão areia, água esverdeada.
- *
- * Por tipo e nome de camada, e não por id exato: o estilo do OpenFreeMap muda
- * de versão, e uma lista fechada de ids quebraria em silêncio.
- */
-function aplicarPaletaAreia(map: MapLibreMap) {
-  for (const camada of map.getStyle().layers ?? []) {
-    const id = camada.id.toLowerCase();
-    try {
-      if (camada.type === "background") {
-        map.setPaintProperty(camada.id, "background-color", "#e6e3dc");
-      } else if (camada.type === "fill" && /water|ocean|sea/.test(id)) {
-        map.setPaintProperty(camada.id, "fill-color", "#cfdcdb");
-      } else if (camada.type === "line" && /water|river/.test(id)) {
-        map.setPaintProperty(camada.id, "line-color", "#cfdcdb");
-      } else if (camada.type === "fill" && /park|landuse|landcover|wood|grass/.test(id)) {
-        map.setPaintProperty(camada.id, "fill-color", "#dcd8cf");
-      } else if (camada.type === "fill" && /building/.test(id)) {
-        map.setPaintProperty(camada.id, "fill-color", "#d6d2c8");
-      }
-    } catch {
-      /* camada sem a propriedade: segue com a cor do estilo */
-    }
-  }
 }
 
 /**
@@ -159,54 +97,17 @@ function aplicarPaletaAreia(map: MapLibreMap) {
  * pelo editor. Ver o comentário de `PontoDeInteresse.rota`.
  */
 export default function MapaEntorno({
-  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a", paleta, semControles = false, respiro,
+  centro, nomeCentro, pois, estiloCategorias, cor = "#12a19a",
   selecionadoId, onSelecionar, editavel, onMoverPoi,
   tracado, fechado = false, editandoTracado, onTracado, className = "",
 }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const marcadores = useRef<Map<string, { m: Marker; raiz: Root }>>(new Map());
-  const animacaoRota = useRef<number | null>(null);
-  const inicioAnimacaoRota = useRef<number | null>(null);
   /** Alças dos vértices do traçado, recriadas a cada mudança da lista. */
   const vertices = useRef<Marker[]>([]);
   const [pronto, setPronto] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  /**
-   * Segundos esperando o mapa carregar.
-   *
-   * O MapLibre avisa por `error` quando a requisição FALHA, mas não quando ela
-   * simplesmente não volta — servidor de tiles lento, rede do plantão, DNS
-   * preso. Nesse caso não há `load` nem `error`: fica o giro eterno, sem uma
-   * palavra sobre o que se espera. O contador transforma isso em informação.
-   */
-  const [esperando, setEsperando] = useState(0);
-  useEffect(() => {
-    if (pronto || erro) return;
-    const t = setInterval(() => setEsperando((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, [pronto, erro]);
-
-  /**
-   * Depois da espera, pergunta ao servidor de tiles se ELE está de pé.
-   *
-   * Separa as duas causas que produzem a mesma tela girando: "não alcancei o
-   * servidor" (rede, bloqueio, serviço fora) e "o servidor respondeu, mas o
-   * mapa não montou aqui" — que aponta para o aparelho, tipicamente falta de
-   * contexto WebGL livre, já que o Cesium 3D segura um na mesma página.
-   *
-   * Sem essa distinção o diagnóstico empata: foi exatamente o que aconteceu
-   * comparando localhost no PC com o site publicado no tablet, duas variáveis
-   * trocadas de uma vez.
-   */
-  const [alcance, setAlcance] = useState<"testando" | "ok" | "falhou" | null>(null);
-  useEffect(() => {
-    if (esperando !== 12 || pronto || erro) return;
-    setAlcance("testando");
-    fetch(ESTILO_POSITRON, { cache: "no-store" })
-      .then((r) => setAlcance(r.ok ? "ok" : "falhou"))
-      .catch(() => setAlcance("falhou"));
-  }, [esperando, pronto, erro]);
   const [rotaCalculada, setRotaCalculada] = useState<{
     chave: string;
     coordenadas: [number, number][];
@@ -235,28 +136,15 @@ export default function MapaEntorno({
       return;
     }
 
-    const mobileInicial = window.innerWidth < 768
-      || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
-    // Perspectiva leve na vitrine: dá profundidade ao bairro sem comprometer
-    // nomes e rotas. No editor a vista continua ortogonal, pois desenhar e
-    // arrastar pontos pede precisão cartográfica.
-    const pitchInicial = editavel ? 0 : mobileInicial ? 28 : 36;
     const map = new MapLibreMap({
       container: div,
       style: ESTILO_POSITRON,
       center: [centro.lng, centro.lat],
-      // No desktop 13.5 mostrava bairros inteiros antes de qualquer escolha.
-      // A leitura inicial agora começa na escala do entorno imediato.
-      zoom: mobileInicial ? 13.8 : 15,
-      pitch: pitchInicial,
-      bearing: 0,
-      attributionControl: semControles ? false : { compact: true },
+      zoom: 13.5,
+      attributionControl: { compact: true },
     });
-    if (!semControles) map.addControl(new NavigationControl({ showCompass: false }), "top-right");
-    map.on("load", () => {
-      if (paleta === "areia") aplicarPaletaAreia(map);
-      setPronto(true);
-    });
+    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    map.on("load", () => setPronto(true));
     // Sem isto uma falha de estilo/tile some em silêncio e o mapa fica branco.
     map.on("error", (e) => {
       const msg = (e as { error?: { message?: string } })?.error?.message ?? "erro desconhecido";
@@ -312,8 +200,6 @@ export default function MapaEntorno({
       .addTo(map);
 
     return () => {
-      if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
-      if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
       ro.disconnect();
       marcadores.current.forEach(({ m, raiz }) => {
         m.remove();
@@ -410,11 +296,9 @@ export default function MapaEntorno({
   useEffect(() => {
     const map = mapRef.current;
     if (!pronto || !map) return;
-    if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
-    if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
-    animacaoRota.current = null;
-    inicioAnimacaoRota.current = null;
     const alvo = pois.find((p) => p.id === selecionadoId);
+    // Sem rota gravada, a linha reta ainda comunica direção e distância —
+    // melhor do que nada enquanto o traçado não foi calculado no editor.
     const chave = alvo ? [centro.lng, centro.lat, alvo.lng, alvo.lat].join(":") : "";
     const calculada = rotaCalculada?.chave === chave ? rotaCalculada.coordenadas : undefined;
     const linha: [number, number][] = alvo
@@ -422,28 +306,20 @@ export default function MapaEntorno({
         ? alvo.rota
         : calculada?.length
           ? calculada
-          : []
+          : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]]
       : [];
     const tracada = !!alvo?.rota?.length || !!calculada?.length;
-    const dados = (coordenadas: [number, number][]) => ({
+    const dados = {
       type: "Feature" as const,
       properties: { tracada },
-      geometry: { type: "LineString" as const, coordinates: coordenadas },
-    });
+      geometry: { type: "LineString" as const, coordinates: linha },
+    };
 
-    // A antiga camada-base exibia o percurso inteiro apagado antes da
-    // animação. Além de antecipar o resultado, quando a rota ainda estava
-    // chegando ela podia parecer uma ligação reta entre os pontos.
-    if (map.getLayer("rota-base")) map.removeLayer("rota-base");
-    if (map.getSource("rota-base")) map.removeSource("rota-base");
-
-    const srcProgresso = map.getSource("rota") as GeoJSONSource | undefined;
-    if (srcProgresso) {
-      srcProgresso.setData(dados(editavel ? linha : []));
-      map.setPaintProperty("rota", "line-width", 5);
-      map.setPaintProperty("rota", "line-opacity", 0.9);
+    const src = map.getSource("rota") as GeoJSONSource | undefined;
+    if (src) {
+      src.setData(dados);
     } else {
-      map.addSource("rota", { type: "geojson", data: dados(editavel ? linha : []) });
+      map.addSource("rota", { type: "geojson", data: dados });
       map.addLayer({
         id: "rota",
         type: "line",
@@ -453,115 +329,19 @@ export default function MapaEntorno({
           "line-color": cor,
           "line-width": 5,
           "line-opacity": 0.9,
+          // Tracejado quando é linha reta: o visitante precisa saber que
+          // aquilo é direção, não o caminho que o carro faz.
+          "line-dasharray": ["case", ["get", "tracada"], ["literal", [1, 0]], ["literal", [2, 1.6]]],
         },
       });
     }
 
-    if (!alvo) {
-      if (!editavel) {
-        const mobile = window.innerWidth < 768
-          || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
-        map.easeTo({
-          center: [centro.lng, centro.lat],
-          zoom: mobile ? 13.8 : 15,
-          pitch: mobile ? 28 : 36,
-          bearing: 0,
-          duration: 700,
-        });
-      }
-      return;
-    }
-
     if (alvo) {
       const b = new LngLatBounds();
-      // Enquanto o serviço calcula o caminho real, enquadra apenas os dois
-      // pontos. Nenhuma linha reta é desenhada: isto serve só para o destino
-      // não nascer escondido atrás do cartão no celular.
-      const pontosDoEnquadramento: [number, number][] = linha.length >= 2
-        ? linha
-        : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]];
-      pontosDoEnquadramento.forEach((c) => b.extend(c));
-      const mobile = window.innerWidth < 768
-        || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
-      /* No celular o cartão nasce embaixo e pode ocupar quase metade da tela.
-         Reservar essa área no fit mantém origem, destino e caminho no pedaço
-         visível do mapa; o teto menor também entrega o zoom-out pedido. */
-      const padding = mobile
-        ? {
-            top: Math.max(88, window.innerHeight * 0.11),
-            right: 42,
-            bottom: Math.min(480, window.innerHeight * 0.52),
-            left: 42,
-          }
-        : (respiro ?? 32);
-      const duracaoVisaoGeral = editavel ? 500 : 650;
-      map.fitBounds(b, {
-        padding,
-        maxZoom: mobile ? 14.1 : 16.2,
-        pitch: editavel ? 0 : mobile ? 28 : 36,
-        bearing: 0,
-        duration: duracaoVisaoGeral,
-      });
-
-      // No editor a rota precisa ficar estática: mover pinos e vértices durante
-      // uma câmera em movimento torna a edição imprecisa. A condução animada é
-      // uma apresentação da vitrine.
-      if (!editavel && linha.length >= 2) {
-        const atraso = duracaoVisaoGeral;
-        inicioAnimacaoRota.current = window.setTimeout(() => {
-          const inicio = performance.now();
-          const duracao = 1800;
-          const destino = linha[linha.length - 1];
-          // A câmera chega mais perto que a visão geral. No celular o teto é
-          // menor para o destino continuar acima do cartão inferior.
-          map.easeTo({
-            center: destino,
-            zoom: mobile ? Math.max(map.getZoom(), 14.6) : Math.max(map.getZoom(), 16),
-            // O destino centraliza na área livre, não atrás dos painéis — no
-            // celular, acima do cartão do ponto, que ocupa a parte de baixo.
-            ...(mobile
-              ? { padding: { top: 72, right: 24, bottom: Math.min(480, window.innerHeight * 0.52), left: 24 } }
-              : respiro ? { padding: respiro } : {}),
-            duration: duracao,
-            easing: (t) => 1 - Math.pow(1 - t, 3),
-          });
-
-          const quadro = (agora: number) => {
-            const bruto = Math.min(1, (agora - inicio) / duracao);
-            const suave = 1 - Math.pow(1 - bruto, 3);
-            const source = map.getSource("rota") as GeoJSONSource | undefined;
-            source?.setData(dados(trechoDaRota(linha, suave)));
-            if (bruto < 1) {
-              animacaoRota.current = requestAnimationFrame(quadro);
-              return;
-            }
-
-            // Depois de desenhada, a LINHA — e não o pino — continua pulsando.
-            // A variação é discreta para o mapa permanecer legível e não
-            // parecer que a rota está recalculando sem parar.
-            const pulsar = (tempo: number) => {
-              const onda = (Math.sin(tempo / 420) + 1) / 2;
-              if (map.getLayer("rota")) {
-                map.setPaintProperty("rota", "line-width", 4.8 + onda * 1.8);
-                map.setPaintProperty("rota", "line-opacity", 0.68 + onda * 0.27);
-              }
-              animacaoRota.current = requestAnimationFrame(pulsar);
-            };
-            animacaoRota.current = requestAnimationFrame(pulsar);
-          };
-          animacaoRota.current = requestAnimationFrame(quadro);
-          inicioAnimacaoRota.current = null;
-        }, atraso);
-      }
+      linha.forEach((c) => b.extend(c));
+      map.fitBounds(b, { padding: 56, maxZoom: 15, duration: 700 });
     }
-
-    return () => {
-      if (animacaoRota.current != null) cancelAnimationFrame(animacaoRota.current);
-      if (inicioAnimacaoRota.current != null) window.clearTimeout(inicioAnimacaoRota.current);
-      animacaoRota.current = null;
-      inicioAnimacaoRota.current = null;
-    };
-  }, [pronto, selecionadoId, pois, centro.lat, centro.lng, cor, rotaCalculada, editavel]);
+  }, [pronto, selecionadoId, pois, centro.lat, centro.lng, cor, rotaCalculada]);
 
   // --- Clique no mapa reposiciona o POI selecionado (só no editor) ------------
   useEffect(() => {
@@ -665,10 +445,7 @@ export default function MapaEntorno({
       {/* O container do MapLibre precisa existir e ter tamanho SEMPRE — se ele
           for trocado por uma mensagem de erro, a instância perde o elemento e
           nem uma nova tentativa funciona. Erro e carregando vão por cima. */}
-      {/* Inline de propósito: quando o CSS do MapLibre chega por import
-          dinâmico, `.maplibregl-map { position: relative }` é injetado depois
-          do Tailwind e venceria `absolute`, reduzindo o canvas a 0 px. */}
-      <div ref={divRef} className="absolute inset-0" style={{ position: "absolute", inset: 0 }} />
+      <div ref={divRef} className="absolute inset-0" />
       {erro && (
         <div className="absolute inset-0 z-[2] flex flex-col items-center justify-center gap-2 bg-[var(--v-surface-3)] p-6 text-center">
           <AlertTriangle className="h-5 w-5 text-[var(--v-ink-3)]" />
@@ -677,42 +454,8 @@ export default function MapaEntorno({
         </div>
       )}
       {!pronto && !erro && (
-        <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 bg-[var(--v-surface-3)] p-6 text-center">
+        <div className="absolute inset-0 z-[1] flex items-center justify-center bg-[var(--v-surface-3)]">
           <Loader2 className="h-5 w-5 animate-spin text-[var(--v-ink-3)]" />
-          {/* Passados 12s não é mais "carregando", é "não veio" — e a tela
-              precisa dizer de ONDE não veio. Sem isto o diagnóstico dependia do
-              console, que não existe no tablet do plantão. */}
-          {esperando >= 12 && (
-            <>
-              <p className="v-meta">
-                O mapa não respondeu em {esperando}s.
-              </p>
-              <p className="v-meta font-mono text-[10px] leading-relaxed opacity-70">
-                tiles.openfreemap.org
-              </p>
-              {alcance === "falhou" && (
-                <p className="v-meta max-w-[40ch] text-[11px] opacity-70">
-                  Não consegui alcançar o servidor de mapas a partir deste
-                  aparelho. É rede: bloqueio, DNS ou o serviço fora do ar. O 3D
-                  não depende dele.
-                </p>
-              )}
-              {alcance === "ok" && (
-                <p className="v-meta max-w-[40ch] text-[11px] opacity-70">
-                  O servidor de mapas respondeu normalmente, mas o mapa não
-                  montou neste aparelho. A causa provável é falta de contexto
-                  gráfico livre — a cena 3D já ocupa um nesta mesma página, e
-                  alguns tablets só permitem um por vez.
-                </p>
-              )}
-              {alcance !== "ok" && alcance !== "falhou" && (
-                <p className="v-meta max-w-[38ch] text-[11px] opacity-70">
-                  É um serviço externo de mapas, sem chave e sem conta —
-                  verificando se ele responde deste aparelho…
-                </p>
-              )}
-            </>
-          )}
         </div>
       )}
     </div>

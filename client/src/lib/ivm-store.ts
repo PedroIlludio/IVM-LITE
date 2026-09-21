@@ -1,7 +1,8 @@
 import { getSupabase } from "./supabase";
 import type { Empreendimento, Incorporadora, ItemLista, Tipologia, Unidade, UnidadeStatus } from "@shared/schema";
 import type { CameraView } from "./placements";
-import type { Building3D, MapaBase } from "./vision3d-config";
+import type { Building3D } from "./vision3d-config";
+import { empreendimentos } from "./empreendimentos";
 import type { TorreDef } from "./unidades";
 import { DEFAULT_PAV_CFG, type PavimentosCfg, type NivelDef } from "./pavimentos";
 import { parseArea, tipologiaDaUnidade, tipologiasDe } from "./tipologias";
@@ -16,19 +17,7 @@ import * as local from "./local-store";
  * As funções exportadas abaixo têm a mesma assinatura nos dois modos, então as
  * páginas não sabem — nem precisam saber — qual está ativo.
  */
-/**
- * Banco em uso: Supabase (padrão) ou os arquivos de `data/projects/`.
- *
- * Era `import.meta.env.DEV`, e isso amarrava duas decisões que não são a
- * mesma: "estou rodando na minha máquina" virava "edito um banco diferente do
- * que está no ar". O efeito prático era um projeto calibrado localmente que
- * simplesmente não existia em produção, e nenhum aviso disso em lugar nenhum.
- *
- * Agora o padrão é o Supabase em qualquer ambiente — `npm run dev` e o site
- * publicado mexem nos MESMOS dados. O modo local continua alcançável para
- * trabalhar sem rede, mas por escolha explícita: `VITE_MODO_LOCAL=1` no `.env`.
- */
-export const MODO_LOCAL = import.meta.env.VITE_MODO_LOCAL === "1";
+export const MODO_LOCAL = import.meta.env.DEV;
 
 /**
  * Plataforma IVM Lite: cada projeto = UM empreendimento (vitrine completa).
@@ -137,24 +126,7 @@ export interface AmbienteCfg {
   permitirScreenshot?: boolean;
   /** Barra solar visível para o visitante. */
   mostrarBarraSolar?: boolean;
-  /**
-   * Quando a cena projeta sombras.
-   *
-   * Três estados, e não um liga/desliga, porque o problema tem escopo: sem a
-   * fotogrametria não há terreno para a sombra cair, e o que sobra é o modelo
-   * sombreando a si mesmo — nas superfícies quase paralelas ao sol isso vira
-   * faixa escura serrilhada, e a leitura de maquete se perde. Com a cidade
-   * ligada as mesmas sombras são o produto: é delas que a simulação solar
-   * fala.
-   *
-   * Um interruptor único obrigaria a escolher entre um modo e outro. Este
-   * campo deixa desligar exatamente onde incomoda.
-   */
-  sombras?: SombrasModo;
 }
-
-/** Ver `AmbienteCfg.sombras`. */
-export type SombrasModo = "sempre" | "com-cidade" | "nunca";
 
 export const AMBIENTE_PADRAO: Required<AmbienteCfg> = {
   horaPadrao: 780,
@@ -165,9 +137,6 @@ export const AMBIENTE_PADRAO: Required<AmbienteCfg> = {
   mostrarBussola: true,
   permitirScreenshot: true,
   mostrarBarraSolar: true,
-  // Padrão histórico: sombras sempre. Nenhum projeto existente muda de
-  // aparência por causa deste campo.
-  sombras: "sempre",
 };
 
 /**
@@ -204,8 +173,57 @@ export function montarMensagemContato(
     .replace(/\{empreendimento\}/g, dados.empreendimento);
 }
 
+/**
+ * Base do mundo em GLB, no lugar da fotogrametria do Google.
+ *
+ * A captura fotorrealista do Google não existe em todo lugar, e onde existe nem
+ * sempre serve: cidade pequena entra com resolução de satélite esticada, obra
+ * recente aparece como terreno baldio, e há endereço que simplesmente não foi
+ * sobrevoado. Nesses casos a vitrine fica pior COM a fotogrametria do que sem
+ * ela — e a alternativa é o mapa 3D que o estúdio já modela para o render.
+ *
+ * Quando `url` está preenchida, a fotogrametria NÃO é baixada (nem a chave do
+ * Google é necessária): este GLB passa a ser o chão da cena, e é contra ele que
+ * o clique de posicionar e a medição de altura trabalham.
+ *
+ * O encaixe é por NÚMEROS, não por gizmo: o mapa se posiciona uma vez, a partir
+ * das coordenadas de exportação que o estúdio já conhece, e não se mexe mais.
+ */
+export interface Mapa3DCfg {
+  /** Asset .glb/.gltf. Vazio = fotogrametria do Google. */
+  url: string;
+  /** Âncora do modelo; em branco usa a coordenada do empreendimento. */
+  lat?: number;
+  lng?: number;
+  /** Giro em torno do vertical, em graus. */
+  heading?: number;
+  scale?: number;
+  /**
+   * Altitude da origem do modelo, em metros acima da elipsoide.
+   *
+   * Sem fotogrametria não há terreno a amostrar: esta é a única referência de
+   * altura da cena, e é dela que sai o chão sobre o qual o empreendimento pousa.
+   */
+  heightOffset?: number;
+  offsetEast?: number;
+  offsetNorth?: number;
+  /**
+   * Mantém a fotogrametria do Google CARREGADA por baixo do mapa.
+   *
+   * Serve para o caso de calibração — comparar o GLB com a captura real para
+   * conferir o encaixe — e para mapas que cobrem só a quadra, deixando a
+   * fotogrametria responder pelo resto do horizonte. Fora disso custa banda e
+   * chave da API sem aparecer.
+   */
+  comFotogrametria?: boolean;
+}
+
 /** Config 3D do projeto (posição/encaixe do modelo + câmeras + marca). */
 export interface ProjectConfig {
+  /**
+   * Mapa 3D próprio no lugar da fotogrametria. Ausente = Google.
+   */
+  mapa3d?: Mapa3DCfg;
   /** Canais de contato oferecidos ao visitante. */
   contato?: ContatoCfg;
   /**
@@ -215,15 +233,16 @@ export interface ProjectConfig {
    * obra, ou o prédio antigo. O GLB novo entra por cima e os dois disputam o
    * mesmo espaço. Recortando, o terreno abre e o empreendimento encaixa limpo.
    *
-   * A caixa e a pegada são MEDIDAS no GLB a cada carga (ver `medirGlb`), do
-   * arquivo que estiver configurado. O importador grava em `scene.extras` a
-   * silhueta calculada sobre os triângulos reais; assim o navegador lê só o
-   * cabeçalho e não precisa decodificar a malha novamente. GLBs antigos, sem a
-   * anotação, continuam sendo exibidos, mas não recebem recorte automático até
-   * serem reprocessados (a caixa criaria um quadrado fora da geometria).
+   * NÃO guarda a pegada: ela é MEDIDA no GLB a cada carga (ver `medirGlb`), do
+   * arquivo que estiver configurado. Assim acompanha sozinha qualquer troca de
+   * modelo ou de encaixe, e funciona num projeto recém-criado — não depende de
+   * torre calibrada nem de nada desenhado à mão.
+   *
+   * É uma CAIXA, não a silhueta do prédio: a forma real não existe nos
+   * metadados do glTF. Ver o comentário em `glb-bounds.ts`.
    */
   recorteTerreno?: {
-    /** Sobra em volta da pegada (1 = exatamente o contorno do modelo). */
+    /** Sobra em volta da pegada (1 = exatamente a caixa do modelo). */
     folga?: number;
   };
   /** Vias desenhadas sobre a fotogrametria (traçadas no mapa, em lat/lng). */
@@ -256,43 +275,6 @@ export interface ProjectConfig {
    */
   travado?: boolean;
   modelUrl?: string;
-  /**
-   * Mini mapa (GLB) que compõe a cena quando a cidade 3D está desligada.
-   *
-   * Guardado à parte do `modelUrl` e com transformação própria: ver `MapaBase`
-   * em `vision3d-config`. Vazio é o estado normal — sem ele o modo sem cidade
-   * segue funcionando como sempre funcionou, com o prédio sobre o fundo liso.
-   */
-  mapaUrl?: string;
-  mapaHeading?: number;
-  mapaPitch?: number;
-  mapaRoll?: number;
-  mapaScale?: number;
-  mapaHeightOffset?: number;
-  mapaOffsetEast?: number;
-  mapaOffsetNorth?: number;
-  /**
-   * Encaixe do mini mapa travado — o mesmo cadeado do `travado`, e pelo mesmo
-   * motivo: alinhar um terreno ao prédio é trabalho de uma vez, e depois disso
-   * o pivô só oferece risco.
-   */
-  mapaTravado?: boolean;
-  /**
-   * Cota do terreno sob o empreendimento, em metros. Medida uma vez.
-   *
-   * Existe para a vitrine poder ABRIR sem a fotogrametria. A altura do prédio
-   * é sempre relativa ao solo, e o solo é medido lançando uma sonda de 3.000 m
-   * contra os tiles do Google (`sampleGroundFor`). Sem eles não há superfície
-   * que o raio encontre: a medida volta vazia, a cota cai no fallback de 3 m e
-   * o prédio nasce despencado — em Anápolis, a ~1.100 m do chão real.
-   *
-   * Era por isso que a cidade 3D nunca podia começar desligada. Guardada aqui,
-   * a medição vira dado do projeto: feita uma vez no editor, vale para sempre,
-   * e o aparelho fraco pode abrir direto no mini mapa.
-   *
-   * Gravada sozinha quando o editor mede — não há campo para preencher à mão.
-   */
-  alturaSolo?: number;
   heading: number;
   pitch: number;
   roll: number;
@@ -409,15 +391,8 @@ export function slugify(s: string): string {
  * - deriva `empreendimento.tipologias` de `plantas[]` + `unidades[]`;
  * - liga cada unidade à sua tipologia (`tipologiaId`);
  * - converte `area: "48 m²"` (texto) em `areaPrivativa: 48` (número), sem o
- *   qual os filtros de faixa não têm como operar.
- *
- * O que ele deliberadamente NÃO faz é copiar área/quartos/suítes/vagas da
- * tipologia para dentro da unidade. Ele fazia, e o efeito colateral era o
- * contrário do pretendido: a cópia entrava no estado do editor e voltava
- * gravada no próximo save, então a unidade passava a carregar um retrato da
- * tipologia no instante da leitura — corrigir a área da tipologia depois não
- * mudava mais nada na vitrine. Essa herança agora acontece na leitura, em
- * `unidadesComTipologia`, e a tipologia continua sendo a fonte única.
+ *   qual os filtros de faixa não têm como operar;
+ * - herda quartos/suítes/vagas da tipologia quando a unidade não os define.
  */
 /**
  * Converte uma lista rica do formato antigo (`string[]`) para `ItemLista[]`.
@@ -447,7 +422,11 @@ export function normalizeProjectData(data: ProjectData): ProjectData {
     return {
       ...u,
       tipologiaId: u.tipologiaId ?? t?.id,
-      areaPrivativa: u.areaPrivativa ?? parseArea(u.area),
+      areaPrivativa: u.areaPrivativa ?? parseArea(u.area) ?? t?.areaPrivativa,
+      areaTotal: u.areaTotal ?? t?.areaTotal,
+      quartos: u.quartos ?? t?.quartos,
+      suites: u.suites ?? t?.suites,
+      vagas: u.vagas ?? t?.vagas,
     };
   });
 
@@ -585,6 +564,11 @@ export async function onAuthChange(cb: (signedIn: boolean) => void) {
 export async function signIn(email: string, password: string) {
   const sb = await getSupabase();
   const { error } = await sb.auth.signInWithPassword({ email, password });
+  return error?.message;
+}
+export async function signUp(email: string, password: string) {
+  const sb = await getSupabase();
+  const { error } = await sb.auth.signUp({ email, password });
   return error?.message;
 }
 export async function signOut() {
@@ -733,21 +717,9 @@ function toProject(row: unknown): IvmProject {
   });
 }
 
-/**
- * Projetos do PAINEL — TODOS, para qualquer editor logado.
- *
- * O IVM Lite é operado por uma equipe interna: todo usuário autenticado é
- * editor e trabalha em qualquer projeto (migração `0005_equipe_editores`). As
- * contas são criadas só no Supabase, com o cadastro público desligado.
- *
- * Sem sessão não há painel: devolve vazio em vez de listar o que está
- * publicado — ler o que é público é papel da VITRINE (`getProjectBySlug`).
- */
 export async function listProjects(): Promise<IvmProject[]> {
   if (MODO_LOCAL) return (await local.localListProjects()).map(normalizeRow);
   const sb = await getSupabase();
-  const { data: sessao } = await sb.auth.getUser();
-  if (!sessao.user) return [];
   const run = (sel: string) =>
     sb.from("ivm_lites").select(sel).order("updated_at", { ascending: false });
   let res = await run(PROJECT_SELECT);
@@ -939,33 +911,70 @@ export function projectToBuilding3D(data: ProjectData): Building3D {
     lat: c.lat ?? emp.lat,
     lng: c.lng ?? emp.lng,
     camera: c.camera,
-    alturaSolo: c.alturaSolo,
   };
 }
 
 /**
- * Mini mapa do projeto, ou `null` se não houver.
- *
- * A âncora é a MESMA do empreendimento (`c.lat ?? emp.lat`), e não uma
- * coordenada própria: o mini mapa existe para receber este prédio. Se a
- * implantação for movida, o terreno vai junto — separá-los daria duas verdades
- * sobre onde o empreendimento fica.
+ * Projeto-semente do Quinta das Mangueiras: o empreendimento rico já existente
+ * no código + a calibração 3D validada (posição em Maragogi, heading, offsets e
+ * câmera inicial) + o espelho de vendas. Usado no /admin para importar o piloto.
  */
-export function projectMapaBase(data: ProjectData): MapaBase | null {
-  const c = { ...CONFIG_DEFAULTS, ...data.config };
-  if (!c.mapaUrl) return null;
-  const emp = data.empreendimento;
+export async function quintaSeedProject(): Promise<{ name: string; slug: string; data: ProjectData }> {
+  const emp = empreendimentos.find((e) => e.id === "quinta-das-mangueiras") ?? empreendimentos[0];
+  // Traz o espelho do arquivo do piloto para dentro do projeto (na plataforma
+  // as unidades vivem no projeto, não num JSON servido pelo backend).
+  let unidades: Unidade[] = [];
+  let tipologias: Tipologia[] | undefined;
+  try {
+    const r = await fetch("/api/unidades");
+    if (r.ok) {
+      const body = await r.json();
+      unidades = body.unidades ?? [];
+      // O gerador do mock já emite as tipologias com área, quartos e vagas;
+      // sem elas o normalizador derivaria só o nome e a imagem da planta.
+      tipologias = body.tipologias;
+    }
+  } catch {
+    /* segue sem espelho; dá pra gerar no editor */
+  }
   return {
-    url: c.mapaUrl,
-    heading: c.mapaHeading ?? 0,
-    pitch: c.mapaPitch ?? 0,
-    roll: c.mapaRoll ?? 0,
-    scale: c.mapaScale ?? 1,
-    heightOffset: c.mapaHeightOffset ?? 0,
-    offsetEast: c.mapaOffsetEast ?? 0,
-    offsetNorth: c.mapaOffsetNorth ?? 0,
-    lat: c.lat ?? emp.lat,
-    lng: c.lng ?? emp.lng,
+    name: emp.name,
+    slug: "quinta-das-mangueiras",
+    data: {
+      empreendimento: tipologias?.length ? { ...emp, tipologias } : emp,
+      unidades,
+      config: {
+        // Volumes 3D medidos na geometria do GLB (vértices dos pavimentos-tipo).
+        // Nos eixos do modelo no Cesium, os blocos correm ao longo do Y — daí
+        // rot 90 — entre Y 92 e 281, e a espessura fica no X (negativo).
+        torres: [
+          { id: "ocean", label: "Ocean", volume: { x: -9.4, y: 123, z: -0.1, comprimento: 63, largura: 10, altura: 27, rot: 90 } },
+          { id: "sea", label: "Sea", volume: { x: -11, y: 186, z: -0.1, comprimento: 63, largura: 11, altura: 27, rot: 90 } },
+          { id: "river", label: "River", volume: { x: -24, y: 249, z: -0.1, comprimento: 63, largura: 20, altura: 27, rot: 90 } },
+        ],
+        pavimentosCfg: { ...DEFAULT_PAV_CFG },
+        crm: { mode: "manual" },
+        modelUrl: "/models/hsm-fachada.glb",
+        heading: 103,
+        pitch: 0,
+        roll: 0,
+        scale: 1,
+        heightOffset: -3.5,
+        offsetEast: -101,
+        offsetNorth: 11,
+        lat: -8.93954721813508,
+        lng: -35.170556874124706,
+        camera: {
+          lng: -35.173401029981534,
+          lat: -8.941119049776615,
+          height: 269.7099904470845,
+          heading: 65.60189152345015,
+          pitch: -31.971947458511877,
+          roll: 359.9999868296653,
+        },
+        placeholder: { width: 30, depth: 30, height: 96 },
+        tzOffset: -3,
+      },
+    },
   };
 }
-

@@ -3,7 +3,7 @@ import { Camera, Copy, Crosshair, Link2, Plus, Trash2 } from "lucide-react";
 import type { GizmoModo } from "@/components/Scene3D";
 import type { CrmConfig } from "@/lib/ivm-store";
 import type { PavimentosCfg } from "@/lib/pavimentos";
-import { formatPreco, tipologiaEfetiva, unidadeComTipologia } from "@/lib/tipologias";
+import { formatPreco } from "@/lib/tipologias";
 import {
   STATUS_META, torreLabel, type TorreDef, type TorreVolume, type Unidade, type UnidadeStatus,
 } from "@/lib/unidades";
@@ -70,39 +70,14 @@ export function UnidadesTab({
 
   const torreAtual = torreSel || torres[0]?.id || "";
   const daTorre = unidades.filter((u) => u.torre === torreAtual);
-
-  /**
-   * Do maior para o menor, do número do andar ao número da unidade.
-   *
-   * A fileira saía na ordem em que as unidades foram criadas — "2003, 2004,
-   * 2005, 2002, 2006, 2001" —, que é a ordem de um acidente e não a de um
-   * espelho. Sem ordem estável, duplicar um andar ou renumerar embaralha a
-   * grade, o Shift+clique pega um intervalo que não é o que está entre os dois
-   * cliques, e conferir andar contra andar exige ler número por número.
-   *
-   * Identificadores não numéricos ("A01") vão para o fim, em ordem entre si:
-   * eles não pertencem à sequência numérica do andar.
-   */
   const porAndar = useMemo(() => {
-    const n = (u: Unidade) => Number(u.numero);
-    const desc = (a: Unidade, b: Unidade) => {
-      const na = n(a);
-      const nb = n(b);
-      const aNum = Number.isFinite(na);
-      const bNum = Number.isFinite(nb);
-      if (aNum && bNum) return nb - na;
-      if (aNum !== bNum) return aNum ? -1 : 1;
-      return b.numero.localeCompare(a.numero, "pt-BR", { numeric: true });
-    };
     const m = new Map<number, Unidade[]>();
     for (const u of daTorre) {
       const arr = m.get(u.pavimento) ?? [];
       arr.push(u);
       m.set(u.pavimento, arr);
     }
-    return Array.from(m.entries())
-      .sort((a, b) => b[0] - a[0])
-      .map(([pav, us]) => [pav, [...us].sort(desc)] as [number, Unidade[]]);
+    return Array.from(m.entries()).sort((a, b) => b[0] - a[0]);
   }, [daTorre]);
 
   const cont = (s: UnidadeStatus) => unidades.filter((u) => u.status === s).length;
@@ -111,8 +86,6 @@ export function UnidadesTab({
   const selecionadas = unidades.filter((u) => sel.includes(u.id));
   /** Com uma só em foco, o inspetor mostra os campos dela; com várias, o lote. */
   const unidSel = selecionadas.length === 1 ? selecionadas[0] : null;
-  /** A tipologia de onde vêm os atributos que a unidade em foco não declara. */
-  const tipDoSel = unidSel ? tipologiaEfetiva(unidSel, tipologias) : undefined;
 
   function patchUnidade(id: string, patch: Partial<Unidade>) {
     onUnidades(unidades.map((u) => (u.id === id ? { ...u, ...patch } : u)));
@@ -159,6 +132,34 @@ export function UnidadesTab({
     }
     onSelClique(u.id, mods);
   }
+
+  /**
+   * Dá posição própria às unidades selecionadas, exatamente onde o fatiamento
+   * já as desenha. É o que transforma uma unidade da grade em algo com pivô
+   * próprio, arrastável na cena — sem isso, só o que nasce avulso é posicionável.
+   */
+  function destacarDaGrade(ids: string[]) {
+    const alvo = new Set(ids);
+    const caixas = new Map(
+      buildUnitBoxes({ buildingId: "calc", unidades, torres, pavCfg }).map((c) => [c.id, c]),
+    );
+    let n = 0;
+    const out = unidades.map((u) => {
+      if (!alvo.has(u.id) || u.posicao) return u;
+      const c = caixas.get(u.id);
+      if (!c) return u;
+      n++;
+      // A caixa vem com o centro; `posicao.z` é a base (o campo "Base Z").
+      return {
+        ...u,
+        posicao: { x: c.x, y: c.y, z: c.z - c.dz / 2, dx: c.dx, dy: c.dy, dz: c.dz, rot: c.rot },
+      };
+    });
+    if (n) onUnidades(out);
+  }
+
+  // --- Unidades avulsas -------------------------------------------------------
+  const avulsas = unidades.filter((u) => !!u.posicao);
 
   /**
    * Caixa que o fatiamento da torre desenha para cada unidade, por id.
@@ -209,6 +210,40 @@ export function UnidadesTab({
         return base ? { ...u, posicao: { ...base, ...patch } } : u;
       }),
     );
+  }
+
+  /**
+   * Cria uma unidade fora da grade. Nasce no centro do volume da torre atual
+   * (ou na origem do modelo, se não houver torre) para já aparecer na cena —
+   * depois é só arrastar o valor ou clicar no mapa.
+   */
+  function criarAvulsa() {
+    const torreId = torreAtual || torres[0]?.id || "avulsa";
+    const base = torres.length ? volumeDaTorre(torres[Math.max(0, torreIdx)], Math.max(0, torreIdx), torres.length) : null;
+    const n = avulsas.length + 1;
+    const id = `avulsa-${Date.now().toString(36)}-${n}`;
+    const nova: Unidade = {
+      id,
+      torre: torreId,
+      pavimento: pavCfg.numPavimentos,
+      numero: `A${String(n).padStart(2, "0")}`,
+      tipologia: tipologias[0]?.nome ?? "",
+      tipologiaId: tipologias[0]?.id,
+      status: "disponivel",
+      posicao: {
+        x: base?.x ?? 0,
+        y: base?.y ?? 0,
+        z: pavCfg.baseZ + pavCfg.nivelM * pavCfg.numPavimentos,
+        dx: 8,
+        dy: 10,
+        dz: pavCfg.nivelM,
+        rot: base?.rot ?? 0,
+      },
+    };
+    onUnidades([...unidades, nova]);
+    // Já nasce selecionada: o pivô aparece na cena e ela pode ser arrastada
+    // sem passar pelo painel.
+    onSel([id]);
   }
 
   // --- Duplicação -------------------------------------------------------------
@@ -435,8 +470,6 @@ export function UnidadesTab({
     const pav = pavimento ?? (daT.length ? Math.max(...daT.map((u) => u.pavimento)) : 1);
     const noAndar = daT.filter((u) => u.pavimento === pav).length;
     const numero = numeroLivre(torre, `${pav}${String(noAndar + 1).padStart(2, "0")}`, new Set());
-    // Só o vínculo: área, quartos, suítes e vagas ficam na tipologia e a
-    // vitrine os resolve de lá (ver `unidadeComTipologia`).
     const t = tipologias[0];
     const nova: Unidade = {
       id: `${torre}-${numero}`,
@@ -446,6 +479,10 @@ export function UnidadesTab({
       tipologia: t?.nome ?? "",
       tipologiaId: t?.id,
       status: "disponivel",
+      areaPrivativa: t?.areaPrivativa,
+      quartos: t?.quartos,
+      suites: t?.suites,
+      vagas: t?.vagas,
     };
     onUnidades([...unidades, nova]);
     // Já nasce aberta no editor: o passo seguinte é sempre acertar número,
@@ -486,11 +523,7 @@ export function UnidadesTab({
       return /[",;\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const linhas = [COLUNAS.join(";")];
-    // Exporta o que a vitrine mostra, e não só o que está gravado na unidade:
-    // uma planilha com as colunas de área e quartos em branco porque o dado
-    // mora na tipologia não serve para conferir espelho com ninguém.
-    for (const bruta of unidades) {
-      const u = unidadeComTipologia(bruta, tipologias);
+    for (const u of unidades) {
       linhas.push(
         [
           u.torre, u.pavimento, u.numero, u.tipologia, u.areaPrivativa ?? "",
@@ -594,14 +627,6 @@ export function UnidadesTab({
       const tipNome = iTip >= 0 ? c[iTip] : anterior?.tipologia;
       const tip = tipologias.find((t) => t.nome === tipNome);
       const precoReais = iPreco >= 0 ? num(c[iPreco]) : undefined;
-      /**
-       * Valor que a planilha traz e a tipologia já dá é herança, não exceção.
-       * Guardá-lo na unidade congelaria o dado num simples ida-e-volta
-       * exportar → importar: a coluna sai preenchida com o valor herdado e
-       * voltaria gravada como se fosse uma particularidade daquela unidade.
-       */
-      const proprio = (v: number | undefined, doTipo?: number) =>
-        v == null || v === doTipo ? undefined : v;
 
       out.push({
         // Campos ausentes na planilha mantêm o que a unidade já tinha.
@@ -616,10 +641,10 @@ export function UnidadesTab({
           (Number(numero.slice(0, -2)) || 1),
         tipologia: tipNome ?? "",
         tipologiaId: tip?.id ?? anterior?.tipologiaId,
-        areaPrivativa: proprio((iArea >= 0 ? num(c[iArea]) : undefined) ?? anterior?.areaPrivativa, tip?.areaPrivativa),
-        quartos: proprio((iQuartos >= 0 ? num(c[iQuartos]) : undefined) ?? anterior?.quartos, tip?.quartos),
-        suites: proprio((iSuites >= 0 ? num(c[iSuites]) : undefined) ?? anterior?.suites, tip?.suites),
-        vagas: proprio((iVagas >= 0 ? num(c[iVagas]) : undefined) ?? anterior?.vagas, tip?.vagas),
+        areaPrivativa: (iArea >= 0 ? num(c[iArea]) : undefined) ?? anterior?.areaPrivativa ?? tip?.areaPrivativa,
+        quartos: (iQuartos >= 0 ? num(c[iQuartos]) : undefined) ?? anterior?.quartos ?? tip?.quartos,
+        suites: (iSuites >= 0 ? num(c[iSuites]) : undefined) ?? anterior?.suites ?? tip?.suites,
+        vagas: (iVagas >= 0 ? num(c[iVagas]) : undefined) ?? anterior?.vagas ?? tip?.vagas,
         orientacao: ((iOrient >= 0 ? c[iOrient]?.toUpperCase() : undefined) ?? anterior?.orientacao) as Unidade["orientacao"],
         preco: precoReais != null ? Math.round(precoReais * 100) : anterior?.preco,
         status: (iStatus >= 0 ? lerStatus(c[iStatus]) : undefined) ?? anterior?.status ?? "disponivel",
@@ -632,7 +657,7 @@ export function UnidadesTab({
     const forasteiras = unidades.filter((u) => !naPlanilha.has(u.id));
 
     if (modoImport === "substituir") {
-      // Substituir descarta tudo que não está na planilha, inclusive exceções.
+      // Substituir descarta tudo que não está na planilha — inclusive avulsas.
       // Nunca em silêncio: o número vai no aviso antes de acontecer.
       if (
         forasteiras.length > 0 &&
@@ -640,7 +665,7 @@ export function UnidadesTab({
           `Substituir o espelho?
 
 ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
-            `serão removidas (incluindo ${forasteiras.filter((u) => u.posicao).length} com posição personalizada).`,
+            `serão removidas (incluindo ${forasteiras.filter((u) => u.posicao).length} avulsa(s)).`,
         )
       ) {
         return setMsgImport("Importação cancelada.");
@@ -679,6 +704,7 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-white/55">
             {unidades.length} unidades
+            {avulsas.length > 0 && <span className="text-white/30"> · {avulsas.length} avulsa{avulsas.length === 1 ? "" : "s"}</span>}
           </span>
           <div className="flex gap-2 text-[10px]">
             {(["disponivel", "reservada", "vendida"] as UnidadeStatus[]).map((s) => (
@@ -756,9 +782,10 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
               onChange={(e) => {
                 const t = tipologias.find((x) => x.id === e.target.value);
                 if (!t) return;
-                // Vincula, não copia: a ficha da vitrine lê os atributos da
-                // tipologia, então corrigi-los lá chega em todas as unidades.
-                patchSelecionadas({ tipologiaId: t.id, tipologia: t.nome });
+                patchSelecionadas({
+                  tipologiaId: t.id, tipologia: t.nome, areaPrivativa: t.areaPrivativa,
+                  quartos: t.quartos, vagas: t.vagas,
+                });
               }}
               className="min-w-0 flex-1 rounded-[3px] bg-white/10 px-1.5 py-1 text-[10px] outline-none ring-1 ring-white/10">
               <option value="" className="bg-[#0a0a0a]">aplicar tipologia…</option>
@@ -782,6 +809,13 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
               className="flex items-center gap-1 rounded-[3px] bg-white/10 px-2 py-1 text-[10px] text-white/75 hover:bg-white/20">
               <Copy className="h-3 w-3" /> Duplicar
             </button>
+            {selecionadas.some((u) => !u.posicao) && (
+              <button onClick={() => destacarDaGrade(sel)}
+                title="Cria um pivô próprio para cada unidade, no lugar onde ela já está"
+                className="flex-1 rounded-[3px] bg-white/10 px-1.5 py-1 text-[10px] text-white/75 hover:bg-white/20">
+                Criar pivô ({selecionadas.filter((u) => !u.posicao).length})
+              </button>
+            )}
             {selecionadas.some((u) => u.posicao) && (
               <button onClick={() => patchSelecionadas({ posicao: undefined })}
                 className="flex-1 rounded-[3px] bg-white/10 px-1.5 py-1 text-[10px] text-white/75 hover:bg-white/20">
@@ -927,8 +961,8 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                 ))}
               </div>
 
-              {/* Número e pavimento moram AQUI: são o que define onde a unidade
-                  cai no espelho e podem ser editados em um único lugar. */}
+              {/* Número e pavimento moram AQUI agora: são o que define onde a
+                  unidade cai no espelho, e antes só a avulsa podia editá-los. */}
               <div className="grid grid-cols-2 gap-1.5">
                 <div>
                   <label className="mb-0.5 block text-[9px] text-white/40">Número</label>
@@ -955,7 +989,8 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                 onChange={(e) => {
                   const t = tipologias.find((x) => x.id === e.target.value);
                   patchUnidade(unidSel.id, t
-                    ? { tipologiaId: t.id, tipologia: t.nome }
+                    ? { tipologiaId: t.id, tipologia: t.nome, areaPrivativa: t.areaPrivativa ?? unidSel.areaPrivativa,
+                        quartos: t.quartos ?? unidSel.quartos, vagas: t.vagas ?? unidSel.vagas }
                     : { tipologiaId: undefined });
                 }}
                 className="w-full rounded bg-white/10 px-1.5 py-1 text-[11px] outline-none ring-1 ring-white/10">
@@ -965,10 +1000,6 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                 ))}
               </select>
 
-              {/* Campos VAZIOS aqui não significam vitrine vazia: a unidade sem
-                  valor próprio mostra o da tipologia, e o placeholder diz qual
-                  é. Preencher só faz sentido para a exceção — a cobertura com
-                  área diferente do tipo dela. */}
               <div className="grid grid-cols-2 gap-1.5">
                 <div>
                   <label className="mb-0.5 block text-[9px] text-white/40">Preço (R$)</label>
@@ -982,10 +1013,6 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                 <div>
                   <label className="mb-0.5 block text-[9px] text-white/40">Área privativa (m²)</label>
                   <input type="number" min={0} step={0.5} value={unidSel.areaPrivativa ?? ""}
-                    placeholder={tipDoSel?.areaPrivativa != null ? `${tipDoSel.areaPrivativa} (tipologia)` : ""}
-                    title={tipDoSel?.areaPrivativa != null
-                      ? `Vazio = ${tipDoSel.areaPrivativa} m², da tipologia ${tipDoSel.nome}`
-                      : undefined}
                     onChange={(e) => patchUnidade(unidSel.id, {
                       areaPrivativa: e.target.value === "" ? undefined : parseFloat(e.target.value),
                     })}
@@ -994,10 +1021,6 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                 <div>
                   <label className="mb-0.5 block text-[9px] text-white/40">Quartos</label>
                   <input type="number" min={0} step={1} value={unidSel.quartos ?? ""}
-                    placeholder={tipDoSel?.quartos != null ? `${tipDoSel.quartos} (tipologia)` : ""}
-                    title={tipDoSel?.quartos != null
-                      ? `Vazio = ${tipDoSel.quartos}, da tipologia ${tipDoSel.nome}`
-                      : undefined}
                     onChange={(e) => patchUnidade(unidSel.id, {
                       quartos: e.target.value === "" ? undefined : parseInt(e.target.value, 10),
                     })}
@@ -1019,8 +1042,8 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
               </div>
 
               {/* ===== Volume da unidade =====
-                  Tamanho e posição da caixa no modelo, para QUALQUER unidade.
-                  Uma cobertura mais larga, um garden mais
+                  Tamanho e posição da caixa no modelo, para QUALQUER unidade —
+                  não só as avulsas. Uma cobertura mais larga, um garden mais
                   fundo ou um pé-direito duplo não cabem na fatia uniforme da
                   torre, e até aqui só dava para ajustá-los criando um pivô à
                   mão antes. */}
@@ -1042,16 +1065,6 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                     </label>
 
                     <div className="ed-eyebrow pt-1 text-[var(--ed-dim)]">Volume da unidade</div>
-                    <button
-                      onClick={() => onPlacingUnidade(placingUnidadeId === unidSel.id ? null : unidSel.id)}
-                      className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[11px] font-semibold ${
-                        placingUnidadeId === unidSel.id
-                          ? "animate-pulse bg-amber-400 text-[#0a0a0a]"
-                          : "bg-teal-500 text-[#0a0a0a] hover:bg-teal-400"
-                      }`}>
-                      <Crosshair className="h-3.5 w-3.5" />
-                      {placingUnidadeId === unidSel.id ? "Clique no mapa..." : "Posicionar unidade no mapa"}
-                    </button>
                     <p className="text-[10px] leading-relaxed text-white/35">
                       {proprio
                         ? "Esta unidade tem tamanho próprio — sai do fatiamento da torre."
@@ -1466,6 +1479,74 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
           <Plus className="h-3.5 w-3.5" /> Adicionar torre
         </button>
       </Section>
+
+      {/* Unidades avulsas */}
+      <Section title="Unidades avulsas" aberta={false}>
+        <p className="text-[10px] leading-relaxed text-white/35"
+          title="Selecione uma para ganhar pivô próprio na cena e arrastá-la (W/E/R). Com várias, o pivô vai para o centro do grupo. Qualquer unidade da grade vira avulsa em “Criar pivô”, na barra de seleção.">
+          Para o que não obedece à grade de “N por andar”: cobertura, garden,
+          loja. Fica exatamente onde você colocar, fora do fatiamento da torre.
+        </p>
+
+        <button onClick={criarAvulsa}
+          className="flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-teal-500 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
+          <Plus className="h-3.5 w-3.5" /> Nova unidade avulsa
+        </button>
+
+        {avulsas.length === 0 && (
+          <p className="text-center text-[10px] text-white/25">Nenhuma unidade avulsa.</p>
+        )}
+
+        {/*
+          Esta lista é NAVEGAÇÃO, não edição.
+
+          Ela repetia o cartão inteiro da unidade — número, tipologia, status,
+          pavimento, preço, posição e tamanho —, os mesmos campos do editor do
+          espelho, logo acima. Com uma avulsa selecionada, as duas apareciam ao
+          mesmo tempo, e nada dizia qual era a de verdade. Agora se edita num
+          lugar só; aqui se ACHA a avulsa no meio de trezentas unidades, o que a
+          grade por andar não faz bem.
+        */}
+        {avulsas.map((u) => {
+          const marcada = sel.includes(u.id);
+          return (
+            <div key={u.id}
+              className={`rounded-[3px] border bg-black/20 ${marcada ? "border-teal-400/50" : "border-white/[0.08]"}`}>
+              <div className="flex items-center gap-1.5 p-1.5">
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: STATUS_META[u.status].cor }} />
+                <button
+                  onClick={(e) => onSelClique(u.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })}
+                  title="Ctrl+clique acumula na seleção"
+                  className={`min-w-0 flex-1 truncate text-left text-[11px] hover:text-teal-300 ${
+                    marcada ? "text-teal-300" : "text-white/85"
+                  }`}>
+                  {u.numero} <span className="text-white/35">· {u.tipologia || "sem tipologia"}</span>
+                </button>
+                <button onClick={() => onPlacingUnidade(placingUnidadeId === u.id ? null : u.id)}
+                  title="Posicionar no mapa"
+                  className={`shrink-0 rounded-[3px] p-1 ${
+                    placingUnidadeId === u.id ? "animate-pulse bg-amber-400 text-[#0a0a0a]" : "text-white/40 hover:bg-white/10 hover:text-white"
+                  }`}>
+                  <Crosshair className="h-3 w-3" />
+                </button>
+                <button onClick={() => onUnidades(unidades.filter((x) => x.id !== u.id))}
+                  className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-red-500/15 hover:text-red-300">
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+
+            </div>
+          );
+        })}
+
+        {avulsas.length > 0 && (
+          <p className="text-[10px] leading-relaxed text-white/25">
+            Clique numa para abrir os campos dela no <b>Espelho</b>, acima —
+            inclusive tamanho e posição.
+          </p>
+        )}
+      </Section>
+
 
       {/* CRM */}
       <Section title="Disponibilidade (CRM)" aberta={false}>

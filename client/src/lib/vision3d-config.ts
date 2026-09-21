@@ -1,5 +1,6 @@
+import { empreendimentos } from "./empreendimentos";
 import type { Empreendimento } from "@shared/schema";
-import type { CameraView, Placement } from "./placements";
+import type { CameraView, Placement, Placements } from "./placements";
 
 /**
  * Configuração de posicionamento 3D de cada empreendimento sobre os
@@ -76,48 +77,6 @@ export interface Building3D extends Building3DConfig {
   lng: number;
   /** Câmera inicial salva no editor (se houver). */
   camera?: CameraView;
-  /**
-   * Cota do terreno sob o empreendimento, em metros, medida uma vez contra a
-   * fotogrametria. Ver `ProjectConfig.alturaSolo`.
-   */
-  alturaSolo?: number;
-}
-
-/**
- * Mini mapa: o GLB de terreno/entorno que compõe a cena SEM fotogrametria.
- *
- * Desligar a cidade 3D deixa o prédio flutuando sobre um cinza chapado. Isso é
- * leitura de maquete e serve ao aparelho fraco, mas custa toda a informação de
- * implantação: para onde a fachada olha, o que faz esquina, como o terreno cai.
- * O mini mapa devolve isso por um caminho barato — uma quadra modelada à mão
- * pesa uma fração do que o streaming do Google consome, e não depende de rede
- * nem de chave de API.
- *
- * Por que transformação própria e não a do prédio: são dois GLBs de origens
- * diferentes, quase nunca exportados no mesmo referencial. Amarrar os dois na
- * mesma matriz obrigaria a reexportar um deles para encaixar no outro.
- *
- * Tem os três eixos de rotação, como o empreendimento. A primeira versão só
- * tinha `heading`, no argumento de que uma base de implantação se assenta no
- * plano do terreno — e isso é verdade para o caso limpo, mas deixava sem saída
- * o GLB que chega com o eixo trocado da exportação. Corrigir na origem continua
- * sendo o certo; não poder corrigir aqui era uma parede.
- */
-export interface MapaBase {
-  url: string;
-  /** Rotação em torno do eixo vertical, em graus (0 = norte). */
-  heading: number;
-  /** Inclinação frente/trás e rolagem lateral, em graus. */
-  pitch: number;
-  roll: number;
-  scale: number;
-  /** Altura da base em metros, relativa ao solo medido sob o empreendimento. */
-  heightOffset: number;
-  offsetEast: number;
-  offsetNorth: number;
-  /** Âncora geográfica — a mesma do empreendimento. */
-  lat: number;
-  lng: number;
 }
 
 /** Só as chaves numéricas de transform que o placement pode sobrepor. */
@@ -130,3 +89,49 @@ const TRANSFORM_KEYS = [
   "offsetEast",
   "offsetNorth",
 ] as const;
+
+/**
+ * Resolve a config final de um empreendimento: DEFAULTS < OVERRIDES (código) <
+ * placement (JSON salvo no editor). `placements` é opcional (experiência lê do
+ * servidor; se ausente, usa só o código).
+ */
+export function getBuilding3D(id: string, placements?: Placements): Building3D | null {
+  const emp = empreendimentos.find((e) => e.id === id);
+  if (!emp) return null;
+  const override = OVERRIDES[id] ?? {};
+  const p: Placement = placements?.[id] ?? {};
+  const merged: Building3D = {
+    id,
+    ...DEFAULTS,
+    ...override,
+    empreendimento: emp,
+    lat: p.lat ?? emp.lat,
+    lng: p.lng ?? emp.lng,
+    camera: p.camera,
+  };
+  for (const k of TRANSFORM_KEYS) {
+    if (typeof p[k] === "number") (merged[k] as number) = p[k] as number;
+  }
+  return merged;
+}
+
+/** Todos os empreendimentos resolvidos (com placements aplicados). */
+export function getAllBuildings3D(placements?: Placements): Building3D[] {
+  return empreendimentos
+    .map((e) => getBuilding3D(e.id, placements))
+    .filter((b): b is Building3D => b !== null);
+}
+
+/** Lista de empreendimentos disponíveis para o seletor do visualizador 3D. */
+export function listBuildings3D(): { id: string; name: string }[] {
+  return empreendimentos.map((e) => ({ id: e.id, name: e.name }));
+}
+
+/** Empreendimento inicial do visualizador. */
+export const DEFAULT_BUILDING_ID =
+  empreendimentos.find((e) => e.id === "quinta-das-mangueiras")?.id ??
+  empreendimentos[0]?.id ??
+  "";
+
+/** Fuso de Maragogi/AL: UTC-3 (sem horário de verão). */
+export const MARAGOGI_TZ_OFFSET = -3;

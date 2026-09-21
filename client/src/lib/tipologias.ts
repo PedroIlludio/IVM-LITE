@@ -23,24 +23,11 @@ export function parseArea(v?: string | number | null): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/**
- * 48 → "48 m²"; 37.981 → "37,981 m²".
- *
- * Sem arredondar: a área é o número do memorial e é por ele que se assina
- * contrato. Uma casa decimal era o padrão daqui, e transformava os 37,981 m²
- * cadastrados num "38 m²" na vitrine — um metro quadrado inteiro de diferença
- * declarada ao cliente, no dado que ele mais compara entre unidades.
- *
- * As casas exibidas são as que o número REALMENTE tem: quem cadastrou 44,05
- * vê 44,05, e quem cadastrou 48 continua vendo "48 m²" e não "48,000 m²".
- */
+/** 48 → "48 m²" (sem casas decimais quando é inteiro). */
 export function formatArea(m2?: number): string {
   if (m2 == null || !Number.isFinite(m2)) return "—";
-  const casas = Math.min((String(m2).split(".")[1] ?? "").length, 20);
-  return `${m2.toLocaleString("pt-BR", {
-    minimumFractionDigits: casas,
-    maximumFractionDigits: casas,
-  })} m²`;
+  const n = Number.isInteger(m2) ? m2 : Math.round(m2 * 10) / 10;
+  return `${n.toLocaleString("pt-BR")} m²`;
 }
 
 /** Centavos → "R$ 1.000.263,32". */
@@ -217,74 +204,6 @@ export function tipologiaDaUnidade(u: Unidade, tipologias: Tipologia[]): Tipolog
     if (porId) return porId;
   }
   return tipologias.find((t) => t.nome === u.tipologia);
-}
-
-/** Atributos que a unidade herda do seu tipo quando não os declara. */
-const HERDAVEIS = ["areaPrivativa", "areaTotal", "quartos", "suites", "vagas"] as const;
-
-/** A tipologia diz alguma coisa sobre o apartamento, ou é só um nome com desenho? */
-function tipologiaDescreve(t: Tipologia): boolean {
-  return HERDAVEIS.some((k) => t[k] != null);
-}
-
-/**
- * A tipologia que DESCREVE a unidade — a que vale para área, quartos, suítes e
- * vagas.
- *
- * Normalmente é a tipologia ligada, por id ou por nome. O segundo caso existe
- * por causa da planta escolhida à mão: o editor deixa apontar a unidade para o
- * desenho de OUTRA tipologia (campo "Planta da unidade"), e é o que acontece
- * quando o projeto nasce com uma tipologia genérica — "Planta Padrão", sem
- * atributo nenhum — e as tipologias de verdade são cadastradas depois. A
- * unidade acabava exibindo a planta certa e ficha vazia.
- *
- * O desempate só entra quando a tipologia ligada não descreve nada: enquanto
- * ela tiver atributos, ela manda — trocar o desenho de uma unidade nunca muda
- * o tipo dela.
- */
-export function tipologiaEfetiva(u: Unidade, tipologias: Tipologia[]): Tipologia | undefined {
-  const ligada = tipologiaDaUnidade(u, tipologias);
-  if (ligada && tipologiaDescreve(ligada)) return ligada;
-  if (u.plantaUrl) {
-    const daPlanta = tipologias.find((t) => t.plantaUrl === u.plantaUrl && tipologiaDescreve(t));
-    if (daPlanta) return daPlanta;
-  }
-  return ligada;
-}
-
-/**
- * Unidade com os atributos EFETIVOS: o que ela declara vence, o resto vem da
- * tipologia.
- *
- * A herança acontece na LEITURA, de propósito. Copiar área e quartos para
- * dentro da unidade no momento em que se liga a tipologia (era o que o editor
- * fazia) congela o valor: cadastrar a área depois, ou corrigi-la, não chegava
- * nas 106 unidades já ligadas — e o corretor via ficha vazia numa vitrine cuja
- * tipologia estava preenchida. Resolvendo aqui, a tipologia é a fonte única e
- * o campo da unidade passa a ser o que sempre deveria ter sido: exceção.
- *
- * O nome e o id também são reescritos para os da tipologia efetiva, senão a
- * ficha mostra os números de um tipo com o rótulo de outro.
- */
-export function unidadeComTipologia(u: Unidade, tipologias: Tipologia[]): Unidade {
-  const t = tipologiaEfetiva(u, tipologias);
-  if (!t) return u;
-  return {
-    ...u,
-    tipologia: t.nome,
-    tipologiaId: t.id,
-    areaPrivativa: u.areaPrivativa ?? t.areaPrivativa,
-    areaTotal: u.areaTotal ?? t.areaTotal,
-    quartos: u.quartos ?? t.quartos,
-    suites: u.suites ?? t.suites,
-    vagas: u.vagas ?? t.vagas,
-  };
-}
-
-/** `unidadeComTipologia` na lista inteira. Devolve a mesma lista se não há tipologia. */
-export function unidadesComTipologia(unidades: Unidade[], tipologias: Tipologia[]): Unidade[] {
-  if (!tipologias.length) return unidades;
-  return unidades.map((u) => unidadeComTipologia(u, tipologias));
 }
 
 /** Faixas [mín, máx] de cada atributo — alimenta os limites dos sliders. */
