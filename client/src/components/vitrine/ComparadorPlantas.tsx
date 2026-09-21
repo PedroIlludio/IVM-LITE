@@ -53,7 +53,7 @@ export default function ComparadorPlantas({
   return (
     <div className="absolute inset-0 z-[35] flex flex-col bg-[#e6e3dc] text-[#1c1f1c]"
       data-testid="comparador-unidades" role="dialog" aria-modal="true" aria-label="Comparar plantas">
-      <header className="mx-auto flex w-full max-w-[1080px] shrink-0 items-center gap-3 px-5 py-4 md:pl-[88px] xl:pl-5">
+      <header className="mx-auto flex w-full max-w-[1080px] shrink-0 items-center gap-3 vd-comparador-faixa px-5 py-4">
         <button type="button" onClick={onFechar} className="vd-btn vd-btn-vazado-claro !h-9 !px-3"
           aria-label="Voltar às unidades" data-testid="btn-fechar-comparacao">
           <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} /> Unidades
@@ -69,7 +69,7 @@ export default function ComparadorPlantas({
         )}
       </header>
 
-      <div className="vd-scroll min-h-0 flex-1 px-5 pb-6 md:pl-[88px] xl:pl-5">
+      <div className="vd-scroll min-h-0 vd-comparador-faixa flex-1 px-5 pb-6">
         {escolhidas.length < 2 ? (
           <p className="vd-micro py-20 text-center text-[rgba(28,31,28,.66)]">
             Selecione duas plantas na lista de unidades.

@@ -257,7 +257,11 @@ export function registerProjectsRoutes(app: Express) {
               + `${relatorio.escalasCorrigidas} nó(s) com escala zero `
               + "(matriz singular, parava o render), "
               + `${relatorio.texturasSemUv} textura(s) pedida(s) por malha sem UV `
-              + "(v_texCoord_0 indefinido, quebrava a compilação do shader).",
+              + "(v_texCoord_0 indefinido, quebrava a compilação do shader)"
+              + (relatorio.origemDistante
+                ? ", raiz com coordenada de projeção zerada "
+                  + "(o mapa caía a milhares de quilômetros da âncora)."
+                : "."),
             );
           }
         }

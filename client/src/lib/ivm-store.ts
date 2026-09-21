@@ -278,6 +278,19 @@ export interface ProjectConfig {
    */
   mapaTravado?: boolean;
   /**
+   * O mini mapa é a BASE DO MUNDO, e não a alternativa dela.
+   *
+   * Nem todo endereço tem fotogrametria que sirva de vitrine: cidade pequena
+   * vem esticada, obra recente aparece como terreno vazio, e há lugar sem
+   * captura nenhuma. Nesses casos o GLB do projeto não é plano B — é o único
+   * entorno que existe, e a captura do Google só atrapalharia por baixo dele.
+   *
+   * Ligado, a cena abre direto sem pedir a fotogrametria, e a vitrine nem
+   * exige a chave do Google. Desligado (o normal), o mini mapa segue sendo o
+   * que sempre foi: composição do modo sem cidade, acionado por quem assiste.
+   */
+  mapaComoBase?: boolean;
+  /**
    * Cota do terreno sob o empreendimento, em metros. Medida uma vez.
    *
    * Existe para a vitrine poder ABRIR sem a fotogrametria. A altura do prédio

@@ -27,6 +27,8 @@ import {
 } from "@/lib/pavimentos";
 import { plantasDeTipologia, plantasOrfas } from "@/lib/tipologias";
 import { sanearGlb } from "@/lib/glb-sanear";
+import { lerGeorreferenciaGlb } from "@/lib/glb-bounds";
+import { FALLBACK_GROUND_HEIGHT } from "@/lib/cesium-setup";
 import { ATRIBUTOS_PASTA, importarPastaGltf, lerEscolhaPasta } from "@/lib/gltf-pasta";
 import {
   COR_VIA_PADRAO, LARGURA_VIA_PADRAO, comprimentoDaVia, densificarVia,
@@ -561,6 +563,27 @@ export default function IvmEditorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  /**
+   * Projeto que adota o mini mapa como BASE abre o editor já sem a
+   * fotogrametria — ver `mapaComoBase` em `ProjectConfig`.
+   *
+   * Ajustado DURANTE o render, não num efeito. Num efeito o `Scene3D` já teria
+   * montado uma vez com a fotogrametria ligada: o pedido ao Google sai, falha
+   * (é justamente por falhar que o projeto usa mapa próprio) e o operador leva
+   * um banner de erro sobre uma cena que nunca dependeu do Google. Setar estado
+   * no render faz o React re-renderizar antes de comprometer os filhos, então a
+   * cena monta uma vez só, já no modo certo.
+   *
+   * Uma vez só, na chegada do projeto: depois disso o modo é do operador, que
+   * pode ligar a fotogrametria de volta para conferir o encaixe sem precisar
+   * desfazer a configuração.
+   */
+  const [baseDecidida, setBaseDecidida] = useState(false);
+  if (project && !baseDecidida) {
+    setBaseDecidida(true);
+    if (project.data.config.mapaComoBase) setSemFotogrametria(true);
+  }
+
   // Grava o rascunho um segundo depois da última alteração. A cota do
   // localStorage é pequena e o rascunho é um extra: se estourar, o editor
   // segue funcionando sem ele.
@@ -730,6 +753,70 @@ export default function IvmEditorPage() {
     if (project?.data.config.alturaSolo != null) return;
     const cota = sceneRef.current?.cotaDoSolo();
     if (cota != null) setConfig({ alturaSolo: cota });
+  }
+
+  /**
+   * Adota um GLB como mini mapa, já posto no lugar a que ele pertence.
+   *
+   * Mapa 3D exportado não é um modelo qualquer: ele SABE onde fica. O arquivo
+   * carrega a coordenada da própria origem, o giro da grade em relação ao norte
+   * e o fator de escala da projeção. Sem ler nada disso, o operador precisava
+   * descobrir na mão, por tentativa, um encaixe que o arquivo já trazia escrito
+   * — e "na mão" aqui é arrastar dois controles de deslocamento até a costa
+   * bater com a costa, o que ninguém acerta em menos de uns bons minutos e
+   * quase nunca fica no metro certo.
+   *
+   * Giro e escala não aparecem aqui porque não precisam: eles ficam no nó raiz
+   * do próprio GLB e o Cesium já os aplica. Do saneamento sai só a translação,
+   * que é coordenada de projeção absoluta e não sobrevive à âncora geográfica
+   * (ver `corrigirOrigemDistante`). O que falta calcular, então, é a posição
+   * RELATIVA ao empreendimento — que é como a cena ancora o mini mapa — e a
+   * altura.
+   *
+   * É um PONTO DE PARTIDA, não um veredito: os controles seguem abertos, porque
+   * a cota do terreno do empreendimento é estimada e um retoque de altura
+   * costuma ser necessário. Arquivo sem georreferência não mexe em nada — quem
+   * envia um terreno modelado à mão continua posicionando como antes.
+   */
+  async function adotarMiniMapa(url: string) {
+    setMapaErro(null);
+    setPreviewEstudio(true);
+
+    /**
+     * A leitura vem ANTES de gravar, para o mapa e a posição dele entrarem no
+     * mesmo `setConfig`. Dois `setConfig` seguidos empilhariam dois registros de
+     * histórico, e desfazer uma única ação pediria dois cliques — o primeiro
+     * deles deixando o mapa no lugar errado, que é pior do que não desfazer.
+     * Custa pouco: são alguns KB de cabeçalho, não o arquivo inteiro.
+     */
+    const geo = await lerGeorreferenciaGlb(url);
+    const cfg = project?.data.config;
+    // Sem âncora do empreendimento não existe "relativo a quê": o deslocamento
+    // é medido a partir dela.
+    if (!geo || cfg?.lng == null || cfg.lat == null) {
+      setConfig({ mapaUrl: url });
+      return;
+    }
+
+    const mPorLat = 111320;
+    const mPorLng = 111320 * Math.cos((cfg.lat * Math.PI) / 180);
+    /**
+     * A MESMA cota que a cena usa para assentar o mini mapa. Medida, se a
+     * fotogrametria ainda estiver de pé; senão, a que o projeto gravou.
+     */
+    const solo = sceneRef.current?.cotaDoSolo()
+      ?? cfg.alturaSolo ?? FALLBACK_GROUND_HEIGHT;
+
+    setConfig({
+      mapaUrl: url,
+      mapaOffsetEast: Math.round((geo.lng - cfg.lng) * mPorLng),
+      mapaOffsetNorth: Math.round((geo.lat - cfg.lat) * mPorLat),
+      mapaHeightOffset: Math.round(geo.cotaDoZero - solo),
+      mapaScale: 1,
+      mapaHeading: 0,
+      mapaPitch: 0,
+      mapaRoll: 0,
+    });
   }
 
   /** Só uma vista pode ser a principal. */
@@ -1185,11 +1272,18 @@ export default function IvmEditorPage() {
     if (tab !== "modelo") { setPreviewEstudio(false); setEditandoMapa(false); }
   }, [tab]);
 
-  // Sem preview não há mini mapa desenhado, e um pivô sobre a fotogrametria
-  // moveria um objeto que ninguém está vendo.
+  /**
+   * O mini mapa está DESENHADO? É o que decide se o gizmo dele pode existir —
+   * um pivô sobre a fotogrametria moveria um objeto que ninguém está vendo.
+   *
+   * São duas portas de entrada para o mesmo estado de cena: o preview, que é
+   * temporário, e o mapa promovido a base, que é permanente. Sem a segunda, o
+   * projeto sem fotogrametria via o mapa na tela e o gizmo inerte.
+   */
+  const mapaDesenhado = previewEstudio || semFotogrametria;
   useEffect(() => {
-    if (!previewEstudio) setEditandoMapa(false);
-  }, [previewEstudio]);
+    if (!mapaDesenhado) setEditandoMapa(false);
+  }, [mapaDesenhado]);
 
 
   /**
@@ -2057,6 +2151,22 @@ export default function IvmEditorPage() {
   }
 
   function onEditPlace(_id: string, lat: number, lng: number) {
+    if (placingTorreId) {
+      // Converte o ponto clicado para as coordenadas do modelo: é assim que o
+      // volume da torre é posicionado sem precisar adivinhar X/Y.
+      const local = sceneRef.current?.modelLocalFromLatLng(_id, lat, lng);
+      if (local) {
+        const i = torres.findIndex((t) => t.id === placingTorreId);
+        if (i >= 0) {
+          const v = volumeDaTorre(torres[i], i, torres.length);
+          const n = [...torres];
+          n[i] = { ...n[i], volume: { ...v, x: local.x, y: local.y } };
+          setConfig({ torres: n });
+        }
+      }
+      setPlacingTorreId(null);
+      return;
+    }
     if (placingUnidadeId) {
       const local = sceneRef.current?.modelLocalFromLatLng(_id, lat, lng);
       const unidade = unidades.find((u) => u.id === placingUnidadeId);
@@ -2084,22 +2194,6 @@ export default function IvmEditorPage() {
           } }
         : u));
       setPlacingUnidadeId(null);
-      return;
-    }
-    if (placingTorreId) {
-      // Converte o ponto clicado para as coordenadas do modelo: é assim que o
-      // volume da torre é posicionado sem precisar adivinhar X/Y.
-      const local = sceneRef.current?.modelLocalFromLatLng(_id, lat, lng);
-      if (local) {
-        const i = torres.findIndex((t) => t.id === placingTorreId);
-        if (i >= 0) {
-          const v = volumeDaTorre(torres[i], i, torres.length);
-          const n = [...torres];
-          n[i] = { ...n[i], volume: { ...v, x: local.x, y: local.y } };
-          setConfig({ torres: n });
-        }
-      }
-      setPlacingTorreId(null);
       return;
     }
     if (placingPoiId) {
@@ -2190,7 +2284,7 @@ export default function IvmEditorPage() {
    * Precisa das quatro condições: estar na aba certa, com o preview ligado
    * (senão o objeto nem é desenhado), com GLB para mover e sem cadeado.
    */
-  const pivoNoMapa = tab === "modelo" && previewEstudio && !!c.mapaUrl
+  const pivoNoMapa = tab === "modelo" && mapaDesenhado && !!c.mapaUrl
     && !mapaTravado && editandoMapa;
 
   /**
@@ -2400,12 +2494,14 @@ export default function IvmEditorPage() {
             Espaço próprio, não sobreposto pelos painéis: o Cesium se
             redimensiona sozinho ao container. */}
         <main className="ed-viewport relative min-w-0 flex-1 bg-[#0a0a0a]">
-          {apiKey !== null && (apiKey || c.mapaUrl) && (
+          {/* Com o mini mapa de base a chave do Google não é pré-requisito:
+              a cena não vai pedir um único tile. */}
+          {(apiKey || c.mapaComoBase) && (
             <Scene3D
           key={tentativaCena}
           ref={sceneRef}
-          apiKey={apiKey}
-          fotogrametria={!semFotogrametria && !!apiKey}
+          apiKey={apiKey ?? ""}
+          fotogrametria={!semFotogrametria}
           buildings={buildings}
           solarUtc={utcDate}
           /* Sem isto o `daylight` da cena ficava travado no padrão (45°): a
@@ -2418,7 +2514,7 @@ export default function IvmEditorPage() {
           realceNoturno={ambiente?.realceNoturno}
           /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
           /* Sem fotogrametria nao ha cidade a mostrar; o mini mapa assume. */
-          cidade={!previewEstudio && !semFotogrametria && !!apiKey}
+          cidade={!previewEstudio && !semFotogrametria}
           sombras={ambiente?.sombras}
           mapaBase={mapaBase}
           gizmoMapa={pivoNoMapa}
@@ -2510,10 +2606,10 @@ export default function IvmEditorPage() {
             <div className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[4px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] shadow-lg">
               {placingPoiId ? (
                 <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA O PONTO</>
-              ) : placingUnidadeId ? (
-                <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA A UNIDADE {unidades.find((u) => u.id === placingUnidadeId)?.numero ?? ""}</>
               ) : placingTorreId ? (
                 <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA A TORRE {torreLabel(placingTorreId, torres).toUpperCase()}</>
+              ) : placingUnidadeId ? (
+                <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA A UNIDADE {unidades.find((u) => u.id === placingUnidadeId)?.numero ?? ""}</>
               ) : (
                 <><Move className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA O EMPREENDIMENTO</>
               )}
@@ -4004,24 +4100,59 @@ export default function IvmEditorPage() {
                 cidade 3D é desligada. Sem ele, esse modo deixa o prédio sobre um
                 fundo liso. Opcional — vazio, nada muda.
               </p>
+              {/* Promove o mini mapa de alternativa a BASE. Fica aqui, e não na
+                  aba Local, porque o que se promove é ESTE asset — a decisão não
+                  faz sentido lida longe do arquivo e do encaixe dele. */}
+              <label className={`flex items-center gap-1.5 text-[11px] ${
+                c.mapaUrl ? "text-white/60" : "cursor-not-allowed text-white/25"
+              }`}
+                title={c.mapaUrl
+                  ? "A cena abre sem pedir a fotogrametria — o mini mapa vira o entorno"
+                  : "Envie o GLB do mapa antes de promovê-lo a base"}>
+                <input type="checkbox" disabled={!c.mapaUrl}
+                  checked={!!c.mapaComoBase}
+                  onChange={(e) => {
+                    const base = e.target.checked;
+                    setConfig({ mapaComoBase: base });
+                    // Trocar a base do mundo é recriar a cena: o tileset do
+                    // Google é anexado na CRIAÇÃO do viewer.
+                    recarregarCena(base);
+                  }}
+                  className="accent-teal-400" />
+                Usar como base do mundo (sem fotogrametria)
+              </label>
+              {c.mapaComoBase && (
+                <p className="text-[10px] leading-relaxed text-white/35">
+                  A captura do Google não é baixada, aqui nem na vitrine — útil
+                  onde ela não existe, vem esticada ou ainda mostra o terreno
+                  vazio. Confira o encaixe: sem fotogrametria a cota do terreno é
+                  estimada, e o prédio pode precisar de um retoque na altura.
+                </p>
+              )}
               {/* O preview vem ANTES do resto, como no modo noturno: com a
                   cidade ligada o mini mapa não é desenhado, e mexer nos sliders
-                  abaixo não mudaria um pixel na tela. */}
-              <button
-                onClick={() => setPreviewEstudio((v) => !v)}
-                className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors ${
-                  previewEstudio
-                    ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
-                    : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
-                }`}>
-                {previewEstudio
-                  ? <><Globe className="h-3.5 w-3.5" /> Voltar à cidade 3D</>
-                  : <><MapIcon className="h-3.5 w-3.5" /> Pré-visualizar sem a cidade</>}
-              </button>
-              {!previewEstudio && (
-                <p className="text-[10px] leading-relaxed text-white/30">
-                  Ligue o preview para ver o mini mapa e o efeito dos ajustes abaixo.
-                </p>
+                  abaixo não mudaria um pixel na tela. Promovido a base, não há
+                  cidade de onde sair — o botão só ofereceria um estado que já é
+                  o vigente. */}
+              {!c.mapaComoBase && (
+                <>
+                  <button
+                    onClick={() => setPreviewEstudio((v) => !v)}
+                    className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors ${
+                      previewEstudio
+                        ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
+                        : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
+                    }`}>
+                    {previewEstudio
+                      ? <><Globe className="h-3.5 w-3.5" /> Voltar à cidade 3D</>
+                      : <><MapIcon className="h-3.5 w-3.5" /> Pré-visualizar sem a cidade</>}
+                  </button>
+                  {!previewEstudio && (
+                    <p className="text-[10px] leading-relaxed text-white/30">
+                      Ligue o preview para ver o mini mapa e o efeito dos ajustes abaixo.
+                    </p>
+                  )}
+                </>
               )}
               <div>
                 <label className="mb-0.5 block text-[11px] text-white/50">Asset (GLB)</label>
@@ -4051,7 +4182,7 @@ export default function IvmEditorPage() {
                       const u = await importarPasta(arquivos);
                       // Mesmo motivo do envio direto: quem acabou de importar o
                       // mini mapa quer ver onde ele caiu.
-                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                      if (u) await adotarMiniMapa(u);
                     }} />
                   <input ref={mapaGlbRef} type="file" accept=".glb" className="hidden"
                     onChange={async (e) => {
@@ -4062,7 +4193,7 @@ export default function IvmEditorPage() {
                       // Subir o mini mapa já liga o preview: quem acabou de
                       // enviar quer ver onde ele caiu, e com a cidade ligada
                       // não veria nada acontecer.
-                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                      if (u) await adotarMiniMapa(u);
                     }} />
                 </div>
                 {importandoPasta && (
@@ -4101,10 +4232,10 @@ export default function IvmEditorPage() {
                   <div className="flex gap-1.5">
                     <button
                       onClick={() => setEditandoMapa((v) => !v)}
-                      disabled={mapaTravado || !previewEstudio}
+                      disabled={mapaTravado || !mapaDesenhado}
                       title={mapaTravado
                         ? "Encaixe do mini mapa travado — destrave para mover"
-                        : !previewEstudio
+                        : !mapaDesenhado
                           ? "Ligue o preview sem a cidade para ver o mini mapa"
                           : "Mostra as alças de mover/girar/escalar no mini mapa (esconde o pivô do empreendimento)"}
                       className={`flex flex-1 items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
@@ -4796,14 +4927,7 @@ export default function IvmEditorPage() {
               placingTorreId={placingTorreId}
               onPlacingTorre={setPlacingTorreId}
               placingUnidadeId={placingUnidadeId}
-              onPlacingUnidade={(id) => {
-                setPlacingUnidadeId(id);
-                if (id) {
-                  setPlacingPoiId(null);
-                  setPlacingTorreId(null);
-                  setPlacingBuilding(false);
-                }
-              }}
+              onPlacingUnidade={setPlacingUnidadeId}
               sel={unidSel}
               onSel={setUnidSel}
               onSelClique={selecionarUnidade}

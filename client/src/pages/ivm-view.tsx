@@ -15,7 +15,7 @@ import GaleriaView from "@/components/vitrine/GaleriaView";
 import LocalView from "@/components/vitrine/LocalView";
 import ComparadorPlantas from "@/components/vitrine/ComparadorPlantas";
 import {
-  BarraMovel, IlhaNav, Simbolo, TELAS_COM_3D, canaisDeContato,
+  IlhaNav, Simbolo, TELAS_COM_3D, canaisDeContato, useMovel,
   type ItemNav, type Secao, type Tela,
 } from "@/components/vitrine/comum";
 import {
@@ -56,7 +56,10 @@ export default function IvmViewPage() {
   const incorporadoraSlug = ehLegado ? null : (paramsTenant?.incorporadora ?? null);
 
   const [apiKey, setApiKey] = useState<string | null>(null);
-  /** Sem chave do Google, a cena ainda pode usar o mapa GLB do projeto. */
+  /**
+   * O servidor respondeu, mas sem chave do Google. Sem isto a página ficava
+   * presa na capa para sempre — a cena nunca monta sem `apiKey`.
+   */
   const [semChave, setSemChave] = useState(false);
   const [project, setProject] = useState<IvmProject | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -119,7 +122,7 @@ export default function IvmViewPage() {
    * preferência perde o objeto — e sombras, vias e o modo de navegação
    * perguntam por isto para escolher comportamento.
    */
-  const cidadeEfetiva = cidade3D && !semFotogrametria && !!apiKey;
+  const cidadeEfetiva = cidade3D && !semFotogrametria;
 
   /**
    * Aparelho fraco abre pelo MINI MAPA, não pela fotogrametria. As três
@@ -134,16 +137,23 @@ export default function IvmViewPage() {
     if (c.mapaUrl && c.alturaSolo != null && ehAparelhoLeve()) setCidade3D(false);
   }, [project]);
 
-  const [mobileViewport, setMobileViewport] = useState(false);
-  useEffect(() => {
-    const mq = window.matchMedia(
-      "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)",
-    );
-    const ver = () => setMobileViewport(mq.matches);
-    ver();
-    mq.addEventListener("change", ver);
-    return () => mq.removeEventListener("change", ver);
-  }, []);
+  /**
+   * Mini mapa promovido a BASE do mundo (`mapaComoBase`): a fotogrametria não é
+   * sequer pedida. Não é escolha do aparelho nem saída de erro — é como o
+   * projeto foi configurado, em lugar onde a captura do Google não serve.
+   *
+   * No render, e não num efeito: num efeito a cena já teria montado uma vez
+   * pedindo o Google, e o visitante veria a tela de erro da fotogrametria antes
+   * da vitrine que nunca dependeu dela.
+   */
+  const [baseDecidida, setBaseDecidida] = useState(false);
+  if (project && !baseDecidida) {
+    setBaseDecidida(true);
+    const c = project.data.config;
+    if (c.mapaUrl && c.mapaComoBase) setSemFotogrametria(true);
+  }
+
+  const mobileViewport = useMovel();
 
   useEffect(() => {
     const ver = () => setTelaCheia(!!document.fullscreenElement);
@@ -175,10 +185,7 @@ export default function IvmViewPage() {
         setApiKey(chave);
         if (!chave) setSemChave(true);
       })
-      .catch(() => {
-        setApiKey("");
-        setSemChave(true);
-      });
+      .catch(() => setSemChave(true));
     const buscar = incorporadoraSlug
       ? getProjectByPath(incorporadoraSlug, slug)
       : getProjectBySlug(slug);
@@ -455,8 +462,10 @@ export default function IvmViewPage() {
     setReady(false);
     setModeloPronto(false);
     setSegundosCarregando(0);
-    // "Tentar de novo" é tentar o Google OUTRA VEZ.
-    setSemFotogrametria(false);
+    // "Tentar de novo" é tentar o Google OUTRA VEZ — menos onde a captura dele
+    // foi dispensada de propósito, que voltaria o projeto a um entorno que
+    // alguém já julgou impróprio para esta vitrine.
+    if (!project?.data.config.mapaComoBase) setSemFotogrametria(false);
     setTentativaCena((n) => n + 1);
   };
 
@@ -474,7 +483,7 @@ export default function IvmViewPage() {
   const etapaCarregamento = !project
     ? "Abrindo o empreendimento"
     : !ready
-      ? "Carregando a fotogrametria"
+      ? (semFotogrametria ? "Carregando o mapa" : "Carregando a fotogrametria")
       : "Carregando o modelo";
 
   // --- Conteúdo das seções ----------------------------------------------------
@@ -499,12 +508,6 @@ export default function IvmViewPage() {
     ...(temPois ? [{ id: "local" as const, rotulo: "Localização", icone: MapPin }] : []),
     ...(temGaleria ? [{ id: "galeria" as const, rotulo: "Galeria", icone: Images }] : []),
   ];
-  // O celular tem ordem e nomes próprios: sem Home, e "Entorno" no fim.
-  const ordemMovel: Secao[] = ["projeto", "lazer", "unidades", "galeria", "local"];
-  const navMovel = ordemMovel
-    .map((id) => nav.find((n) => n.id === id))
-    .filter((n): n is ItemNav => !!n)
-    .map((n) => (n.id === "local" ? { ...n, rotulo: "Entorno" } : n));
 
   if (notFound) {
     return (
@@ -514,13 +517,17 @@ export default function IvmViewPage() {
     );
   }
 
-  const basePropria = !!mapaBase?.url;
-  const semFotogrametriaEfetiva = semFotogrametria || (!apiKey && basePropria);
-  const bloqueadoSemChave = semChave && !basePropria;
-  const cenaMontada = apiKey !== null && (!!apiKey || basePropria) && !!building
-    && !(mobileViewport && tela === "local");
+  /*
+    A chave do Google só é pré-requisito quando é ELE que dá o entorno. Com o
+    mini mapa de base a cena não pede um tile, e travar a vitrine na capa por
+    falta de uma chave que ninguém vai usar era esconder um projeto inteiro.
+  */
+  const mapaEhBase = !!project?.data.config.mapaComoBase && !!project?.data.config.mapaUrl;
+  const chaveDispensavel = mapaEhBase;
+  const cenaMontada = (!!apiKey || (chaveDispensavel && apiKey !== null))
+    && !!building && !(mobileViewport && tela === "local");
   const telaClara = tela === "local" || tela === "comparar";
-  const semErro = !tilesError && !bloqueadoSemChave;
+  const semErro = !tilesError && !(semChave && !chaveDispensavel);
 
   return (
     <div className="vitrine relative h-[100dvh] w-full overflow-hidden bg-[#101410]">
@@ -529,7 +536,7 @@ export default function IvmViewPage() {
           /* Ver `recarregarCena`: trocar a chave é o que remonta a cena. */
           key={tentativaCena}
           ref={sceneRef}
-          apiKey={apiKey as string}
+          apiKey={apiKey ?? ""}
           buildings={buildings}
           solarUtc={utcDate}
           solarAltitude={sun.altitude}
@@ -550,7 +557,7 @@ export default function IvmViewPage() {
           unitBoxes={unitBoxes}
           onSelectUnit={(id) => setUnidadeSelId(id)}
           cidade={cidadeEfetiva}
-          fotogrametria={!semFotogrametriaEfetiva}
+          fotogrametria={!semFotogrametria}
           sombras={ambiente?.sombras}
           /* Composição do modo sem fotogrametria — só é desenhado ali. */
           mapaBase={mapaBase}
@@ -709,7 +716,7 @@ export default function IvmViewPage() {
           </button>
           {/* Sem fotogrametria não há tileset a alternar: um botão que não faz
               nada faz a vitrine parecer travada. */}
-          {!semFotogrametriaEfetiva && (
+          {!semFotogrametria && (
             <button type="button" onClick={() => setCidade3D((v) => !v)} className="vd-acao vd-acao-extra"
               data-on={cidade3D ? undefined : "1"}
               title={cidade3D
@@ -770,12 +777,15 @@ export default function IvmViewPage() {
 
       {/* ---- Navegação ---- */}
       {project && semErro && (
-        <>
-          <IlhaNav itens={nav} ativa={secao} onEscolher={irPara} claro={telaClara} />
-          {/* No celular a barra de seções só vive na Home: cada seção ocupa a
-              tela e tem o próprio botão de voltar. */}
-          {tela === "home" && <BarraMovel itens={navMovel} ativa={secao} onEscolher={irPara} />}
-        </>
+        <IlhaNav
+          itens={nav}
+          ativa={secao}
+          onEscolher={irPara}
+          claro={telaClara}
+          /* No celular a ilha só vive na Home: cada seção ocupa a tela inteira
+             e tem o próprio botão de voltar — a ilha por cima só tamparia. */
+          naHome={tela === "home"}
+        />
       )}
 
       {/* Foto do cartão do POI em tela cheia. */}
@@ -890,8 +900,10 @@ export default function IvmViewPage() {
         </div>
       )}
 
-      {/* Sem chave nem mapa do projeto, a cena não tem uma base para abrir. */}
-      {bloqueadoSemChave && (
+      {/* Chave do Google ausente: a cena nunca vai montar, então diz o porquê.
+          Com o mini mapa de base ela monta sem chave nenhuma — ver
+          `chaveDispensavel`. */}
+      {semChave && !chaveDispensavel && (
         <div className="absolute inset-0 z-[80] flex items-center justify-center bg-[#101410] p-4">
           <div className="vd-vidro max-w-md p-8 text-center">
             <h2 className="vd-rotulo mb-3">Experiência 3D indisponível</h2>

@@ -71,7 +71,7 @@ export default function EmpreendimentoPanel({ emp, unidades, onFechar }: {
 
   return (
     <aside
-      className="vd-painel vd-vidro vd-entra w-[308px] overflow-hidden"
+      className="vd-painel vd-vidro vd-entra overflow-hidden"
       data-testid="panel-empreendimentos"
       aria-label="Ficha técnica do projeto"
     >

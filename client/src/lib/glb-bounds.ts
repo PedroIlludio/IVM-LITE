@@ -49,6 +49,7 @@ interface NoGltf {
   translation?: number[];
   rotation?: number[];
   scale?: number[];
+  extras?: Record<string, unknown>;
 }
 
 interface AccessorGltf {
@@ -65,6 +66,92 @@ interface DocGltf {
   meshes?: { primitives?: { attributes?: Record<string, number> }[] }[];
   accessors?: AccessorGltf[];
   extensionsUsed?: string[];
+}
+
+// --- Georreferência do mapa 3D ----------------------------------------------
+
+/**
+ * Onde o mapa 3D diz que ele fica.
+ *
+ * Exportador de mapa (maps3d.io e similares) entrega a geometria em metros
+ * centrada na própria origem e grava ao lado O ENDEREÇO dessa origem. Vem tudo
+ * dentro do GLB, em `extras` — não depende do `georeference.json` que
+ * acompanha o download, que o operador não tem como enviar pelo campo de
+ * arquivo e que se perde no primeiro repasse por e-mail.
+ */
+export interface GeoMapaGlb {
+  /** Longitude e latitude da origem do modelo, em graus. */
+  lng: number;
+  lat: number;
+  /**
+   * Cota, em metros, que corresponde a `Y = 0` na geometria.
+   *
+   * Sem isto o mapa assenta na altura errada: o exportador põe o zero do
+   * modelo na cota MÍNIMA do recorte, que raramente é a cota do terreno do
+   * empreendimento.
+   */
+  cotaDoZero: number;
+}
+
+/** Número finito vindo de `extras`, que é JSON de terceiro e aceita qualquer coisa. */
+function numero(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** Par `[lng, lat]` plausível como coordenada geográfica. */
+function lngLat(v: unknown): [number, number] | null {
+  if (!Array.isArray(v) || v.length < 2) return null;
+  const lng = numero(v[0]);
+  const lat = numero(v[1]);
+  if (lng === null || lat === null) return null;
+  if (Math.abs(lng) > 180 || Math.abs(lat) > 90) return null;
+  return [lng, lat];
+}
+
+/**
+ * Lê a georreferência do documento já decodificado.
+ *
+ * Duas fontes, porque os exportadores não concordam em uma só: o nó raiz
+ * (`extras.originLngLat`, junto do CRS e da rotação da grade) e a cena
+ * (`extras.sceneOriginGeo`). Quando as duas existem valem o mesmo ponto; a do
+ * nó vem primeiro por ser a que carrega o resto do georreferenciamento.
+ */
+function lerGeoDoDoc(doc: DocGltf): GeoMapaGlb | null {
+  let ponto: [number, number] | null = null;
+  for (const no of doc.nodes ?? []) {
+    ponto = lngLat((no.extras as Record<string, unknown> | undefined)?.originLngLat);
+    if (ponto) break;
+  }
+  const cena = doc.scenes?.[doc.scene ?? 0]?.extras;
+  if (!ponto) ponto = lngLat(cena?.sceneOriginGeo);
+  if (!ponto) return null;
+
+  /**
+   * `altitudeBoundsinMeters.min` é a cota do ponto mais baixo do recorte, e o
+   * exportador anota que é ELA que cai em `Y = 0` (`modelYZero`). Ausente, zero
+   * é o palpite certo: sem outra informação, o mapa se assenta no nível do mar
+   * e a diferença sobra para o controle de altura.
+   */
+  const cotas = cena?.altitudeBoundsinMeters as Record<string, unknown> | undefined;
+  return { lng: ponto[0], lat: ponto[1], cotaDoZero: numero(cotas?.min) ?? 0 };
+}
+
+/**
+ * Georreferência de um `.glb` de mapa, ou `null` se ele não trouxer nenhuma.
+ *
+ * Lê o mesmo cabeçalho que `medirGlb` — alguns KB de um arquivo de dezenas de
+ * MB, e normalmente já em cache.
+ */
+export async function lerGeorreferenciaGlb(url: string): Promise<GeoMapaGlb | null> {
+  const buffer = await baixarCabecalho(url);
+  if (!buffer) return null;
+  try {
+    const doc = lerJson(buffer);
+    return doc ? lerGeoDoDoc(doc) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Aceita apenas contornos finitos e com tamanho seguro vindos do arquivo. */

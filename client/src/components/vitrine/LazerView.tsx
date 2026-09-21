@@ -162,7 +162,7 @@ export default function LazerView({ itens, onFechar }: {
           {/* Ambientes em faixa rolável: o nome visível é o atalho. */}
           <div ref={faixaRef} className="vd-faixa-h flex gap-1.5 overflow-x-auto px-4 pt-3" role="group" aria-label="Ambientes">
             {visiveis.map((i) => (
-              <button key={i.id} type="button" className="vd-pilula !h-9 shrink-0 !normal-case !tracking-[0.04em] !text-[11.5px] !font-medium"
+              <button key={i.id} type="button" className="vd-pilula vd-pilula-toque shrink-0 !normal-case !tracking-[0.04em] !text-[11.5px] !font-medium"
                 data-on={i.id === item.id ? "1" : undefined} aria-current={i.id === item.id ? "true" : undefined}
                 onClick={() => setAtualId(i.id)}>
                 {i.titulo}
@@ -211,7 +211,7 @@ export default function LazerView({ itens, onFechar }: {
         style={{ background: "linear-gradient(180deg, rgba(16,20,16,.34) 0%, rgba(16,20,16,.06) 32%, rgba(16,20,16,.72) 100%)" }} />
 
       {visiveis.length > 1 && (
-        <div className="vd-lazer-setas pointer-events-none absolute left-[88px] right-[306px] top-1/2 z-10 flex -translate-y-1/2 justify-between">
+        <div className="vd-lazer-setas pointer-events-none absolute top-1/2 z-10 flex -translate-y-1/2 justify-between">
           <button type="button" onClick={() => ir(-1)} className="vd-seta pointer-events-auto" aria-label="Ambiente anterior" title="Anterior">
             <ChevronLeft className="h-5 w-5" strokeWidth={1.5} />
           </button>
@@ -222,7 +222,7 @@ export default function LazerView({ itens, onFechar }: {
       )}
 
       {/* Lista de ambientes — termina acima do cartão de info. */}
-      <aside className="vd-lazer-lista vd-vidro vd-entra absolute right-5 top-5 z-10 flex w-[266px] flex-col overflow-hidden">
+      <aside className="vd-lazer-lista vd-vidro vd-entra absolute right-5 top-5 z-10 flex flex-col overflow-hidden">
         <div className="flex items-center px-4 py-3">
           <span className="vd-rotulo">Lazer</span>
           <span className="vd-micro vd-num vd-bronze ml-auto">{itens.length} ambientes</span>

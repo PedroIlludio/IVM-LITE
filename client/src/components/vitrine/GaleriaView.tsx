@@ -119,9 +119,8 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
     const inicio = Math.max(0, Math.min(aberta - Math.floor(MINIATURAS / 2), lista.length - MINIATURAS));
     const janela = lista.slice(inicio, inicio + MINIATURAS);
     return (
-      <div className="absolute inset-0 z-20 bg-[#0b0e0b]" data-testid="media-overlay">
-        <div className="vd-galeria-palco absolute inset-0 flex items-center justify-center"
-          style={{ padding: "70px 320px 104px 88px" }}>
+      <div className="vd-galeria absolute inset-0 z-20 bg-[#0b0e0b]" data-testid="media-overlay">
+        <div className="vd-galeria-palco absolute inset-0 flex items-center justify-center">
           {peca.video ? (
             <video key={peca.url} src={peca.url} poster={peca.poster} controls autoPlay playsInline
               className="max-h-full max-w-full rounded-[4px] bg-black" />
@@ -131,28 +130,28 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
           )}
         </div>
 
-        <div className="absolute left-[88px] top-5 z-10 max-md:left-3">
+        <div className="vd-galeria-voltar absolute top-5 z-10">
           <button type="button" onClick={() => setAberta(null)} className="vd-btn vd-btn-vazado vd-pilula-vidro !h-10"
             data-testid="btn-voltar-grade">
             <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.5} /> Grade
           </button>
         </div>
-        <div className="absolute right-5 top-5 z-10 max-md:right-3">{botaoFechar}</div>
+        <div className="absolute right-5 top-5 z-10">{botaoFechar}</div>
 
         {lista.length > 1 && (
           <>
             <button type="button" onClick={() => ir(-1)} aria-label="Anterior" title="Anterior"
-              className="vd-seta absolute left-[98px] top-1/2 z-10 -translate-y-1/2 max-md:left-3">
+              className="vd-seta vd-galeria-ant absolute top-1/2 z-10 -translate-y-1/2">
               <ChevronLeft className="h-5 w-5" strokeWidth={1.5} />
             </button>
             <button type="button" onClick={() => ir(1)} aria-label="Próxima" title="Próxima"
-              className="vd-seta absolute right-[330px] top-1/2 z-10 -translate-y-1/2 max-md:right-3">
+              className="vd-seta vd-galeria-prox absolute top-1/2 z-10 -translate-y-1/2">
               <ChevronRight className="h-5 w-5" strokeWidth={1.5} />
             </button>
           </>
         )}
 
-        <aside className="vd-galeria-legenda vd-vidro absolute right-5 top-1/2 z-10 w-[260px] -translate-y-1/2 p-5"
+        <aside className="vd-galeria-legenda vd-vidro absolute right-5 top-1/2 z-10 -translate-y-1/2 p-5"
           key={peca.url}>
           <p className="vd-micro vd-bronze">{peca.categoria}</p>
           {peca.titulo && (
@@ -164,7 +163,7 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
         </aside>
 
         {lista.length > 1 && (
-          <div className="absolute bottom-6 left-[88px] right-[320px] z-10 flex justify-center gap-2 max-md:bottom-4 max-md:left-2.5 max-md:right-2.5 max-md:overflow-x-auto">
+          <div className="vd-galeria-tiras vd-faixa-h absolute z-10 flex justify-center gap-2">
             {janela.map((p, k) => {
               const i = inicio + k;
               return (
@@ -187,10 +186,12 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
   const contagem = (c: string) => pecas.filter((p) => p.categoria === c).length;
 
   return (
-    <div className="absolute inset-0 z-20 bg-[#0b0e0b]" data-testid="media-overlay">
-      {/* Celular: cabeçalho próprio, com as categorias em faixa. */}
+    <div className="vd-galeria absolute inset-0 z-20 bg-[#0b0e0b]" data-testid="media-overlay"
+      /* O cabeçalho compacto cresce quando há faixa de categorias: o recuo da
+         grade sai daqui para o CSS não ter de adivinhar a altura. */
+      data-faixa={movel && categorias.length > 1 ? "1" : undefined}>
       {movel && (
-        <div className="absolute inset-x-0 top-0 z-10 bg-[#0b0e0b]/95 pb-2"
+        <div className="vd-galeria-topo absolute inset-x-0 top-0 z-10 bg-[#0b0e0b]/95 pb-2"
           style={{ paddingTop: "max(12px, env(safe-area-inset-top))" }}>
           <div className="flex items-center px-4 pb-2">
             <span className="vd-rotulo">Galeria</span>
@@ -200,7 +201,7 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
           {categorias.length > 1 && (
             <div className="vd-faixa-h flex gap-1.5 overflow-x-auto px-4" role="group" aria-label="Categorias">
               {["", ...categorias].map((c) => (
-                <button key={c || "todas"} type="button" className="vd-pilula !h-9 shrink-0"
+                <button key={c || "todas"} type="button" className="vd-pilula vd-pilula-toque shrink-0"
                   data-on={categoria === c ? "1" : undefined} onClick={() => filtrar(c)}>
                   {c || "Todas"}
                 </button>
@@ -210,14 +211,11 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
         </div>
       )}
 
-      <div ref={gradeRef} className="vd-scroll absolute inset-0"
-        style={movel
-          ? { padding: `${categorias.length > 1 ? 118 : 72}px 12px 24px` }
-          : { padding: "24px 320px 24px 88px" }}>
+      <div ref={gradeRef} className="vd-scroll vd-galeria-rolo absolute inset-0">
         {!lista.length ? (
           <p className="vd-micro vd-3 py-20 text-center">Nenhuma mídia cadastrada.</p>
         ) : (
-          <div className={`grid ${movel ? "gap-2.5" : "gap-4"}`} style={{ gridTemplateColumns: movel ? "repeat(2, minmax(0,1fr))" : "repeat(3, minmax(0,1fr))" }}>
+          <div className="vd-galeria-grade grid">
             {lista.map((p, i) => (
               <button key={`${p.url}-${i}`} type="button" onClick={() => setAberta(i)}
                 className="group text-left" aria-label={`Abrir ${p.titulo || p.categoria}`}>
@@ -244,7 +242,7 @@ export default function GaleriaView({ imagens, videos, plantas, ordemCategorias 
       {!movel && (
         <>
           <div className="absolute right-5 top-5 z-10">{botaoFechar}</div>
-          <aside className="vd-vidro vd-entra absolute bottom-5 right-5 top-[68px] z-10 flex w-[280px] flex-col overflow-hidden"
+          <aside className="vd-galeria-cats vd-vidro vd-entra absolute bottom-5 right-5 top-[68px] z-10 flex flex-col overflow-hidden"
             aria-label="Categorias da galeria">
             <div className="flex items-center px-4 py-3">
               <span className="vd-rotulo">Galeria</span>

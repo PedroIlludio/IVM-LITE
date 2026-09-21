@@ -243,10 +243,26 @@ export function Slider({ label, v, min, max, step, suffix, onChange, disabled }:
   label: string; v: number; min: number; max: number; step: number; suffix: string;
   onChange: (v: number) => void; disabled?: boolean;
 }) {
+  /**
+   * A faixa se abre para caber o valor recebido.
+   *
+   * Um `input[type=range]` PRENDE em silêncio o que está fora de min/max: o
+   * cursor encosta na ponta como se aquele fosse o valor, e o primeiro arrasto
+   * grava o limite no lugar do número real. Quem preenche sozinho um campo —
+   * como a georreferência lida do GLB, que pode deslocar o mapa em quilômetros
+   * — cai exatamente nisso: a tela mostra 400, o projeto tem 551, e encostar no
+   * controle move o mapa 151 m sem ninguém pedir.
+   *
+   * Os limites continuam valendo para quem arrasta a partir de um valor normal;
+   * eles só cedem quando já foram ultrapassados. Assim o controle nunca mente
+   * sobre o que está gravado.
+   */
+  const lo = Math.min(min, v);
+  const hi = Math.max(max, v);
   return (
     <Linha label={label}>
       <div className={`flex items-center gap-2 ${disabled ? "opacity-40" : ""}`}>
-        <input type="range" min={min} max={max} step={step} value={v} disabled={disabled}
+        <input type="range" min={lo} max={hi} step={step} value={v} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))} className="ed-range min-w-0 flex-1" />
         <span className="w-14 shrink-0 text-right font-mono text-[10px] text-white/60">
           {v.toFixed(step < 1 ? (step < 0.05 ? 2 : 1) : 0)}{suffix}

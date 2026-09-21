@@ -47,6 +47,8 @@ export interface RelatorioSaneamento {
   escalasCorrigidas: number;
   /** Texturas soltas de malha sem UV — ver `corrigirTexturasSemUv`. */
   texturasSemUv: number;
+  /** Raiz carregando coordenada absoluta — ver `corrigirOrigemDistante`. */
+  origemDistante: boolean;
   motivo?: string;
 }
 
@@ -90,6 +92,8 @@ interface NoGltf {
   name?: string;
   scale?: number[];
   matrix?: number[];
+  translation?: number[];
+  children?: number[];
 }
 
 interface PrimitivaGltf {
@@ -104,6 +108,17 @@ interface JsonGltf {
   extensionsUsed?: string[];
   extensionsRequired?: string[];
 }
+
+/**
+ * Distância, em metros, a partir da qual a translação de uma raiz deixa de ser
+ * composição de cena e passa a ser coordenada de mapa.
+ *
+ * Modelo de arquitetura se organiza em torno do próprio umbigo: mesmo uma
+ * implantação grande, com o prédio deslocado do centro do terreno, fica na casa
+ * das centenas de metros. Cem quilômetros não é um exagero de modelagem — é
+ * easting/northing de projeção cartográfica, que chega aos milhões.
+ */
+const LIMIAR_COORDENADA_ABSOLUTA = 1e5;
 
 /** Determinante do bloco linear de uma matriz glTF (column-major, 16 floats). */
 function det3(m: number[]): number {
@@ -138,6 +153,51 @@ function corrigirEscalas(nos: NoGltf[]): number {
     }
   }
   return tocados;
+}
+
+/**
+ * Zera a translação de raiz que carrega coordenada de projeção cartográfica.
+ *
+ * Exportador de mapa 3D (maps3d.io, por exemplo) entrega a geometria centrada na
+ * origem e pendura o endereço do tile num nó raiz:
+ *
+ *   "name": "maps3d_georeference",
+ *   "translation": [261393.62, 0, -9011128.53],   // easting, altura, -northing
+ *   "rotation": [...], "scale": [1.0003, ...]
+ *
+ * É UTM absoluto — no caso acima, EPSG:32725. Faz sentido num visualizador que
+ * trabalha no mesmo grid; aqui não: o GLB é ancorado pelo lat/lng do projeto, e
+ * a translação vira deslocamento puro sobre essa âncora. O terreno some a nove
+ * mil quilômetros ao sul e ninguém entende o que houve — o arquivo carregou, não
+ * houve erro, simplesmente não há nada onde a câmera está olhando.
+ *
+ * Rotação e escala FICAM. Elas são locais e corretas: o desvio da grade em
+ * relação ao norte verdadeiro e a distorção de escala da projeção naquela
+ * latitude. Só o endereço é redundante.
+ *
+ * O critério é a magnitude, não o nome do nó: `maps3d_georeference` identifica
+ * um exportador só, e a translação absoluta é o padrão de todos eles. Nenhum
+ * modelo de arquitetura legítimo nasce a cem quilômetros da própria origem.
+ */
+function corrigirOrigemDistante(json: JsonGltf): boolean {
+  const nos = json.nodes ?? [];
+  if (!nos.length) return false;
+
+  // Só raízes: um filho a cem quilômetros do pai é composição estranha, mas é
+  // relativa ao modelo, e mexer nela desmontaria a cena.
+  const filhos = new Set<number>();
+  for (const no of nos) for (const c of no.children ?? []) filhos.add(c);
+
+  let tocou = false;
+  for (let i = 0; i < nos.length; i++) {
+    if (filhos.has(i)) continue;
+    const t = nos[i].translation;
+    if (!t || t.length !== 3) continue;
+    if (Math.hypot(t[0], t[1], t[2]) < LIMIAR_COORDENADA_ABSOLUTA) continue;
+    delete nos[i].translation;
+    tocou = true;
+  }
+  return tocou;
 }
 
 /**
@@ -279,7 +339,8 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
   const intacto = (motivo: string) => ({
     buffer: buf,
     relatorio: {
-      saneado: false, anisotropiaRemovida: 0, escalasCorrigidas: 0, texturasSemUv: 0, motivo,
+      saneado: false, anisotropiaRemovida: 0, escalasCorrigidas: 0, texturasSemUv: 0,
+      origemDistante: false, motivo,
     },
   });
 
@@ -297,9 +358,12 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
     ) as JsonGltf;
 
     const escalasCorrigidas = corrigirEscalas(json.nodes ?? []);
+    const origemDistante = corrigirOrigemDistante(json);
 
     const materiais = json.materials ?? [];
-    if (!materiais.length && !escalasCorrigidas) return intacto("nada a corrigir");
+    if (!materiais.length && !escalasCorrigidas && !origemDistante) {
+      return intacto("nada a corrigir");
+    }
 
     /**
      * Tangente é por PRIMITIVA, não por material, e um material pode ser usado
@@ -333,7 +397,9 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
      */
     const texturasSemUv = corrigirTexturasSemUv(json);
 
-    if (!removidas && !escalasCorrigidas && !texturasSemUv) return intacto("nada a corrigir");
+    if (!removidas && !escalasCorrigidas && !texturasSemUv && !origemDistante) {
+      return intacto("nada a corrigir");
+    }
 
     // Só sai das listas se nenhum material ainda a referencia.
     const aindaUsada = materiais.some(
@@ -365,6 +431,7 @@ export function sanearGlb(buf: Buffer): { buffer: Buffer; relatorio: RelatorioSa
       buffer: Buffer.concat([cabecalho, jsonPad, resto]),
       relatorio: {
         saneado: true, anisotropiaRemovida: removidas, escalasCorrigidas, texturasSemUv,
+        origemDistante,
       },
     };
   } catch (e) {

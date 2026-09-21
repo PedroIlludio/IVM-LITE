@@ -1,5 +1,6 @@
 import {
   Viewer,
+  Cartesian3,
   Credit,
   CreditDisplay,
   ShadowMode,
@@ -14,6 +15,28 @@ import "cesium/Build/Cesium/Widgets/widgets.css";
 /** Elevação aproximada de Ponta do Mangue, Maragogi/AL — nível do mar
  * (fallback se o clamp de terreno falhar). */
 export const FALLBACK_GROUND_HEIGHT = 3;
+
+/**
+ * Atribuição obrigatória do mini mapa 3D.
+ *
+ * A licença do maps3d.io libera o uso para qualquer finalidade SOB A CONDIÇÃO
+ * de creditar a imagem de satélite — Sentinel-2 cloudless, da EOX IT — e, se o
+ * mapa trouxer edifícios, vias ou água, os dados do OpenStreetMap. Os nossos
+ * trazem: é justamente o que dá a leitura de implantação. Então a linha não é
+ * cortesia, é o que sustenta o direito de exibir o mapa na vitrine.
+ *
+ * Vai pelo `CreditDisplay` do Cesium, e não num canto de tela nosso, para
+ * dividir o mesmo lugar e o mesmo comportamento do crédito do Google — quando
+ * a linha não cabe, o Cesium a recolhe para a caixa de atribuições em vez de
+ * atropelar a interface. Entra com o modelo e sai com ele; é `Scene3D` quem
+ * liga e desliga, porque é lá que se sabe se o mapa está em cena.
+ */
+export const CREDITO_MAPA_3D = new Credit(
+  '<a href="https://s2maps.eu" target="_blank">Sentinel-2 cloudless (2016)</a>'
+    + ' by <a href="https://eox.at" target="_blank">EOX IT</a>'
+    + " — © OpenStreetMap contributors",
+  true,
+);
 
 // ContextLimits existe em runtime (re-exportado do @cesium/engine) mas não nos
 // tipos públicos do Cesium; acessamos como um mapa de números.
@@ -153,11 +176,254 @@ function ajustesDoAparelho() {
     sse: aparelhoLeve ? 32 : 20,
 
     /**
-     * Escala de render. Num tablet de tela densa, a cena é desenhada em muito
-     * mais pixels do que a tela precisa mostrar; 0.8 corta ~36% dos pixels e
-     * quase não se nota, porque o upscale acontece numa densidade alta.
+     * Desenhar em pixel de CSS ou em pixel de tela.
+     *
+     * `useBrowserRecommendedResolution` é `true` por padrão no Cesium, e o nome
+     * engana: não é "a resolução que o navegador recomenda", é travar o buffer
+     * em 1 pixel desenhado por pixel de CSS, ignorando o `devicePixelRatio`.
+     * Num monitor 4K/Retina (dpr 2) isso desenha a cena com um QUARTO dos
+     * pixels da tela e deixa o navegador ampliar — daí o serrilhado nas
+     * silhuetas do prédio, que o FXAA não tem como esconder porque a borda já
+     * chegou grosseira. `resolutionScale` não corrige: ele multiplica ESTE
+     * valor, então 1 continua sendo metade da densidade real.
+     *
+     * No aparelho leve a conta se inverte e o padrão do Cesium vira aliado:
+     * celular tem dpr 2–3, e honrá-lo custaria de 4 a 9 vezes mais fragmentos
+     * no hardware que menos aguenta. Ali o ganho de nitidez não se vê na tela
+     * pequena, mas a queda de fps se sente na mão.
+     */
+    resolucaoDoNavegador: aparelhoLeve,
+
+    /**
+     * Escala de render, aplicada SOBRE a densidade acima. Num tablet de tela
+     * densa, a cena é desenhada em mais pixels do que a tela precisa mostrar;
+     * 0.8 corta ~36% dos pixels e quase não se nota, porque o upscale acontece
+     * numa densidade alta.
      */
     escalaRender: aparelhoLeve ? 0.8 : 1,
+  };
+}
+
+// --- Fluidez ----------------------------------------------------------------
+
+/** Acima disso o arrasto começa a "pesar" na mão (~45 fps). */
+const ORCAMENTO_QUADRO = 22;
+/**
+ * Abaixo disso devolve nitidez. É uma FRAÇÃO do orçamento, não um número solto:
+ * subir um degrau custa caro, e sem folga o controle sobe para logo ter de
+ * descer. Como fração, a margem acompanha o orçamento se ele mudar.
+ *
+ * Os 30% saem de uma armadilha medida: com o limite em 13 ms fixo, esta cena
+ * (que custa por volta de 14 ms parada) nunca alcançava a faixa de subida.
+ * Qualquer lentidão passageira deixava a imagem mole até o fim da sessão,
+ * porque não havia caminho de volta.
+ */
+const FOLGA_QUADRO = ORCAMENTO_QUADRO * 0.7;
+/** Piso da escala: mais embaixo a imagem borra tanto que a troca deixa de valer. */
+const ESCALA_MIN = 0.6;
+const PASSO_ESCALA = 0.1;
+/** Quadros seguidos observados antes de mexer — um pico isolado não decide nada. */
+const AMOSTRAS_FLUIDEZ = 20;
+/**
+ * Ganho mínimo que justifica ter baixado a resolução.
+ *
+ * Um passo de 0,1 corta cerca de 19% dos pixels. Numa cena limitada por pixel o
+ * tempo cai quase nessa proporção; numa limitada por geometria não cai nada.
+ * 8% separa os dois casos com folga para ruído de medição.
+ */
+const GANHO_MINIMO = 0.08;
+/**
+ * Janelas de silêncio depois de concluir que baixar não adianta.
+ *
+ * A conclusão não pode ser definitiva: o gargalo muda ao longo da sessão (o
+ * modelo termina de carregar, a câmera entra no meio do prédio, o operador
+ * abre um pavimento). Vinte janelas é tempo suficiente para não ficar
+ * remedindo a cada instante, e curto o bastante para a cena seguinte ser
+ * julgada por ela mesma.
+ */
+const ESPERA_APOS_FRACASSO = 20;
+/**
+ * Quadros descartados logo após mexer na escala.
+ *
+ * Trocar a escala realoca os alvos de render (cor, profundidade, FXAA), e esses
+ * primeiros quadros custam o dobro: medido aqui, ~35 ms contra ~15 ms em
+ * regime. Sem descartá-los o controle mede o próprio conserto, conclui "ainda
+ * lento" e desce de novo — foi assim que ele despencou de 0,9 até o piso numa
+ * cena que rodava a 6 ms. Seis quadros cobrem com folga a reacomodação medida.
+ */
+const QUADROS_ASSENTAMENTO = 6;
+
+/**
+ * Troca resolução por fluidez — mas só onde a resolução é mesmo a causa.
+ *
+ * O 4K nativo entra por `useBrowserRecommendedResolution = false`, que desliga a
+ * trava de 1 pixel desenhado por pixel de CSS. Isso quadruplica os fragmentos
+ * num monitor de dpr 2, e num aparelho desconhecido não dá para prometer que
+ * cabe — nem dá para decidir pelo nome do aparelho, que é o que a detecção
+ * estática faz e erra.
+ *
+ * O detalhe que define o desenho desta função: medido nesta cena (Maragogi,
+ * 7044 comandos de desenho), quadruplicar os pixels custou 9,6 → 10,7 ms sem
+ * sombra e 17,9 → 26,9 ms com sombra suave. A cena é dominada por GEOMETRIA,
+ * não por pixel. Um controle que só olhasse o relógio veria "lento", baixaria a
+ * escala, veria "lento" de novo, e desceria até o piso — entregando uma imagem
+ * borrada em troca de nada. Foi o que aconteceu na primeira versão: ela travava
+ * em 0,6 e não subia mais.
+ *
+ * Por isso cada descida é uma HIPÓTESE que precisa se confirmar na janela
+ * seguinte. Se o tempo não melhorou, o gargalo não era pixel: a escala volta e
+ * o controle se cala por um tempo. Assim o pior caso é uma janela de imagem
+ * mais mole, em vez de uma sessão inteira.
+ *
+ * O silêncio é temporário, e isso importa: a primeira versão desligava o
+ * controle de vez no primeiro fracasso, e o fracasso vinha SEMPRE — durante o
+ * carregamento, quando a cena está lenta por motivos que não têm nada a ver com
+ * resolução. O guarda nascia morto, pela única janela em que a conclusão não
+ * valia para o resto da sessão.
+ *
+ * A medida é a duração do render (`preRender`→`postRender`), não o intervalo
+ * entre quadros. O intervalo inclui o React e todo o resto da aba, que a
+ * resolução não controla — no editor, uma re-renderização de painel seria lida
+ * como cena pesada.
+ */
+function manterFluidez(viewer: Viewer, escalaAlvo: number): void {
+  const scene = viewer.scene;
+  const janela: number[] = [];
+  let inicio = 0;
+  /** Descida ainda não confirmada: de onde viemos e quanto custava lá. */
+  let hipotese: { escala: number; custo: number } | null = null;
+  /** Janelas restantes de silêncio após uma tentativa que não adiantou. */
+  let espera = 0;
+  /** Quadros a ignorar enquanto os buffers se reacomodam. */
+  let assentando = 0;
+
+  /** Toda troca de escala passa por aqui, para nenhuma medir a si mesma. */
+  const ajustar = (escala: number) => {
+    viewer.resolutionScale = escala;
+    assentando = QUADROS_ASSENTAMENTO;
+    janela.length = 0;
+  };
+
+  scene.preRender.addEventListener(() => {
+    inicio = performance.now();
+  });
+
+  scene.postRender.addEventListener(() => {
+    const custoDoQuadro = performance.now() - inicio;
+    if (assentando > 0) {
+      assentando--;
+      return;
+    }
+    janela.push(custoDoQuadro);
+    if (janela.length < AMOSTRAS_FLUIDEZ) return;
+
+    // Mediana, não média: uma coleta de lixo no meio da janela não deve
+    // derrubar a resolução de quem estava indo bem.
+    janela.sort((a, b) => a - b);
+    const custo = janela[AMOSTRAS_FLUIDEZ >> 1];
+    janela.length = 0;
+
+    const atual = viewer.resolutionScale;
+
+    if (hipotese) {
+      const { escala: anterior, custo: custoAnterior } = hipotese;
+      hipotese = null;
+      if (1 - custo / custoAnterior < GANHO_MINIMO) {
+        ajustar(anterior);
+        espera = ESPERA_APOS_FRACASSO;
+        return;
+      }
+    }
+
+    if (espera > 0) {
+      espera--;
+      return;
+    }
+
+    if (custo > ORCAMENTO_QUADRO && atual > ESCALA_MIN) {
+      hipotese = { escala: atual, custo };
+      ajustar(Math.max(ESCALA_MIN, atual - PASSO_ESCALA));
+    } else if (custo < FOLGA_QUADRO && atual < escalaAlvo) {
+      ajustar(Math.min(escalaAlvo, atual + PASSO_ESCALA));
+    }
+  });
+}
+
+// --- Alcance da sombra ------------------------------------------------------
+
+/**
+ * Quanto o alcance da sombra supera a distância câmera→empreendimento.
+ *
+ * Três vezes cobre o que cabe no enquadramento de uma câmera orbital — o
+ * empreendimento, a quadra e a vizinhança visível — sem sobrar quilômetro
+ * nenhum. E o que sobra é caro: a resolução da cascata se espalha pelo alcance
+ * inteiro, então cada metro a mais é nitidez a menos em toda a cena.
+ */
+/**
+ * Onde a faixa sombreada começa, como fração da distância até o empreendimento.
+ * Precisa sobrar chão ANTES do prédio — é nele que a sombra cai e é ele que
+ * aparece na base do quadro. 0,35 deixa a borda da faixa bem fora de vista.
+ */
+const INICIO_FAIXA_SOMBRA = 0.35;
+/** Depois do prédio a faixa ainda cobre alguns raios dele, mais uma folga fixa. */
+const RAIOS_DEPOIS_DO_ALVO = 3;
+const FOLGA_DEPOIS_DO_ALVO = 300;
+
+/**
+ * Ajusta a faixa de profundidade que o mapa de sombra cobre para cercar o
+ * empreendimento, em vez de tentar cobrir o mundo.
+ *
+ * O Cesium reparte a faixa em 4 cascatas com corte quase logarítmico a partir
+ * do NEAR do mapa de sombra. Esse near vem de `shadowState.nearPlane`, que o
+ * `View` calcula como a menor distância de entrada entre os volumes de todos os
+ * receptores de sombra — e desaba para o near da câmera (0,1 m) sempre que a
+ * câmera está DENTRO de algum desses volumes. Com o mini mapa de base isso é o
+ * tempo todo: o GLB do entorno é um tile de 7 km e a câmera vive dentro dele.
+ *
+ * Medido na cena de Maragogi, os cortes caíam em 0,1 / 51 / 113 / 301 / 2000:
+ * três cascatas gastas nos primeiros 300 m, quase todos vazios, e a QUARTA
+ * cobrindo sozinha de 301 a 2000 m. Essa última é a que desenha tudo o que se
+ * vê — cerca de 0,8 m por texel. Daí o serrilhado grosso, em blocos, que o FXAA
+ * não tem como suavizar: ele trabalha na imagem final, e a borda já chegou
+ * quadrada do mapa de sombra.
+ *
+ * O `View` tem essa mesma salvaguarda para o globo, que é o caso idêntico de um
+ * volume gigante contendo a câmera — mas ela testa `Pass.GLOBE`, e o mini mapa
+ * é um `Model` comum. Ele faz o papel de globo sem ser globo. Com a
+ * fotogrametria do Google o defeito não aparecia porque o tileset tem
+ * `shadows = DISABLED` e ficava fora da conta; ou seja, o problema nasceu junto
+ * com o mapa próprio, não é regressão dele.
+ *
+ * Como `lambda` é fixo no Cesium (0.9, sem API), mexer só no `maximumDistance`
+ * rende pouco: ele encurta o far, mas o near continua em 0,1 e o corte segue
+ * empilhado no vazio. Medido, isso sozinho levava 0,8 para 0,62 m por texel.
+ * Informar as DUAS pontas leva a faixa para 198–1342 m, põe o prédio na 3ª
+ * cascata e mede 0,15 m por texel — cinco vezes mais fino.
+ *
+ * Por que embrulhar `update` em vez de usar um evento: `shadowState` é
+ * recalculado pelo `View` a cada quadro, depois do `preUpdate` e logo antes de
+ * `ShadowMap.update` lê-lo. Este é o único ponto entre os dois.
+ */
+export function acompanharAlcanceDeSombra(
+  viewer: Viewer,
+  referencia: () => { centro: Cartesian3; raio: number } | undefined,
+): void {
+  const shadowMap = viewer.shadowMap as unknown as {
+    update: (frameState: { shadowState: { nearPlane: number; farPlane: number } }) => void;
+  };
+  const original = shadowMap.update.bind(shadowMap);
+  shadowMap.update = (frameState) => {
+    const alvo = referencia();
+    if (alvo) {
+      const d = Cartesian3.distance(viewer.camera.positionWC, alvo.centro);
+      const estado = frameState.shadowState;
+      estado.nearPlane = Math.max(viewer.camera.frustum.near, d * INICIO_FAIXA_SOMBRA);
+      estado.farPlane = Math.max(
+        estado.nearPlane + 1,
+        d + RAIOS_DEPOIS_DO_ALVO * alvo.raio + FOLGA_DEPOIS_DO_ALVO,
+      );
+    }
+    original(frameState);
   };
 }
 
@@ -375,6 +641,9 @@ export async function createVision3DViewer(
    * próprio Cesium usa no terreno. Isso afasta a comparação da superfície o
    * bastante para estabilizar faces coplanares sem desligar as sombras solares.
    */
+  // Teto absoluto da faixa. Quem escolhe o intervalo útil é
+  // `acompanharAlcanceDeSombra`; este valor só impede que uma câmera muito
+  // afastada peça uma faixa que nenhuma cascata conseguiria resolver.
   viewer.shadowMap.maximumDistance = 2000;
   viewer.shadowMap.normalOffset = true;
   const primitiveBias = (viewer.shadowMap as unknown as {
@@ -388,14 +657,15 @@ export async function createVision3DViewer(
   viewer.shadowMap.darkness = 0.45;
 
   /**
-   * Render em resolução reduzida no aparelho leve.
+   * Densidade do render — ver `resolucaoDoNavegador` e `escalaRender`.
    *
-   * É o corte de custo mais direto que existe: metade do trabalho por frame
-   * vem do número de pixels. Num tablet de tela densa a diferença mal aparece,
-   * porque o upscale acontece numa densidade alta — e nada de INFORMAÇÃO se
-   * perde, só nitidez.
+   * A ordem importa: o Cesium recalcula o tamanho do buffer a partir das duas
+   * propriedades, e é o número de pixels o corte de custo mais direto que
+   * existe. No desktop compramos nitidez; no aparelho leve, fps.
    */
+  viewer.useBrowserRecommendedResolution = q.resolucaoDoNavegador;
   viewer.resolutionScale = q.escalaRender;
+  manterFluidez(viewer, q.escalaRender);
   if (scene.skyAtmosphere) scene.skyAtmosphere.show = true;
 
   // Luz solar um pouco mais forte para o modelo GLB (vidro escuro) ler melhor.

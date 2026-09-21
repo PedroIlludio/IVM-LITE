@@ -12,6 +12,19 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import { createRoot, type Root } from "react-dom/client";
 import { Loader2, AlertTriangle } from "lucide-react";
 import { corDaCategoriaPoi, iconeDaCategoria, type EstiloPoi } from "@/lib/poi-icones";
+import { CONSULTA_MOVEL } from "@/components/vitrine/comum";
+
+/**
+ * Tela compacta, medida na hora do gesto (não é estado de React: estes usos
+ * acontecem dentro de callbacks do MapLibre, fora do ciclo de render).
+ *
+ * Usa a MESMA consulta da vitrine. Antes era `innerWidth < 768 || (coarse &&
+ * <= 1024)`, que discordava do layout em dois pontos: o iPad em pé recebia o
+ * enquadramento de desktop embora o cartão do ponto abra em folha por baixo
+ * (o destino nascia escondido), e um notebook com tela sensível ao toque
+ * recebia o enquadramento de celular sem precisar.
+ */
+const emTelaCompacta = () => window.matchMedia(CONSULTA_MOVEL).matches;
 
 /**
  * Basemap: OpenFreeMap, estilo Positron.
@@ -235,8 +248,7 @@ export default function MapaEntorno({
       return;
     }
 
-    const mobileInicial = window.innerWidth < 768
-      || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+    const mobileInicial = emTelaCompacta();
     // Perspectiva leve na vitrine: dá profundidade ao bairro sem comprometer
     // nomes e rotas. No editor a vista continua ortogonal, pois desenhar e
     // arrastar pontos pede precisão cartográfica.
@@ -459,8 +471,7 @@ export default function MapaEntorno({
 
     if (!alvo) {
       if (!editavel) {
-        const mobile = window.innerWidth < 768
-          || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+        const mobile = emTelaCompacta();
         map.easeTo({
           center: [centro.lng, centro.lat],
           zoom: mobile ? 13.8 : 15,
@@ -481,8 +492,7 @@ export default function MapaEntorno({
         ? linha
         : [[centro.lng, centro.lat], [alvo.lng, alvo.lat]];
       pontosDoEnquadramento.forEach((c) => b.extend(c));
-      const mobile = window.innerWidth < 768
-        || (window.matchMedia("(pointer: coarse)").matches && window.innerWidth <= 1024);
+      const mobile = emTelaCompacta();
       /* No celular o cartão nasce embaixo e pode ocupar quase metade da tela.
          Reservar essa área no fit mantém origem, destino e caminho no pedaço
          visível do mapa; o teto menor também entrega o zoom-out pedido. */

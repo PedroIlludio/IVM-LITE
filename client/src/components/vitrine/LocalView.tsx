@@ -4,7 +4,7 @@ import type { Empreendimento } from "@shared/schema";
 import type { EditablePoi } from "@/lib/ivm-store";
 import { iconeDaCategoria } from "@/lib/poi-icones";
 import { CartaoPoi } from "@/components/CartaoPoi";
-import { useMovel } from "./comum";
+import { useMovel, useTablete } from "./comum";
 
 /* MapLibre pesa centenas de KB e só é necessário ao abrir a Localização. */
 
@@ -50,6 +50,14 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
    * pinos; lá a escolha é tocando nos ícones, e o cartão do ponto responde.
    */
   const movel = useMovel();
+  /*
+   * No celular a lista sai e o alfinete é o único caminho — é a tela toda para
+   * um mapa, e uma folha de dez itens comeria metade dela. No tablet em pé não:
+   * a folha ocupa o terço de baixo e ainda sobram ~630px de mapa. Tirar a lista
+   * lá seria esconder dez endereços com tempo de deslocamento num aparelho que
+   * tem espaço de sobra para mostrá-los.
+   */
+  const listaEmFolha = useTablete();
 
   /** Só as categorias com ponto, na ordem do editor; as avulsas no fim. */
   const categorias = useMemo(() => {
@@ -86,8 +94,8 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
         />
       </Suspense>
 
-      {pontos.length > 0 && !movel && (
-        <aside className="vd-painel vd-claro vd-entra w-[278px] overflow-hidden"
+      {pontos.length > 0 && (!movel || listaEmFolha) && (
+        <aside className="vd-painel vd-claro vd-entra overflow-hidden"
           aria-label="Pontos de interesse">
           <div className="flex items-center px-4 py-3">
             <span className="vd-rotulo">Localização</span>
@@ -103,7 +111,7 @@ export default function LocalView({ emp, centro, nome, cor, poiSelId, onPoiSel, 
                 const Icone = v ? iconeDaCategoria(v, emp.estiloCategoriaPoi) : null;
                 return (
                   <button key={v || "todos"} type="button"
-                    className="vd-pilula !h-7 !gap-1.5 !px-2.5 !normal-case !tracking-[0.04em] !text-[11px] !font-medium"
+                    className="vd-pilula vd-pilula-toque !gap-1.5 !px-2.5 !normal-case !tracking-[0.04em] !text-[11px] !font-medium"
                     data-on={categoria === v ? "1" : undefined}
                     data-testid={`poi-cat-${v || "todos"}`}
                     aria-pressed={categoria === v}

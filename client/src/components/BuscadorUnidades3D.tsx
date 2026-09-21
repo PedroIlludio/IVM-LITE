@@ -14,7 +14,7 @@ import {
   faixasDe, formatArea, formatPreco, formatPrecoCurto, tipologiaDaUnidade, unidadesComTipologia,
 } from "@/lib/tipologias";
 import {
-  CabecalhoCartao, COR_STATUS, canaisDeContato, precoAbreviado, useMovel,
+  CabecalhoCartao, COR_STATUS, CONSULTA_MOVEL, canaisDeContato, precoAbreviado, useMovel,
 } from "@/components/vitrine/comum";
 import FaixaVidro, { faixaNoPasso } from "@/components/vitrine/FaixaVidro";
 import SelecaoVidro from "@/components/vitrine/SelecaoVidro";
@@ -349,8 +349,9 @@ export default function BuscadorUnidades3D({
 
   function iniciarArraste(e: React.PointerEvent) {
     if ((e.target as HTMLElement).closest("button")) return;
-    // No celular o cartão é folha inferior fixa.
-    if (window.matchMedia("(max-width: 767px)").matches) return;
+    // Em tela compacta o cartão é folha inferior fixa — inclusive no tablet em
+    // pé, onde a folha encosta nas duas bordas e não há para onde arrastar.
+    if (window.matchMedia(CONSULTA_MOVEL).matches) return;
     const caixa = cartaoRef.current?.getBoundingClientRect();
     const lim = cartaoRef.current?.parentElement?.getBoundingClientRect();
     if (!caixa || !lim) return;
@@ -404,7 +405,7 @@ export default function BuscadorUnidades3D({
 
   return (
     <>
-      <aside className={`vd-painel vd-unidades vd-vidro vd-entra v-unit-search w-[298px] overflow-hidden${oculto}`}
+      <aside className={`vd-painel vd-unidades vd-vidro vd-entra v-unit-search overflow-hidden${oculto}`}
         aria-label="Unidades">
         <CabecalhoCartao
           rotulo="Unidades"

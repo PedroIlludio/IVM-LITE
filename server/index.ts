@@ -115,10 +115,10 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      // SO_REUSEPORT não é suportado no Windows (gera ENOTSUP). Mantém no
-      // Linux/Render (comportamento de produção) e desativa só no Windows
-      // para permitir desenvolvimento local.
-      reusePort: process.platform !== "win32",
+      // SO_REUSEPORT só é suportado de forma confiável no Linux (ex: Render
+      // em produção). No Windows e no macOS o listen() falha com ENOTSUP,
+      // então desativamos nesses casos para permitir desenvolvimento local.
+      reusePort: process.platform === "linux",
     },
     () => {
       log(`serving on port ${port}`);

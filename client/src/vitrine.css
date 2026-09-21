@@ -242,9 +242,6 @@
 .vitrine .vd-ilha[data-claro="1"] .vd-ilha-btn:hover { background: rgba(28, 31, 28, 0.08); }
 .vitrine .vd-ilha[data-claro="1"] .vd-ilha-btn[data-on="1"] { background: var(--vd-tinta); color: #fff; }
 
-/* Barra de seções do celular — substitui a ilha abaixo de 768px. */
-.vitrine .vd-barra-movel { display: none; }
-
 /* --- Controles ------------------------------------------------------------ */
 
 /* Ação circular do topo direito. */
@@ -288,6 +285,9 @@
   border-color: #fff;
   color: var(--vd-tinta);
 }
+/* Pílula que é ALVO: faixa rolável do lazer e da galeria, onde o dedo escolhe
+   sem apoio de cursor. Cresce de novo na faixa de tablet. */
+.vitrine .vd-pilula-toque { height: 36px; }
 .vitrine .vd-pilula-vidro {
   background: var(--vd-vidro-barra);
   backdrop-filter: blur(14px);
@@ -448,12 +448,171 @@
   z-index: 20;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  width: 300px;
-  padding: 12px 16px;
-  border-radius: 18px;
+  gap: 12px;
+  width: 392px;
+  padding: 16px 18px 14px;
+  border-radius: 22px;
 }
-.vitrine .vd-clima .vd-range { width: 100%; }
+.vitrine .vd-clima-linha {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* Sol/lua à esquerda: diz num relance se a cena está de dia, sem ler número. */
+.vitrine .vd-clima-astro {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.5);
+}
+.vitrine .vd-clima-astro[data-dia="1"] { color: var(--vd-bronze); }
+.vitrine .vd-clima-astro svg { width: 24px; height: 24px; stroke-width: 1.4; }
+
+/* O trilho reserva espaço em cima para a bolha da hora e embaixo para as
+   pontas; sem isso ambas cairiam sobre a linha e sobre a fileira de estações. */
+.vitrine .vd-clima-trilho {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  /* O topo vira variável porque a linha se pendura nele: ver `.vd-clima-rail`. */
+  --trilho-topo: 22px;
+  padding: var(--trilho-topo) 0 16px;
+}
+
+/*
+ * A bolha da hora acompanha o cursor.
+ *
+ * O cursor de um `input[type=range]` não passeia de borda a borda: ele para a
+ * meio raio de cada ponta. Por isso a conta soma metade da bolinha e encolhe o
+ * percurso de uma bolinha inteira — usar `--pos` puro deixaria a bolha adiantada
+ * de manhã e atrasada à noite, justo nas horas em que se repara.
+ */
+.vitrine .vd-clima-hora {
+  position: absolute;
+  top: 0;
+  left: calc(7px + var(--pos) * (100% - 14px));
+  transform: translateX(-50%);
+  font-size: 15px;
+  font-weight: 300;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+}
+
+/*
+ * A faixa do dia: azul da madrugada, âmbar no nascer, claro no meio-dia, âmbar
+ * no pôr e azul de novo. É a mesma informação da hora, dita em cor — de relance
+ * se sabe onde o cursor está sem ler o relógio.
+ */
+/*
+ * A linha se alinha pelo CURSOR, não pelo meio do trilho.
+ *
+ * O trilho tem folgas diferentes em cima (bolha da hora) e embaixo (pontas), e
+ * o `input` de 16px não fica no centro dele. Ancorar em `top: 50%` deixava a
+ * linha 3px acima do cursor — pouco no número, evidente no olho, porque a
+ * bolinha parecia pendurada abaixo do fio. Então a conta parte do topo do
+ * `input` (`--trilho-topo`) e desce meia altura dele.
+ */
+.vitrine .vd-clima-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--trilho-topo) + 8px);
+  height: 4px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    #39506e 0%,
+    #6e7d94 18%,
+    #e9b46a 27%,
+    #eef0e6 50%,
+    #e9b46a 73%,
+    #7f95b4 82%,
+    #39506e 100%
+  );
+}
+/* Marcas suaves: medem a distância até o meio-dia sem virar mais um rótulo. */
+.vitrine .vd-clima-marca {
+  position: absolute;
+  top: -4px;
+  width: 1px;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.vitrine .vd-clima-trilho .vd-range {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 16px;
+}
+/* Trilho nativo invisível: quem desenha a linha é `.vd-clima-rail`, atrás. */
+.vitrine .vd-clima-trilho .vd-range::-webkit-slider-runnable-track {
+  height: 16px;
+  background: transparent;
+}
+.vitrine .vd-clima-trilho .vd-range::-moz-range-track {
+  height: 16px;
+  background: transparent;
+}
+.vitrine .vd-clima-trilho .vd-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+.vitrine .vd-clima-trilho .vd-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+
+.vitrine .vd-clima-pontas {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.vitrine .vd-clima-estacoes {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 2px;
+}
+.vitrine .vd-clima-estacao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 4px;
+  border-radius: 40px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: rgba(255, 255, 255, 0.62);
+  transition: background-color 0.14s ease, color 0.14s ease;
+}
+.vitrine .vd-clima-estacao svg {
+  width: 13px;
+  height: 13px;
+  stroke-width: 1.5;
+  flex: 0 0 auto;
+}
+.vitrine .vd-clima-estacao:hover { background: rgba(255, 255, 255, 0.08); }
+.vitrine .vd-clima-estacao[data-on="1"] {
+  background: rgba(255, 255, 255, 0.13);
+  color: #fff;
+}
+.vitrine .vd-clima-estacao[data-on="1"] svg { color: var(--vd-bronze); }
 
 /* Escurecimento noturno: segue a hora, não um botão. */
 .vitrine .vd-noite {
@@ -476,7 +635,7 @@
 .vitrine .vd-unidade-card {
   position: absolute;
   top: 68px;
-  right: calc(20px + 298px + 12px);
+  right: calc(20px + var(--painel, 308px) + 12px);
   z-index: 31;
   width: 260px;
   max-height: calc(100% - 68px - 88px);
@@ -551,14 +710,64 @@
 .vitrine .vd-planta { background: rgba(255, 255, 255, 0.06); }
 
 /* --- Lazer ---------------------------------------------------------------- */
-.vitrine .vd-lazer-lista { max-height: calc(100% - 420px); }
+.vitrine .vd-lazer-lista { max-height: calc(100% - 420px); width: var(--painel, 266px); }
 .vitrine .vd-lazer-info { max-height: 408px; }
+.vitrine .vd-lazer-setas {
+  left: var(--margem-cena, 88px);
+  right: calc(var(--painel, 308px) - 2px);
+}
 
-/* --- Celular ---------------------------------------------------------------
-   Sem ilha: barra de seções horizontal no rodapé; os cartões da direita
-   viram folhas inferiores; as ações do topo empilham em coluna.
+/* --- Galeria ---------------------------------------------------------------
+   A galeria abre por cima de tudo, mas divide a tela com as mesmas duas faixas
+   da cena: a ilha à esquerda e o cartão à direita. Em vez de cada peça repetir
+   88 e 320, todas leem `--margem-cena` e `--painel` — é o que deixa a mesma
+   marcação servir ao notebook, ao iPad deitado e ao celular.
    -------------------------------------------------------------------------- */
-@media (max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse) {
+.vitrine .vd-galeria {
+  /* Fora do layout de mesa a galeria usa a tela toda: margem de folha, só. */
+  --gal-esq: 10px;
+  --gal-dir: 10px;
+  --gal-colunas: 2;
+}
+.vitrine .vd-galeria-palco { padding: 70px var(--gal-dir) 104px var(--gal-esq); }
+.vitrine .vd-galeria-voltar { left: var(--gal-esq); }
+.vitrine .vd-galeria-ant { left: calc(var(--gal-esq) + 10px); }
+.vitrine .vd-galeria-prox { right: calc(var(--gal-dir) + 10px); }
+.vitrine .vd-galeria-tiras {
+  bottom: 24px;
+  left: var(--gal-esq);
+  right: var(--gal-dir);
+  overflow-x: auto;
+}
+.vitrine .vd-galeria-legenda { width: 260px; }
+.vitrine .vd-galeria-cats { width: var(--painel, 280px); }
+.vitrine .vd-galeria-rolo {
+  /* Sem cabeçalho fixo (mesa) o topo é só respiro; com ele, o recuo vem do
+     bloco compacto, onde a barra de categorias existe. */
+  padding: 24px var(--gal-dir) 24px var(--gal-esq);
+}
+.vitrine .vd-galeria-grade {
+  gap: 16px;
+  grid-template-columns: repeat(var(--gal-colunas, 3), minmax(0, 1fr));
+}
+
+/* --- Compacto: celular e tablet em pé --------------------------------------
+   Uma coluna só na borda esquerda: a ilha de seções em cima, a luz embaixo,
+   de pé. Os cartões da direita viram folhas inferiores; as ações do topo
+   empilham em coluna.
+
+   A barra horizontal de rodapé saiu porque disputava a faixa inferior com a
+   barra da unidade, com a folha do lazer e com a luz — cada um empurrando o
+   outro alguns pixels para cima. Recolhendo tudo numa coluna estreita à
+   esquerda, o rodapé fica livre e a cena ganha altura.
+
+   O mesmo desenho serve o tablet EM PÉ (768–1024). Lá o layout de mesa deixava
+   só ~370px de maquete entre a ilha e o cartão da direita, e o cartão da
+   unidade abria por cima da lista. Em pé, a tela é alta: empilhar é o gesto
+   certo. A escala sobe num sub-bloco (`min-width: 600px`) — mesma estrutura,
+   peças maiores.
+   -------------------------------------------------------------------------- */
+@media (max-width: 1024px) and (orientation: portrait), (max-width: 1024px) and (max-height: 540px) {
   .vitrine {
     -webkit-text-size-adjust: 100%;
     touch-action: manipulation;
@@ -566,38 +775,56 @@
   .vitrine button,
   .vitrine a { -webkit-tap-highlight-color: transparent; }
 
-  .vitrine .vd-ilha { display: none; }
+  /*
+   * A coluna da esquerda.
+   *
+   * `--col-base` é o chão de quem mora nela, e `--col-larg` a largura que os
+   * dois compartilham — é o que mantém ilha e luz alinhadas pelo mesmo eixo
+   * sem cada uma repetir a conta da margem segura.
+   */
+  .vitrine {
+    --col-base: max(10px, env(safe-area-inset-bottom));
+    --col-larg: 44px;
+    --alt-luz: min(180px, 24dvh);
+  }
 
-  .vitrine .vd-barra-movel {
-    position: absolute;
+  /* Fora da Home, a seção é tela cheia e traz o próprio voltar: ver `naHome`. */
+  .vitrine .vd-ilha:not([data-home="1"]) { display: none; }
+
+  /* A ilha é o menu do celular — em pé, sobre a luz, na mesma coluna. */
+  .vitrine .vd-ilha {
+    top: auto;
     left: 10px;
-    right: 10px;
-    bottom: max(10px, env(safe-area-inset-bottom));
-    z-index: 45;
-    display: flex;
+    /* 54px é o que a luz tem além do trilho (ícone + folgas) mais o respiro. */
+    bottom: calc(var(--col-base) + var(--alt-luz) + 54px);
+    transform: none;
     gap: 2px;
-    padding: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .vitrine .vd-barra-movel::-webkit-scrollbar { display: none; }
-  .vitrine .vd-barra-movel button {
-    display: flex;
-    flex: 1 0 auto;
-    min-height: 44px;
+    padding: 2px;
+    /* Largura fixada, e não herdada do botão: é o que mantém as duas peças da
+       coluna no mesmo eixo mesmo quando o botão encolhe na tela deitada. */
+    width: var(--col-larg);
     align-items: center;
-    justify-content: center;
-    gap: 6px;
-    padding: 0 12px;
-    border-radius: 40px;
-    color: #fff;
   }
-  .vitrine .vd-barra-movel button[data-on="1"] { background: #fff; color: var(--vd-tinta); }
+  /* Projeto sem barra solar: sem a luz embaixo, a ilha encosta no chão. */
+  .vitrine:not(:has(.vd-clima)) .vd-ilha { bottom: var(--col-base); }
+  .vitrine .vd-ilha-btn { width: 38px; height: 38px; flex: 0 0 38px; }
+  /* Sem hover no toque, o rótulo lateral só atrapalharia a cena. */
+  .vitrine .vd-ilha-rotulo { display: none; }
 
   .vitrine .vd-acoes { flex-direction: column; }
   .vitrine .vd-acao { width: 44px; height: 44px; }
   .vitrine .vd-orbitar,
   .vitrine .vd-acao-extra { display: none; }
+  /* Com a lista de unidades em tela cheia por cima, as ações da cena ficavam
+     atrás do cartão: invisíveis, mas ainda no caminho do leitor de tela e do
+     foco por teclado. Some de vez — a cena não está à mostra. E voltam quando
+     o visitante recolhe a ficha para ver a maquete (`vd-oculto-movel`). */
+  .vitrine:has(.vd-painel.vd-unidades:not(.vd-oculto-movel)) .vd-acoes { display: none; }
+
+  /* Mesma regra para a luz: a folha inferior cobria a coluna solar inteira e
+     sobrava um controle que ninguém alcançava. Fora da Home quem manda é a
+     seção — como já vale para a ilha. Com a ficha recolhida, a luz volta. */
+  .vitrine:has(.vd-painel:not(.vd-oculto-movel)) .vd-clima { display: none; }
 
   /* Cartões da direita viram folha inferior, acima da barra de seções. */
   .vitrine .vd-painel {
@@ -637,9 +864,10 @@
   }
   .vitrine .vd-unidade-card .vd-planta { height: min(42dvh, 320px); }
   .vitrine .vd-oculto-movel { display: none !important; }
-  /* Com a barra da unidade em cena, a luz sobe e as duas não encostam. */
-  .vitrine:has(.vd-palco-unidade) .vd-clima {
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 78px);
+  /* A barra da unidade toma o rodapé inteiro: a coluna inteira sobe com ela,
+     e não só a luz — senão a ilha ficaria por baixo. */
+  .vitrine:has(.vd-palco-unidade) {
+    --col-base: calc(max(10px, env(safe-area-inset-bottom)) + 68px);
   }
   .vitrine .vd-palco-unidade {
     position: absolute;
@@ -651,40 +879,123 @@
     align-items: center;
     gap: 10px;
     padding: 10px 10px 10px 14px;
-    /* Denso: por baixo dela fica a barra de seções, que não pode vazar. */
     background: rgba(16, 20, 16, 0.96);
   }
 
+  /*
+   * A luz de pé, embaixo da ilha.
+   *
+   * Deitada, a faixa da hora atravessava a tela inteira e roubava a parte de
+   * baixo da cena — justo onde está o térreo do empreendimento. De pé ela cabe
+   * na mesma largura dos botões, e o gesto continua natural: sobe o dedo, sobe
+   * o sol.
+   *
+   * A altura é `dvh` com teto porque o celular deitado tem 500px de tela: o
+   * mesmo número fixo que serve em pé deixaria a coluna maior que a janela.
+   */
   .vitrine .vd-clima {
-    /* Celular: volta a ser a faixa de uma linha (hora + slider). */
-    flex-direction: row;
-    align-items: center;
-    width: auto;
-    border-radius: 40px;
     left: 10px;
-    right: 10px;
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px);
-    gap: 10px;
-    padding: 6px 14px;
+    right: auto;
+    bottom: var(--col-base);
+    width: var(--col-larg);
+    gap: 6px;
+    align-items: center;
+    border-radius: 24px;
+    padding: 8px 0 10px;
   }
   .vitrine .vd-clima-extra { display: none; }
-  .vitrine .vd-clima .vd-range { flex: 1; width: auto; }
+  .vitrine .vd-clima-linha { flex-direction: column; gap: 8px; }
+  .vitrine .vd-clima-astro svg { width: 20px; height: 20px; }
+
+  /*
+   * O `input[type=range]` de pé.
+   *
+   * `writing-mode: vertical-*` só chegou aos navegadores em 2024 e ainda há
+   * iPhone em uso sem ele — onde falta, o controle voltaria a ser uma barrinha
+   * deitada de 44px, intocável. Então o caminho é o giro: o elemento continua
+   * horizontal para o navegador (e para o teclado), e só a pintura vira.
+   *
+   * As contas põem o centro do `input` no centro da coluna: `left` desconta
+   * metade do comprimento, `top` desconta metade da espessura. Girado em torno
+   * desse centro, ele passa a ocupar exatamente a coluna. O giro é -90°, e não
+   * +90°, para que a manhã fique embaixo e o meio-dia em cima.
+   */
+  .vitrine .vd-clima-trilho {
+    flex: 0 0 auto;
+    width: var(--col-larg);
+    height: var(--alt-luz);
+    padding: 0;
+  }
+  .vitrine .vd-clima-trilho .vd-range {
+    position: absolute;
+    width: var(--alt-luz);
+    left: calc(var(--col-larg) / 2 - var(--alt-luz) / 2);
+    top: calc(var(--alt-luz) / 2 - 8px);
+    transform: rotate(-90deg);
+  }
+  .vitrine .vd-clima-rail {
+    left: calc(var(--col-larg) / 2 - 2px);
+    right: auto;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    height: auto;
+    transform: none;
+    background: linear-gradient(
+      0deg,
+      #39506e 0%,
+      #6e7d94 18%,
+      #e9b46a 27%,
+      #eef0e6 50%,
+      #e9b46a 73%,
+      #7f95b4 82%,
+      #39506e 100%
+    );
+  }
+  /* Na coluna estreita as marcas viravam sujeira: quem diz a hora é a bolha. */
+  .vitrine .vd-clima-marca,
+  .vitrine .vd-clima-pontas { display: none; }
+
+  /* A hora sai da coluna e acompanha o cursor pela lateral, sobre a cena. */
+  .vitrine .vd-clima-hora {
+    top: calc(7px + (1 - var(--pos)) * (100% - 14px));
+    left: calc(var(--col-larg) - 2px);
+    transform: translateY(-50%);
+    font-size: 13px;
+  }
 
   .vitrine .vd-alvo { min-width: 44px; min-height: 44px; }
+  /* Segmentado de status: 26px de altura é alvo de ponteiro, não de polegar. */
+  .vitrine .vd-seg > button { height: 32px; }
 
-  .vitrine .vd-lazer-lista { display: none; }
-  .vitrine .vd-lazer-info {
-    left: 10px;
-    right: 10px !important;
-    bottom: calc(max(10px, env(safe-area-inset-bottom)) + 62px) !important;
-    width: auto !important;
-    max-height: 46dvh;
+  /*
+   * Celular deitado: a coluna inteira encolhe.
+   *
+   * Em pé sobram 812px e a conta fecha com folga. Deitado sobram ~380, e a
+   * ilha sozinha (seis seções de 38px) já come 244 — com a luz embaixo, o topo
+   * dela saía da tela. Encolher só a luz não bastava: é a ilha que domina a
+   * altura. Então os dois cedem, e o alvo de toque cai para 34px, que ainda é
+   * confortável num aparelho segurado de lado com o polegar.
+   */
+  @media (max-height: 540px) {
+    .vitrine { --alt-luz: min(180px, 20dvh); }
+    .vitrine .vd-ilha { gap: 1px; }
+    .vitrine .vd-ilha-btn { width: 34px; height: 34px; flex: 0 0 34px; }
+    .vitrine .vd-clima { padding: 6px 0 8px; }
+    .vitrine .vd-clima-astro svg { width: 17px; height: 17px; }
   }
-  .vitrine .vd-lazer-alternador { left: 12px !important; }
-  .vitrine .vd-lazer-setas { left: 10px !important; right: 10px !important; }
 
-  .vitrine .vd-galeria-palco { padding: 64px 10px 96px !important; }
+  /* Nada de `.vd-lazer-*` aqui: `LazerView` sai por um `if (movel)` antes de
+     montar a lista, o cartão de info e as setas. Eram sete regras tentando
+     reposicionar elementos que o compacto nunca cria. */
+
+  .vitrine .vd-galeria-palco { padding: 64px 10px 96px; }
   .vitrine .vd-galeria-legenda { display: none; }
+  .vitrine .vd-galeria-tiras { bottom: 16px; justify-content: flex-start; }
+  /* O cabeçalho é fixo no topo: a grade começa abaixo dele. */
+  .vitrine .vd-galeria-rolo { padding: 72px 12px 24px; }
+  .vitrine .vd-galeria[data-faixa="1"] .vd-galeria-rolo { padding-top: 118px; }
+  .vitrine .vd-galeria-grade { gap: 10px; }
 
   /* Cartão do ponto compacto: o mapa continua sendo o protagonista. */
   .vitrine .v-poi-card {
@@ -707,6 +1018,121 @@
 
   /* Bússola abaixo das ações empilhadas. */
   .vitrine > button[title^="Orienta"] { top: 64px; }
+
+  /*
+   * Tablet em pé: mesma estrutura, peças maiores.
+   *
+   * O erro seria servir ao iPad a tela do iPhone esticada — coluna de 44px
+   * perdida num canto e folha inferior ocupando um terço de uma tela de 1180px
+   * de altura. Aqui a coluna cresce para o alvo confortável de dedo, a margem
+   * respira e a folha sobe, porque há altura de sobra. O texto ganha um limite
+   * de medida: linha de 1000px é ilegível, mesmo cabendo.
+   *
+   * O `min-height` não é decoração: um dobrável aberto tem 717×512, entraria
+   * por largura e a coluna crescida (seis botões de 48 + luz de 300) passaria
+   * de 540px numa janela de 512. Largo E alto, ou nada.
+   *
+   * ESTE BLOCO É O ÚLTIMO DO COMPACTO, e a posição é a regra, não o acaso.
+   * `@media` aninhado não soma especificidade: quem refina o celular aqui
+   * dentro só vence se vier DEPOIS do celular. Quando este bloco estava no
+   * meio, onze regras (lazer, galeria, cartão do ponto, bússola) eram
+   * sobrescritas logo abaixo e o tablet ficava com as medidas do telefone —
+   * sem erro visível, só sem efeito. Regra nova de tablet entra aqui; regra
+   * nova de celular entra ACIMA deste comentário.
+   */
+  @media (min-width: 600px) and (min-height: 600px) {
+    .vitrine {
+      --col-base: max(18px, env(safe-area-inset-bottom));
+      --col-larg: 58px;
+      --alt-luz: min(300px, 28dvh);
+      /* Medida de leitura das seções em tela cheia. */
+      --medida: 680px;
+    }
+    .vitrine .vd-ilha {
+      left: 18px;
+      bottom: calc(var(--col-base) + var(--alt-luz) + 68px);
+      gap: 4px;
+      padding: 5px;
+      border-radius: 32px;
+    }
+    .vitrine .vd-ilha-btn { width: 48px; height: 48px; flex: 0 0 48px; }
+    .vitrine .vd-ilha-btn svg { width: 21px; height: 21px; }
+    .vitrine .vd-clima {
+      left: 18px;
+      padding: 12px 0 14px;
+      gap: 10px;
+      border-radius: 30px;
+    }
+    .vitrine .vd-clima-astro svg { width: 24px; height: 24px; }
+    .vitrine .vd-clima-hora { font-size: 15px; }
+
+    /* Folha inferior mais alta e com cantos maiores: a tela comporta. */
+    .vitrine .vd-painel { max-height: 58dvh; border-radius: 26px 26px 0 0; }
+
+    /*
+     * Seções em tela cheia: o conteúdo se centra numa medida legível em vez
+     * de esticar de borda a borda.
+     */
+    .vitrine .vd-painel.vd-unidades,
+    .vitrine .vd-unidade-card {
+      padding-inline: max(0px, calc((100% - var(--medida)) / 2));
+    }
+    .vitrine .vd-unidade-card .vd-planta { height: min(38dvh, 420px); }
+
+    .vitrine:has(.vd-palco-unidade) {
+      --col-base: calc(max(18px, env(safe-area-inset-bottom)) + 76px);
+    }
+    .vitrine .vd-palco-unidade {
+      left: 18px;
+      right: 18px;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      border-radius: 16px;
+    }
+
+    .vitrine .v-poi-card {
+      left: auto;
+      right: 18px;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      width: 340px;
+      max-height: 54dvh;
+    }
+    .vitrine .v-poi-card img { height: min(22dvh, 220px); }
+
+    /*
+     * Localização no tablet em pé: a lista de pontos volta, como folha de um
+     * terço.
+     *
+     * Mais baixa que as outras folhas (38dvh, não 58) porque aqui o painel não
+     * é o conteúdo — o mapa é. Dez itens já aparecem sem rolar e ainda sobram
+     * ~630px de mapa com os alfinetes à vista, que é justamente o que torna a
+     * lista útil: ler o nome e ver ONDE fica, ao mesmo tempo.
+     *
+     * Com um ponto aberto a folha sai. O cartão é a resposta da pergunta que a
+     * lista fez; as duas juntas empilhariam dois objetos no mesmo canto e
+     * cobririam o mapa inteiro. Fechar o cartão traz a lista de volta.
+     */
+    .vitrine .vd-local .vd-painel { max-height: 38dvh; }
+    .vitrine .vd-local:has(.v-poi-card) .vd-painel { display: none; }
+
+    /* Alvos de dedo: no tablet há espaço, e quem toca não mira em 32px. */
+    .vitrine .vd-pilula { height: 40px; padding: 0 16px; font-size: 10px; }
+    .vitrine .vd-pilula-toque { height: 44px; }
+    .vitrine .vd-btn { height: 44px; }
+    .vitrine .vd-campo { height: 42px; }
+    .vitrine .vd-seg > button { height: 34px; }
+    .vitrine .vd-seta { width: 46px; height: 46px; }
+    /* Com as ações à direita e a bússola centrada, elas não se cruzam: a faixa
+       da bússola volta ao topo em vez de descer para desviar. */
+    .vitrine > button[title^="Orienta"] { top: 20px; }
+
+    /* Duas colunas de miniatura num iPad dariam cartões de 480px: três. */
+    .vitrine .vd-galeria { --gal-esq: 20px; --gal-dir: 20px; --gal-colunas: 3; }
+    .vitrine .vd-galeria-rolo { padding: 80px 20px 32px; }
+    .vitrine .vd-galeria[data-faixa="1"] .vd-galeria-rolo { padding-top: 128px; }
+    .vitrine .vd-galeria-grade { gap: 16px; }
+    .vitrine .vd-galeria-palco { padding: 76px 20px 108px; }
+    .vitrine .vd-galeria-tiras { bottom: 22px; justify-content: center; }
+  }
 }
 
 .vitrine .vd-alca { display: none; }
@@ -716,14 +1142,75 @@
   .vitrine .vd-ilha-rotulo { transition: none; }
 }
 
-/* --- Localização (desktop) -------------------------------------------------
-   O painel claro sobe até o topo (não há ações da cena aqui) e o cartão do
-   ponto e os controles do mapa abrem ao lado dele, nunca por baixo.
+/* --- Layout de mesa --------------------------------------------------------
+   A negação da consulta compacta: acima de 1024px, ou deitado com altura para
+   o cartão da direita existir. Ilha à esquerda, UM cartão à direita.
+
+   `--painel` é a largura reservada à direita e `--margem-cena` a faixa da ilha
+   à esquerda: as peças que abrem em tela cheia (galeria, lazer, comparador)
+   leem esses dois números em vez de repetir 88/320 em cada arquivo. Entre 768
+   e 1199 eles encolhem — é a diferença entre a maquete ter 370px e ter 470px.
    -------------------------------------------------------------------------- */
-@media (min-width: 768px) {
+@media (min-width: 1025px), (min-width: 768px) and (orientation: landscape) and (min-height: 541px) {
+  .vitrine {
+    --painel: 308px;
+    --margem-cena: 88px;
+  }
+  /* Uma largura só para os cartões da direita. Antes cada seção trazia a sua
+     (308, 298, 278, 266) e as peças que se posicionavam "ao lado do painel"
+     tinham de escolher um dos números — e erravam em duas seções. */
+  .vitrine .vd-painel { width: var(--painel); }
+  /* O comparador é tela cheia, mas a ilha continua por cima da borda esquerda:
+     abre caminho para ela até caber a folga da página (1080 + as duas ilhas). */
+  .vitrine .vd-comparador-faixa { padding-left: var(--margem-cena); }
+  @media (min-width: 1280px) {
+    .vitrine .vd-comparador-faixa { padding-left: 20px; }
+  }
+  /* A galeria respeita as mesmas duas faixas: ilha à esquerda, cartão de
+     categorias à direita (mais 20 de margem e 12 de respiro). */
+  .vitrine .vd-galeria {
+    --gal-esq: var(--margem-cena);
+    --gal-dir: calc(var(--painel) + 32px);
+    --gal-colunas: 3;
+  }
+
+  /* Localização: o painel claro sobe até o topo (não há ações da cena aqui) e
+     o cartão do ponto e os controles do mapa abrem ao lado dele, nunca por
+     baixo. */
   .vitrine .vd-local .vd-painel { top: 20px; max-height: calc(100% - 40px); }
-  .vitrine .vd-local .v-poi-card { top: 20px; right: 318px; }
-  .vitrine .vd-local .maplibregl-ctrl-top-right { right: 300px; }
+  /* `+ 32`, não `+ 20`: a margem do painel é 20, então `+ 20` encostava o
+     cartão na borda dele sem um pixel de folga. Os 12 de respiro são os mesmos
+     da galeria. */
+  .vitrine .vd-local .v-poi-card { top: 20px; right: calc(var(--painel) + 32px); }
+  .vitrine .vd-local .maplibregl-ctrl-top-right { right: calc(var(--painel) + 2px); }
+
+  /* Ponteiro grosso com layout de mesa (iPad deitado): alvo de dedo, e a
+     etiqueta de hover some — sem cursor ela nunca aparece, só ocuparia z. */
+  @media (pointer: coarse) {
+    .vitrine .vd-acao { width: 44px; height: 44px; }
+    .vitrine .vd-seta { width: 46px; height: 46px; }
+    .vitrine .vd-ilha-btn { width: 48px; height: 48px; flex: 0 0 48px; }
+    .vitrine .vd-ilha-rotulo { display: none; }
+    .vitrine .vd-pilula { height: 38px; }
+    .vitrine .vd-seg > button { height: 32px; }
+    .vitrine .vd-campo { height: 40px; }
+  }
+}
+
+/* --- Tela de mesa estreita (tablet deitado, janela pequena) -----------------
+   1024×768 é o iPad deitado, e é onde o layout de mesa fica no limite: com o
+   cartão de 308px sobravam 370px de maquete. As peças encolhem e os alvos de
+   toque crescem — quem chega aqui pelo iPad usa o dedo, não o ponteiro.
+   -------------------------------------------------------------------------- */
+@media (min-width: 768px) and (max-width: 1199px) and (orientation: landscape) and (min-height: 541px) {
+  .vitrine {
+    --painel: 264px;
+    --margem-cena: 76px;
+  }
+  .vitrine .vd-unidade-card {
+    right: calc(20px + var(--painel) + 12px);
+    width: 232px;
+  }
 }
 
 /* --- Menu suspenso (SelecaoVidro) ------------------------------------------

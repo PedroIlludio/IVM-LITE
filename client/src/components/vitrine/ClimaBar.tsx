@@ -1,17 +1,24 @@
+import type { CSSProperties } from "react";
+import { Flower2, Leaf, Moon, Snowflake, Sun } from "lucide-react";
 import { SEASONS, type Season, type SunReadout } from "@/lib/solar";
 
-/** Rótulo curto da estação na pílula (Ver/Out/Inv/Pri). */
-const CURTO: Record<Season, string> = {
-  verao: "Ver",
-  outono: "Out",
-  inverno: "Inv",
-  primavera: "Pri",
+const ICONE: Record<Season, typeof Sun> = {
+  verao: Sun,
+  outono: Leaf,
+  inverno: Snowflake,
+  primavera: Flower2,
 };
 
-const CARDEAL: Record<string, string> = {
-  N: "norte", NE: "nordeste", L: "leste", SE: "sudeste",
-  S: "sul", SO: "sudoeste", O: "oeste", NO: "noroeste",
-};
+const DIA_MIN = 1439;
+
+/**
+ * Marcas do trilho, em fração do dia.
+ *
+ * São as três horas que orientam a leitura — nascer, meio-dia e pôr do sol
+ * aproximados. Não são rótulos: quem diz a hora exata é a bolha sobre o cursor.
+ * Servem para o olho medir a distância até o meio-dia sem contar pixels.
+ */
+const MARCAS = [6 / 24, 12 / 24, 18 / 24];
 
 /** Noite para o escurecimento da cena: é a HORA que decide, não um botão. */
 export const ehNoite = (minutos: number) => minutos < 340 || minutos > 1090;
@@ -34,43 +41,66 @@ export default function ClimaBar({ minutos, onMinutos, estacao, onEstacao, sol }
   onEstacao: (s: Season) => void;
   sol: SunReadout;
 }) {
-  const leitura = sol.isDay
-    ? `${Math.round(sol.altitude)}° · ${CARDEAL[sol.compass] ?? sol.compass}`
-    : "abaixo do horizonte";
+  const Astro = sol.isDay ? Sun : Moon;
 
   return (
     <section className="vd-clima vd-vidro-barra" aria-label="Controle de luz">
-      <div className="flex shrink-0 items-baseline gap-2">
-        <span className="vd-micro" style={{ color: "var(--vd-pedra)" }}>Luz</span>
-        <strong className="vd-num text-[15px] font-light">{formatarHora(minutos)}</strong>
-        <span className="vd-clima-extra vd-micro vd-num ml-auto whitespace-nowrap vd-bronze">{leitura}</span>
+      <div className="vd-clima-linha">
+        <span className="vd-clima-astro" data-dia={sol.isDay ? "1" : undefined} aria-hidden="true">
+          <Astro />
+        </span>
+
+        {/*
+          `--pos` é a fração do dia, sem unidade, para o CSS posicionar a bolha
+          da hora em cima do cursor. O cursor de um `input[type=range]` não vai
+          de borda a borda: ele para a meio raio de cada ponta, e é por isso que
+          a conta no CSS soma metade da bolinha em vez de usar a fração pura.
+        */}
+        <div className="vd-clima-trilho" style={{ "--pos": minutos / DIA_MIN } as CSSProperties}>
+          <span className="vd-clima-hora vd-num" aria-hidden="true">{formatarHora(minutos)}</span>
+
+          <span className="vd-clima-rail" aria-hidden="true">
+            {MARCAS.map((m) => (
+              <i key={m} className="vd-clima-marca" style={{ left: `${m * 100}%` }} />
+            ))}
+          </span>
+
+          <input
+            type="range"
+            min={0}
+            max={DIA_MIN}
+            step={5}
+            value={minutos}
+            onInput={(e) => onMinutos(Number((e.target as HTMLInputElement).value))}
+            onChange={(e) => onMinutos(Number(e.target.value))}
+            className="vd-range"
+            aria-label="Hora do dia"
+            aria-valuetext={formatarHora(minutos)}
+          />
+
+          <span className="vd-clima-pontas vd-num" aria-hidden="true">
+            <span>00:00</span>
+            <span>23:59</span>
+          </span>
+        </div>
       </div>
-      <input
-        type="range"
-        min={0}
-        max={1439}
-        step={5}
-        value={minutos}
-        onInput={(e) => onMinutos(Number((e.target as HTMLInputElement).value))}
-        onChange={(e) => onMinutos(Number(e.target.value))}
-        className="vd-range min-w-[80px]"
-        aria-label="Hora do dia"
-        aria-valuetext={formatarHora(minutos)}
-      />
-      <div className="vd-clima-extra flex shrink-0 justify-between gap-1" role="group" aria-label="Estação do ano">
-        {SEASONS.map((s) => (
-          <button
-            key={s.id}
-            type="button"
-            onClick={() => onEstacao(s.id)}
-            data-on={estacao === s.id ? "1" : undefined}
-            title={s.label}
-            aria-label={s.label}
-            className="vd-pilula !h-[26px] flex-1 !px-2"
-          >
-            {CURTO[s.id]}
-          </button>
-        ))}
+
+      <div className="vd-clima-estacoes vd-clima-extra" role="group" aria-label="Estação do ano">
+        {SEASONS.map((s) => {
+          const Icone = ICONE[s.id];
+          return (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => onEstacao(s.id)}
+              data-on={estacao === s.id ? "1" : undefined}
+              className="vd-clima-estacao"
+            >
+              <Icone aria-hidden="true" />
+              <span>{s.label}</span>
+            </button>
+          );
+        })}
       </div>
     </section>
   );

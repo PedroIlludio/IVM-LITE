@@ -4,7 +4,7 @@ const vitrine = process.env.UX_PATH ?? "/meloborges/now-on";
 
 async function abrirVitrine(page: import("@playwright/test").Page) {
   await page.goto(vitrine);
-  await expect(page.locator(".vd-ilha, .vd-barra-movel").first()).toBeAttached({ timeout: 60_000 });
+  await expect(page.locator(".vd-ilha")).toBeAttached({ timeout: 60_000 });
   // A capa bloqueia cliques enquanto a fotogrametria e o empreendimento entram.
   await expect(page.locator(".v-carregando")).toBeHidden({ timeout: 75_000 });
 }
@@ -16,11 +16,18 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await abrirVitrine(page);
   const viewport = page.viewportSize()!;
 
-  // No celular a ilha dá lugar à barra de seções do rodapé, sem Home.
-  await expect(page.locator(".vd-ilha")).toBeHidden();
-  const barra = page.locator(".vd-barra-movel");
+  // No celular a ilha e o controle de luz se recolhem numa coluna à esquerda:
+  // estreita, de pé, sem tomar o rodapé nem a largura da cena.
+  const barra = page.locator(".vd-ilha");
   await expect(barra).toBeVisible();
-  await expect(barra.getByRole("button", { name: "Home" })).toHaveCount(0);
+  const clima = page.getByRole("region", { name: "Controle de luz" });
+  const cIlha = (await barra.boundingBox())!;
+  const cClima = (await clima.boundingBox())!;
+  expect(cIlha.width).toBeLessThanOrEqual(56);
+  expect(cClima.width).toBeLessThanOrEqual(56);
+  expect(cIlha.x).toBeCloseTo(cClima.x, 0);
+  // A luz fica ABAIXO da ilha, e as duas não encostam.
+  expect(cClima.y).toBeGreaterThanOrEqual(cIlha.y + cIlha.height);
   // Ações do topo empilhadas: só as primárias (menos quando o projeto não
   // tem tour ou noturno), nunca mais que quatro.
   expect(await page.locator(".vd-acoes > button:visible").count()).toBeLessThanOrEqual(4);
@@ -62,7 +69,7 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
     }
     await page.getByRole("button", { name: "Próximo ambiente" }).click();
     await expect(lazer.getByText(/^02 \//)).toBeVisible();
-    // Dentro da seção a barra some; a saída é o "Voltar".
+    // Dentro da seção a ilha some; a saída é o "Voltar".
     await expect(barra).toBeHidden();
     await lazer.getByRole("button", { name: "Voltar" }).click();
     await expect(lazer).toBeHidden();
@@ -125,7 +132,7 @@ test("jornada principal cabe no celular e preserva a cena", async ({ page }) => 
   await expect(busca).toBeHidden();
 
   // Entorno é SÓ o mapa: sem lista em texto; tocar num ícone abre o local.
-  await barra.getByRole("button", { name: "Entorno" }).click();
+  await barra.getByRole("button", { name: "Localização" }).click();
   const mapa = page.getByTestId("mapa-entorno-viewport");
   await expect(mapa).toBeVisible();
   await expect(page.locator(".maplibregl-map")).toHaveCSS("height", `${viewport.height}px`, { timeout: 30_000 });
@@ -150,8 +157,108 @@ test("paisagem preserva uma grande área interativa para a maquete", async ({ pa
   await page.setViewportSize({ width: 915, height: 412 });
   await abrirVitrine(page);
 
-  await expect(page.locator(".vd-barra-movel")).toBeVisible();
+  // A coluna da esquerda encolhe com a tela deitada: 915×412 tem pouca altura,
+  // e é aqui que uma luz de altura fixa estouraria a janela.
+  await expect(page.locator(".vd-ilha")).toBeVisible();
+  const coluna = (await page.getByRole("region", { name: "Controle de luz" }).boundingBox())!;
+  expect(coluna.y + coluna.height).toBeLessThanOrEqual(412);
   expect(await page.locator(".vd-acoes > button:visible").count()).toBeLessThanOrEqual(4);
+  await semVazamento(page);
+});
+
+/**
+ * O tablet EM PÉ usa o desenho compacto, não o de mesa: com o cartão de 308px
+ * à direita sobravam ~370px de maquete numa tela de 768. Aqui a cena fica
+ * inteira e a coluna da esquerda cresce para o alvo de dedo.
+ */
+test("tablet em pé: cena inteira, coluna maior e nada sobreposto", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await abrirVitrine(page);
+
+  const ilha = page.locator(".vd-ilha");
+  const clima = page.getByRole("region", { name: "Controle de luz" });
+  const cIlha = (await ilha.boundingBox())!;
+  const cClima = (await clima.boundingBox())!;
+
+  // Mesma coluna à esquerda do celular, porém em escala de tablet.
+  expect(cIlha.x).toBeCloseTo(cClima.x, 0);
+  expect(cIlha.width).toBeGreaterThan(50);
+  expect(cIlha.width).toBeLessThanOrEqual(72);
+  expect(cClima.y).toBeGreaterThanOrEqual(cIlha.y + cIlha.height);
+  // A coluna inteira cabe na janela: é a conta que estoura em telas curtas.
+  expect(cClima.y + cClima.height).toBeLessThanOrEqual(1024);
+  // Botão de seção no alvo confortável de toque.
+  expect((await page.getByTestId("nav-projeto").boundingBox())!.height).toBeGreaterThanOrEqual(44);
+
+  // Nenhum cartão da direita: a maquete tem a largura toda.
+  expect(await page.locator(".vd-painel:visible").count()).toBe(0);
+
+  // Projeto abre como folha inferior — e a luz sai de cena com ela, em vez de
+  // ficar coberta e inalcançável.
+  await page.getByTestId("nav-projeto").click();
+  const ficha = page.getByTestId("panel-empreendimentos");
+  await expect(ficha).toBeVisible();
+  expect((await ficha.boundingBox())!.width).toBeCloseTo(768, 0);
+  await expect(clima).toBeHidden();
+  await expect(ilha).toBeHidden();
+  await semVazamento(page);
+});
+
+/**
+ * O tablet em pé usa o desenho do celular, mas não as AUSÊNCIAS dele.
+ *
+ * No celular a lista de pontos do entorno sai porque a tela toda mal dá para o
+ * mapa; numa de 1024 de altura a folha ocupa um terço e sobram ~630px de mapa
+ * com os alfinetes à vista. Tirar a lista lá seria esconder dez endereços com
+ * tempo de deslocamento.
+ *
+ * Também guarda a ORDEM do CSS: as três colunas da galeria vêm do sub-bloco de
+ * tablet, que só vence por vir depois das regras de celular. Já houve uma
+ * versão em que ele ficava no meio e onze regras não tinham efeito nenhum.
+ */
+test("tablet em pé: lista de pontos volta, e cede a vez ao cartão", async ({ page }) => {
+  await page.setViewportSize({ width: 768, height: 1024 });
+  await abrirVitrine(page);
+
+  await page.getByTestId("nav-galeria").click();
+  const colunas = await page.locator(".vd-galeria-grade").evaluate(
+    (e) => getComputedStyle(e).gridTemplateColumns.split(" ").length,
+  );
+  expect(colunas).toBe(3);
+  await page.getByTestId("btn-media-close").click();
+
+  await page.getByTestId("nav-local").click();
+  const lista = page.locator(".vd-local .vd-painel");
+  await expect(lista).toBeVisible();
+  const l = (await lista.boundingBox())!;
+  // Folha de um terço: o mapa continua sendo o protagonista da seção.
+  expect(l.width).toBeCloseTo(768, 0);
+  expect(l.y).toBeGreaterThan(1024 * 0.55);
+  // Alvo de dedo nos filtros — eram 28px herdados do painel de mesa.
+  expect((await page.getByTestId("poi-cat-todos").boundingBox())!.height).toBeGreaterThanOrEqual(40);
+
+  // Escolher um ponto troca a lista pelo cartão: os dois dividem o mesmo canto.
+  await page.getByTestId("poi-item-0").click();
+  await expect(lista).toBeHidden();
+  await semVazamento(page);
+});
+
+/**
+ * 1024×768 é o tablet DEITADO: layout de mesa, mas apertado. O cartão encolhe
+ * para a maquete não ficar com menos da metade da tela.
+ */
+test("tablet deitado: cartão estreito e maquete com folga", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await abrirVitrine(page);
+
+  await page.getByTestId("nav-projeto").click();
+  const painel = page.getByTestId("panel-empreendimentos");
+  await expect(painel).toBeVisible();
+  const p = (await painel.boundingBox())!;
+  const i = (await page.locator(".vd-ilha").boundingBox())!;
+  expect(p.width).toBeLessThanOrEqual(280);
+  // Faixa livre entre a ilha e o cartão: mais de metade da tela.
+  expect(p.x - (i.x + i.width)).toBeGreaterThan(1024 / 2);
   await semVazamento(page);
 });
 
@@ -178,7 +285,7 @@ test("desktop: ilha fixa, um cartão por seção e clima só com o 3D", async ({
   const c = (await clima.boundingBox())!;
   const cruzam = f.x < c.x + c.width && c.x < f.x + f.width && f.y < c.y + c.height && c.y < f.y + f.height;
   expect(cruzam).toBe(false);
-  expect(c.width).toBeLessThanOrEqual(320);
+  expect(c.width).toBeLessThanOrEqual(400);
 
   // Localização: tela clara, sem clima, lista dentro da largura do painel.
   if (await page.getByTestId("nav-local").count()) {

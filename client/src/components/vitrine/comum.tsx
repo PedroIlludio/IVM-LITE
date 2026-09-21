@@ -3,23 +3,60 @@ import { MessageCircle, Phone, Mail, type LucideIcon } from "lucide-react";
 import { montarMensagemContato, type ContatoCfg } from "@/lib/ivm-store";
 import type { UnidadeStatus } from "@/lib/unidades";
 
-/** Mesma consulta das regras de celular em vitrine.css — as duas precisam concordar. */
+/**
+ * Mesma consulta das regras compactas em vitrine.css — as duas precisam concordar.
+ *
+ * "Compacto" deixou de ser só o celular. Até 1024px em pé — iPad, iPad Pro em
+ * retrato, celular grande — a cena não cabe junto de um cartão de 300px à
+ * direita: sobravam ~370px de maquete entre a ilha e o painel, e o cartão da
+ * unidade abria por cima da lista. Nessas telas a vitrine passa a usar o mesmo
+ * desenho do celular (seção em tela cheia, coluna à esquerda), que é largo o
+ * bastante para ler e não disputa espaço com a maquete.
+ *
+ * A segunda linha é a tela BAIXA (celular deitado, janela curta): ali o cartão
+ * da direita não tem altura para existir. Não pede mais `pointer: coarse` —
+ * uma janela de 1024×420 no desktop sofre do mesmo aperto.
+ */
 export const CONSULTA_MOVEL =
-  "(max-width: 767px), (max-width: 1024px) and (max-height: 500px) and (pointer: coarse)";
+  "(max-width: 1024px) and (orientation: portrait), (max-width: 1024px) and (max-height: 540px)";
 
-/** Celular (retrato, ou deitado com toque)? Para o que o CSS sozinho não resolve. */
-export function useMovel() {
-  const [movel, setMovel] = useState(
-    () => typeof window !== "undefined" && window.matchMedia(CONSULTA_MOVEL).matches,
+/**
+ * A fatia TABLETE do compacto — o sub-bloco `(min-width: 600px) and
+ * (min-height: 600px)` de vitrine.css, escrito por extenso.
+ *
+ * O segundo braço de `CONSULTA_MOVEL` (tela baixa) não sobrevive a
+ * `min-height: 600px`, então a interseção das duas é esta linha só.
+ *
+ * Existe porque nem tudo que o celular ESCONDE deve sumir no iPad. No celular a
+ * lista de pontos do entorno sai e o visitante toca os alfinetes; numa tela de
+ * 768×1024 cabem a lista E o mapa, e tirá-la seria perder dez endereços com
+ * tempo de deslocamento — o conteúdo que justifica a seção.
+ */
+export const CONSULTA_TABLETE =
+  "(min-width: 600px) and (min-height: 600px) and (max-width: 1024px) and (orientation: portrait)";
+
+function useConsulta(consulta: string) {
+  const [vale, setVale] = useState(
+    () => typeof window !== "undefined" && window.matchMedia(consulta).matches,
   );
   useEffect(() => {
-    const mq = window.matchMedia(CONSULTA_MOVEL);
-    const ver = () => setMovel(mq.matches);
+    const mq = window.matchMedia(consulta);
+    const ver = () => setVale(mq.matches);
     ver();
     mq.addEventListener("change", ver);
     return () => mq.removeEventListener("change", ver);
-  }, []);
-  return movel;
+  }, [consulta]);
+  return vale;
+}
+
+/** Tela compacta (celular, ou tablet em pé)? Para o que o CSS sozinho não resolve. */
+export function useMovel() {
+  return useConsulta(CONSULTA_MOVEL);
+}
+
+/** Dentro do compacto, é a fatia tablete? Implica `useMovel()`. */
+export function useTablete() {
+  return useConsulta(CONSULTA_TABLETE);
 }
 
 /** Seções da ilha de navegação. `comparar` é tela, não seção: sai de Unidades. */
@@ -61,20 +98,31 @@ export function Simbolo({ url, tamanho, claro = false, alt = "" }: {
 }
 
 /**
- * Ilha vertical de navegação (desktop).
+ * Ilha vertical de navegação.
  *
  * Botões fixos de 42px; o rótulo é uma etiqueta FORA da ilha e só aparece no
  * hover do próprio item (ver `.vd-ilha-*` em vitrine.css). O ativo é indicado
  * apenas pelo fundo do ícone.
+ *
+ * `naHome` existe porque no celular a ilha desce para a coluna da esquerda,
+ * junto do controle de luz, e lá ela divide a tela com as seções — que no
+ * celular são tela cheia e já têm o próprio botão de voltar. Quem sabe em que
+ * seção estamos é a página, não o CSS: ela marca e a media query decide.
  */
-export function IlhaNav({ itens, ativa, onEscolher, claro = false }: {
+export function IlhaNav({ itens, ativa, onEscolher, claro = false, naHome = true }: {
   itens: ItemNav[];
   ativa: Secao;
   onEscolher: (s: Secao) => void;
   claro?: boolean;
+  naHome?: boolean;
 }) {
   return (
-    <nav className="vd-ilha" data-claro={claro ? "1" : undefined} aria-label="Seções">
+    <nav
+      className="vd-ilha"
+      data-claro={claro ? "1" : undefined}
+      data-home={naHome ? "1" : undefined}
+      aria-label="Seções"
+    >
       {itens.map(({ id, rotulo, icone: Icone }) => (
         <button
           key={id}
@@ -89,30 +137,6 @@ export function IlhaNav({ itens, ativa, onEscolher, claro = false }: {
         >
           <Icone className="h-[18px] w-[18px]" strokeWidth={1.5} />
           <span className="vd-ilha-rotulo vd-rotulo">{rotulo}</span>
-        </button>
-      ))}
-    </nav>
-  );
-}
-
-/** Barra de seções do celular: rolável, sem Home. */
-export function BarraMovel({ itens, ativa, onEscolher }: {
-  itens: ItemNav[];
-  ativa: Secao;
-  onEscolher: (s: Secao) => void;
-}) {
-  return (
-    <nav className="vd-barra-movel vd-vidro-barra" aria-label="Seções">
-      {itens.filter((i) => i.id !== "home").map(({ id, rotulo, icone: Icone }) => (
-        <button
-          key={id}
-          type="button"
-          onClick={() => onEscolher(ativa === id ? "home" : id)}
-          data-on={ativa === id ? "1" : undefined}
-          aria-label={rotulo}
-        >
-          <Icone className="h-4 w-4" strokeWidth={1.5} />
-          <span className="vd-micro">{rotulo}</span>
         </button>
       ))}
     </nav>

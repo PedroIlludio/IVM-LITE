@@ -47,7 +47,12 @@ import {
   PostProcessStage,
   type Cesium3DTileset,
 } from "cesium";
-import { createVision3DViewer, FALLBACK_GROUND_HEIGHT } from "@/lib/cesium-setup";
+import {
+  acompanharAlcanceDeSombra,
+  createVision3DViewer,
+  CREDITO_MAPA_3D,
+  FALLBACK_GROUND_HEIGHT,
+} from "@/lib/cesium-setup";
 import { elevacaoDoTerreno } from "@/lib/elevacao";
 import { corDaCategoriaPoi } from "@/lib/poi-icones";
 import { medirGlb, type CaixaGlb } from "@/lib/glb-bounds";
@@ -2039,6 +2044,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Init do viewer + tiles -------------------------------------------------
   useEffect(() => {
+    // A chave só é pré-requisito quando é o Google que dá o entorno. Exigi-la
+    // sempre deixava a cena sem inicializar justamente no caso do mini mapa
+    // como base, que existe para dispensá-la.
     if (!containerRef.current || viewerRef.current || (!apiKey && fotogrametria)) return;
     let destroyed = false;
     let handler: ScreenSpaceEventHandler | null = null;
@@ -2056,6 +2064,22 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         tilesetRef.current = tileset;
         readyRef.current = true;
         setPronto(true);
+
+        /**
+         * O empreendimento é o assunto da cena: é onde ELE está que diz que
+         * faixa a sombra precisa cobrir. Ver `acompanharAlcanceDeSombra`.
+         *
+         * O `ready` não é zelo excessivo: `boundingSphere` é um getter que LANÇA
+         * enquanto o modelo carrega. Como a leitura roda dentro do quadro do
+         * Cesium, a exceção derrubava o quadro inteiro — e, sem quadro, o
+         * carregamento nunca avançava: a cena ficava parada em "Carregando o
+         * modelo 3D..." para sempre.
+         */
+        acompanharAlcanceDeSombra(viewer, () => {
+          const m = nodesRef.current.values().next().value?.model;
+          if (!m?.ready) return undefined;
+          return { centro: m.boundingSphere.center, raio: m.boundingSphere.radius };
+        });
 
         /**
          * Sob `?recorteDebug=1`, o viewer fica alcançável pelo console.
@@ -2699,6 +2723,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const m = mapaModelRef.current;
     // `primitives.remove` já destrói o primitivo; destruir de novo lança.
     if (m && v && !v.isDestroyed()) v.scene.primitives.remove(m);
+    // Sem o mapa em cena não há o que creditar — e uma atribuição a uma imagem
+    // que não está na tela confunde quem lê.
+    if (v && !v.isDestroyed()) v.creditDisplay.removeStaticCredit(CREDITO_MAPA_3D);
     mapaModelRef.current = null;
     mapaUrlRef.current = null;
   }
@@ -2767,6 +2794,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       (gltf as unknown as { id: unknown }).id = "mapa-base";
       v.scene.primitives.add(gltf);
       mapaModelRef.current = gltf;
+      // O crédito entra COM o modelo, não com a configuração: só aqui se sabe
+      // que o arquivo realmente chegou e está sendo exibido. Ver `CREDITO_MAPA_3D`.
+      v.creditDisplay.addStaticCredit(CREDITO_MAPA_3D);
       /**
        * O pivô só encontra o centro da geometria com o modelo PRONTO — antes
        * disso `computeGframeMapa` cai na origem do arquivo. Sem este reajuste
