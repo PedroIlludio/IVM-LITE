@@ -358,6 +358,7 @@ export default function IvmEditorPage() {
   const [placingPoiId, setPlacingPoiId] = useState<string | null>(null);
   const [placingBuilding, setPlacingBuilding] = useState(false);
   const [placingTorreId, setPlacingTorreId] = useState<string | null>(null);
+  const [placingUnidadeId, setPlacingUnidadeId] = useState<string | null>(null);
   /**
    * Unidades selecionadas no espelho — a mesma seleção para a grade e a cena
    * 3D. Vive aqui, e não na aba, porque o clique numa caixa do
@@ -1197,7 +1198,7 @@ export default function IvmEditorPage() {
    * trata o clique de posicionar como prioritário, mas as alças e as caixas
    * ignoram profundidade e o interceptariam antes.
    */
-  const placing = !!placingPoiId || placingBuilding || !!placingTorreId;
+  const placing = !!placingPoiId || placingBuilding || !!placingTorreId || !!placingUnidadeId;
 
   // Preview do espelho 3D enquanto se calibra as torres na aba Unidades.
   const [torreSelId, setTorreSelId] = useState<string>("");
@@ -1224,7 +1225,7 @@ export default function IvmEditorPage() {
     if (tab !== "unidades" || !building || !pavCfg || unidades.length === 0) return [];
     // Ao posicionar a torre, o espelho sai da frente: senão o clique acerta uma
     // caixa em vez do terreno. Fica só o contorno da torre para guiar.
-    if (placingTorreId) return [];
+    if (placingTorreId || placingUnidadeId) return [];
     return buildUnitBoxes({
       buildingId: building.id,
       unidades,
@@ -1259,7 +1260,7 @@ export default function IvmEditorPage() {
       opacidade: 0.45,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, building, pavCfg, unidades, torres, placingTorreId, unidSel, isolarPavimento]);
+  }, [tab, building, pavCfg, unidades, torres, placingTorreId, placingUnidadeId, unidSel, isolarPavimento]);
 
   // ===== Níveis e cortes ======================================================
   /** Níveis editados do projeto (vazio = ainda usando a escada automática). */
@@ -2056,6 +2057,35 @@ export default function IvmEditorPage() {
   }
 
   function onEditPlace(_id: string, lat: number, lng: number) {
+    if (placingUnidadeId) {
+      const local = sceneRef.current?.modelLocalFromLatLng(_id, lat, lng);
+      const unidade = unidades.find((u) => u.id === placingUnidadeId);
+      if (!local || !unidade || !building || !pavCfg) {
+        setSaveMsg("Não foi possível posicionar a unidade. Verifique se o modelo 3D está carregado.");
+        return;
+      }
+      const caixa = buildUnitBoxes({ buildingId: building.id, unidades, torres, pavCfg })
+        .find((item) => item.id === unidade.id);
+      if (!caixa) {
+        setSaveMsg("A unidade não tem volume 3D. Configure a torre antes de posicioná-la.");
+        return;
+      }
+      setUnidades(unidades.map((u) => u.id === unidade.id
+        ? { ...u, posicao: {
+            x: local.x, y: local.y,
+            z: u.posicao?.z ?? caixa.z - caixa.dz / 2,
+            dx: u.posicao?.dx ?? caixa.dx,
+            dy: u.posicao?.dy ?? caixa.dy,
+            dz: u.posicao?.dz ?? caixa.dz,
+            rot: u.posicao?.rot ?? caixa.rot,
+            rotX: u.posicao?.rotX ?? caixa.rotX,
+            rotY: u.posicao?.rotY ?? caixa.rotY,
+            planta: u.posicao?.planta,
+          } }
+        : u));
+      setPlacingUnidadeId(null);
+      return;
+    }
     if (placingTorreId) {
       // Converte o ponto clicado para as coordenadas do modelo: é assim que o
       // volume da torre é posicionado sem precisar adivinhar X/Y.
@@ -2370,12 +2400,12 @@ export default function IvmEditorPage() {
             Espaço próprio, não sobreposto pelos painéis: o Cesium se
             redimensiona sozinho ao container. */}
         <main className="ed-viewport relative min-w-0 flex-1 bg-[#0a0a0a]">
-          {apiKey && (
+          {apiKey !== null && (apiKey || c.mapaUrl) && (
             <Scene3D
           key={tentativaCena}
           ref={sceneRef}
           apiKey={apiKey}
-          fotogrametria={!semFotogrametria}
+          fotogrametria={!semFotogrametria && !!apiKey}
           buildings={buildings}
           solarUtc={utcDate}
           /* Sem isto o `daylight` da cena ficava travado no padrão (45°): a
@@ -2388,7 +2418,7 @@ export default function IvmEditorPage() {
           realceNoturno={ambiente?.realceNoturno}
           /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
           /* Sem fotogrametria nao ha cidade a mostrar; o mini mapa assume. */
-          cidade={!previewEstudio && !semFotogrametria}
+          cidade={!previewEstudio && !semFotogrametria && !!apiKey}
           sombras={ambiente?.sombras}
           mapaBase={mapaBase}
           gizmoMapa={pivoNoMapa}
@@ -2431,7 +2461,7 @@ export default function IvmEditorPage() {
           unitBoxes={unitBoxes}
           towerOutline={towerOutline}
           placementActive={placing}
-          placementTarget={placingPoiId ? "poi" : placingTorreId ? "tower" : placingBuilding ? "building" : undefined}
+          placementTarget={placingPoiId ? "poi" : placingUnidadeId ? "unit" : placingTorreId ? "tower" : placingBuilding ? "building" : undefined}
           onPlacementMiss={() => setSaveMsg(
             placingPoiId
               ? "Não encontrei o mundo do Google nesse ponto. Clique sobre uma área visível da cidade."
@@ -2480,6 +2510,8 @@ export default function IvmEditorPage() {
             <div className="pointer-events-none absolute left-1/2 top-3 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[4px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] shadow-lg">
               {placingPoiId ? (
                 <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA O PONTO</>
+              ) : placingUnidadeId ? (
+                <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA A UNIDADE {unidades.find((u) => u.id === placingUnidadeId)?.numero ?? ""}</>
               ) : placingTorreId ? (
                 <><Crosshair className="h-3.5 w-3.5" /> CLIQUE NO MAPA PARA A TORRE {torreLabel(placingTorreId, torres).toUpperCase()}</>
               ) : (
@@ -4763,6 +4795,15 @@ export default function IvmEditorPage() {
               onTorreSel={setTorreSelId}
               placingTorreId={placingTorreId}
               onPlacingTorre={setPlacingTorreId}
+              placingUnidadeId={placingUnidadeId}
+              onPlacingUnidade={(id) => {
+                setPlacingUnidadeId(id);
+                if (id) {
+                  setPlacingPoiId(null);
+                  setPlacingTorreId(null);
+                  setPlacingBuilding(false);
+                }
+              }}
               sel={unidSel}
               onSel={setUnidSel}
               onSelClique={selecionarUnidade}

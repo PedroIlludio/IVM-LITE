@@ -279,7 +279,7 @@ interface Scene3DProps {
    * Google, e não do GLB, do pivô ou do próprio marcador que estiverem
    * desenhados por cima do mesmo pixel.
    */
-  placementTarget?: "poi" | "building" | "tower";
+  placementTarget?: "poi" | "building" | "tower" | "unit";
   /** Clique de posicionamento que não encontrou uma superfície utilizável. */
   onPlacementMiss?: () => void;
   /**
@@ -2039,7 +2039,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Init do viewer + tiles -------------------------------------------------
   useEffect(() => {
-    if (!containerRef.current || viewerRef.current || !apiKey) return;
+    if (!containerRef.current || viewerRef.current || (!apiKey && fotogrametria)) return;
     let destroyed = false;
     let handler: ScreenSpaceEventHandler | null = null;
     let aoPressionar: ((e: PointerEvent) => void) | null = null;

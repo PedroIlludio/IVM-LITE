@@ -21,7 +21,7 @@ import { CAMPO, Linha, NumIn, Section, Slider, Text } from "./campos";
  */
 export function UnidadesTab({
   unidades, torres, pavCfg, crm, tipologias, torreSelId, onTorreSel,
-  placingTorreId, onPlacingTorre,
+  placingTorreId, onPlacingTorre, placingUnidadeId, onPlacingUnidade,
   sel, onSel, onSelClique, gizmoModo, onGizmoModo, plantaUnidId, onPlantaUnid,
   plantasDisponiveis,
   isolarPavimento, onIsolarPavimento,
@@ -36,6 +36,8 @@ export function UnidadesTab({
   onTorreSel: (id: string) => void;
   placingTorreId: string | null;
   onPlacingTorre: (id: string | null) => void;
+  placingUnidadeId: string | null;
+  onPlacingUnidade: (id: string | null) => void;
   /** Seleção de unidades, compartilhada com a cena 3D. */
   sel: string[];
   onSel: (ids: string[]) => void;
@@ -1040,6 +1042,16 @@ ${forasteiras.length} unidade(s) que NÃO estão na planilha ` +
                     </label>
 
                     <div className="ed-eyebrow pt-1 text-[var(--ed-dim)]">Volume da unidade</div>
+                    <button
+                      onClick={() => onPlacingUnidade(placingUnidadeId === unidSel.id ? null : unidSel.id)}
+                      className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] px-3 py-1.5 text-[11px] font-semibold ${
+                        placingUnidadeId === unidSel.id
+                          ? "animate-pulse bg-amber-400 text-[#0a0a0a]"
+                          : "bg-teal-500 text-[#0a0a0a] hover:bg-teal-400"
+                      }`}>
+                      <Crosshair className="h-3.5 w-3.5" />
+                      {placingUnidadeId === unidSel.id ? "Clique no mapa..." : "Posicionar unidade no mapa"}
+                    </button>
                     <p className="text-[10px] leading-relaxed text-white/35">
                       {proprio
                         ? "Esta unidade tem tamanho próprio — sai do fatiamento da torre."
