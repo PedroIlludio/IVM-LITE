@@ -125,8 +125,47 @@ export interface Superficie {
   id: string;
   nome?: string;
   tipo: TipoSuperficie;
+  /**
+   * Marca a superfície criada para assentar o empreendimento.
+   *
+   * Não muda a geometria: ela continua usando o mesmo recorte, piso e saia das
+   * demais superfícies. A marca existe para o editor apresentar os controles de
+   * nivelamento com o nome certo e para futuras migrações distinguirem um
+   * gramado decorativo da peça que fecha o terreno sob o prédio.
+   */
+  plataforma?: boolean;
+  /** A plataforma nasceu da caixa do GLB antigo, não da silhueta real. */
+  contornoAproximado?: boolean;
+  /**
+   * Deslocamento coletivo já aplicado às cotas dos vértices, em metros.
+   *
+   * As alturas em `pontos` continuam absolutas e prontas para renderizar. Este
+   * valor é apenas a memória do controle "Subir/descer conjunto", permitindo
+   * calcular o delta entre duas edições sem acumular erro.
+   */
+  ajusteAltura?: number;
   /** Contorno fechado: o último ponto liga no primeiro, sem repeti-lo. */
   pontos: VerticeArea[];
+  /**
+   * CORTE MANUAL: abre o buraco na fotogrametria e não pinta nada por cima.
+   *
+   * A superfície comum faz duas coisas de uma vez — recorta e põe piso no lugar.
+   * Debaixo do empreendimento a segunda atrapalha: quem ocupa aquele chão é o
+   * próprio modelo, e pintar grama ou pátio ali só cria uma camada disputando
+   * espaço com o GLB.
+   *
+   * O recorte automático (a silhueta calculada na importação) resolve o caso
+   * comum, mas depende de o modelo trazer a anotação e cobre exatamente a
+   * geometria — nem sempre é o que se quer. Este é o controle manual: os mesmos
+   * vértices, as mesmas cotas, os mesmos pivôs, só que o resultado é o buraco e
+   * nada mais.
+   *
+   * É uma bandeira em `Superficie`, e não um tipo novo, porque tudo o que
+   * importa — contorno no mapa 2D, medição de cotas, pivôs que sobem, descem e
+   * andam no plano, folga do corte — já está aqui. Duplicar a estrutura só para
+   * mudar o desenho final criaria duas coisas para manter em sincronia.
+   */
+  somenteCorte?: boolean;
   /** Cor sólida no lugar da textura. Vazio = textura do tipo. */
   cor?: string;
   /** Igual ao da via: separa a fronteira do buraco da fronteira do piso. */

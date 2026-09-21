@@ -1,4 +1,8 @@
-/** Tipos de posicionamento/câmera 3D (os valores vivem na config do projeto). */
+/**
+ * Posicionamentos editáveis dos empreendimentos 3D, persistidos em JSON no
+ * servidor (via /api/vision3d/placements). Sobrepõem os defaults de
+ * vision3d-config.ts. O editor (/editor) grava aqui; a experiência normal só lê.
+ */
 
 /** Câmera inicial ao selecionar um empreendimento. */
 export interface CameraView {
@@ -26,3 +30,30 @@ export interface Placement {
 }
 
 export type Placements = Record<string, Placement>;
+
+export async function loadPlacements(): Promise<Placements> {
+  try {
+    const r = await fetch("/api/vision3d/placements");
+    if (!r.ok) return {};
+    return (await r.json()) as Placements;
+  } catch {
+    return {};
+  }
+}
+
+export async function savePlacements(p: Placements): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch("/api/vision3d/placements", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      return { ok: false, error: body.error || `HTTP ${r.status}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "falha de rede" };
+  }
+}

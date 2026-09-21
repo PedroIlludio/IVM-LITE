@@ -5,7 +5,7 @@ import {
   Building2, Video, MapPin, Images, Palette, Plus, Trash2, Move, Crosshair,
   Grid3x3, RefreshCw, Play, Square, Star, ChevronUp, ChevronDown, ChevronRight, Scissors,
   Home, Sun, Eye, RotateCw, Maximize, Undo2, Redo2, Copy, Search, History, X,
-  Lock, LockOpen, Moon, SunMedium,
+  Lock, LockOpen, Moon, SunMedium, Map as MapIcon, FolderUp,
 } from "lucide-react";
 import Scene3D, {
   type Scene3DHandle, type TowerOutline, type GizmoModo, type GizmoLocal, type GizmoLocalPatch,
@@ -14,7 +14,7 @@ import SolarBar from "@/components/SolarBar";
 import MapaEntorno from "@/components/MapaEntorno";
 import {
   getProjectById, updateProject, uploadAsset, projectToBuilding3D, genId,
-  parseLocationInput, POI_CATEGORIES, projectPavCfg, projectAmbiente,
+  parseLocationInput, POI_CATEGORIES, projectPavCfg, projectAmbiente, projectMapaBase,
   projectPath, slugReservado, slugify, MODO_LOCAL, CONTATO_MENSAGEM_PADRAO,
   type IvmProject, type ProjectConfig, type EditablePoi, type NamedView, type Branding,
   type CrmConfig, type AmbienteCfg, type ProjectData, type ContatoCfg,
@@ -26,6 +26,8 @@ import {
   type PavimentosCfg, type NivelDef,
 } from "@/lib/pavimentos";
 import { plantasDeTipologia, plantasOrfas } from "@/lib/tipologias";
+import { sanearGlb } from "@/lib/glb-sanear";
+import { ATRIBUTOS_PASTA, importarPastaGltf, lerEscolhaPasta } from "@/lib/gltf-pasta";
 import {
   COR_VIA_PADRAO, LARGURA_VIA_PADRAO, comprimentoDaVia, densificarVia,
   densificarViaComCotas,
@@ -164,6 +166,27 @@ export default function IvmEditorPage() {
    * os campos, o espelho e o salvar continuam valendo.
    */
   const [cenaErro, setCenaErro] = useState<string | null>(null);
+  /**
+   * Editar em 3D SEM a fotogrametria do Google.
+   *
+   * O editor depende do 3D para o que a vitrine so consome: posicionar o
+   * modelo, tracar via, desenhar area e — o motivo desta opcao — REALINHAR as
+   * cameras salvas. Sem fotogrametria a cena inteira falhava, e com ela
+   * falhava tambem o unico lugar onde essas cameras podem ser corrigidas.
+   *
+   * O entorno passa a ser o GLB do projeto. Vale lembrar que a cota do terreno
+   * neste modo e estimada (~10 m): camera realinhada aqui fica coerente com
+   * ESTA cena, e pode precisar de um retoque quando a fotogrametria voltar.
+   */
+  const [semFotogrametria, setSemFotogrametria] = useState(false);
+  /** Trocar a chave remonta o Scene3D — e o que aplica a troca de modo. */
+  const [tentativaCena, setTentativaCena] = useState(0);
+
+  function recarregarCena(sem: boolean) {
+    setCenaErro(null);
+    setSemFotogrametria(sem);
+    setTentativaCena((n) => n + 1);
+  }
   const [ready, setReady] = useState(false);
   /**
    * GLB baixando. No editor isto NÃO bloqueia a tela: o inspetor é utilizável
@@ -335,11 +358,10 @@ export default function IvmEditorPage() {
   const [placingPoiId, setPlacingPoiId] = useState<string | null>(null);
   const [placingBuilding, setPlacingBuilding] = useState(false);
   const [placingTorreId, setPlacingTorreId] = useState<string | null>(null);
-  /** Unidade avulsa aguardando um clique no mapa para definir a posição. */
   const [placingUnidadeId, setPlacingUnidadeId] = useState<string | null>(null);
   /**
-   * Unidades selecionadas no espelho — a mesma seleção para a grade, a lista de
-   * avulsas e a cena 3D. Vive aqui, e não na aba, porque o clique numa caixa do
+   * Unidades selecionadas no espelho — a mesma seleção para a grade e a cena
+   * 3D. Vive aqui, e não na aba, porque o clique numa caixa do
    * modelo chega pelo `Scene3D`: com a seleção guardada dentro da aba, o id
    * clicado era descartado e a cena era uma tela decorativa.
    *
@@ -399,12 +421,37 @@ export default function IvmEditorPage() {
       /* modo privado: vale só para esta sessão */
     }
   }, [chavePreviewRecorte, previewRecorte]);
+  /**
+   * Estado da silhueta que recorta a fotogrametria — ver `onRecortePegada`.
+   *
+   * Guardado aqui porque a falta dela não aparece na cena: sem contorno o
+   * recorte não desenha nada, e "não recortou" fica igual a "recortou certo".
+   */
+  const [recortePegada, setRecortePegada] =
+    useState<"medindo" | "ok" | "sem-pegada" | "ilegivel" | null>(null);
   /** Via com o traçado aberto para edição no mapa. */
   const [tracandoVia, setTracandoVia] = useState<string | null>(null);
   /** Superfície com o contorno em desenho no mapa 2D. */
   const [tracandoArea, setTracandoArea] = useState<string | null>(null);
   /** Superfície com os pivôs de altura visíveis no 3D. */
   const [areaAlturaId, setAreaAlturaId] = useState<string | null>(null);
+  /**
+   * Como o pivo de area/corte se move ao ser arrastado.
+   *
+   * Nao vai para o projeto: e preferencia de gesto de quem esta editando, nao
+   * dado do empreendimento. Fica aqui em cima porque as duas secoes (superficie
+   * e corte) usam o mesmo botao e o mesmo pivo.
+   */
+  const [modoPivoArea, setModoPivoArea] = useState<"altura" | "plano">("altura");
+  /**
+   * Previa SO de vias, superficies e cortes manuais.
+   *
+   * Separada de `previewRecorte`, que acende tambem o recorte automatico do
+   * predio. Antes eram a mesma chave: ligar a previa para ajustar um corte
+   * manual acendia o buraco automatico junto, e os dois ficavam sobrepostos —
+   * bem no caso em que o corte manual existe porque o automatico nao serve.
+   */
+  const [previewAreas, setPreviewAreas] = useState(false);
   /**
    * O item do entorno ABERTO no painel — um só, via ou superfície.
    *
@@ -454,8 +501,16 @@ export default function IvmEditorPage() {
 
   const sceneRef = useRef<Scene3DHandle>(null);
   const glbRef = useRef<HTMLInputElement>(null);
-  /** Input do mapa 3D — separado do GLB do empreendimento, são dois assets. */
   const mapaGlbRef = useRef<HTMLInputElement>(null);
+  // Pastas glTF (`.gltf` + `.bin` + texturas) — ver `importarPasta`.
+  const pastaRef = useRef<HTMLInputElement>(null);
+  const mapaPastaRef = useRef<HTMLInputElement>(null);
+  /**
+   * Importação de pasta em andamento. Trava os dois botões, não só o clicado: a
+   * conversão é um processo por vez no servidor, e a segunda chamada voltaria
+   * com "já está em andamento" depois de o usuário esperar o upload inteiro.
+   */
+  const [importandoPasta, setImportandoPasta] = useState(false);
   const galRef = useRef<HTMLInputElement>(null);
   const logoRef = useRef<HTMLInputElement>(null);
   const symbolRef = useRef<HTMLInputElement>(null);
@@ -523,6 +578,7 @@ export default function IvmEditorPage() {
 
   const building = useMemo(() => (project ? projectToBuilding3D(project.data) : null), [project]);
   const buildings = useMemo(() => (building ? [building] : []), [building]);
+  const mapaBase = useMemo(() => (project ? projectMapaBase(project.data) : null), [project]);
   const tz = project?.data.config.tzOffset ?? -3;
 
   const utcDate = useMemo(() => {
@@ -651,6 +707,31 @@ export default function IvmEditorPage() {
     setViews(n);
   }
 
+  /**
+   * Congela a referencia de altura no primeiro enquadramento capturado sem
+   * fotogrametria.
+   *
+   * Sem isto havia um LACO. A cota do terreno, nesse modo, e deduzida da
+   * camera salva; capturar uma camera nova mudava a deducao, a deducao movia
+   * o empreendimento, e o enquadramento gravado deixava de ser o que se via na
+   * tela — o predio subia e parecia que a camera tinha descido.
+   *
+   * Gravando `alturaSolo` junto com a camera, a cena para de re-deduzir e
+   * passa a usar a MESMA referencia em que o enquadramento foi feito. Nao e um
+   * chute promovido a medida: e o registro de contra o que aquela camera foi
+   * definida, que e exatamente o papel deste campo.
+   *
+   * So a primeira captura grava. Depois disso a referencia esta posta, e
+   * reescreve-la a cada captura voltaria a mover o chao debaixo das cameras ja
+   * definidas.
+   */
+  function fixarCotaDeReferencia() {
+    if (!semFotogrametria) return;
+    if (project?.data.config.alturaSolo != null) return;
+    const cota = sceneRef.current?.cotaDoSolo();
+    if (cota != null) setConfig({ alturaSolo: cota });
+  }
+
   /** Só uma vista pode ser a principal. */
   function definirPrincipal(id: string) {
     setViews(views.map((v) => ({ ...v, isMain: v.id === id })));
@@ -660,6 +741,7 @@ export default function IvmEditorPage() {
   function capturarVista() {
     const cam = sceneRef.current?.getCurrentCamera();
     if (!cam) return;
+    fixarCotaDeReferencia();
     const nova: NamedView = {
       ...cam,
       id: genId("view"),
@@ -678,6 +760,7 @@ export default function IvmEditorPage() {
   function recapturarVista(id: string) {
     const cam = sceneRef.current?.getCurrentCamera();
     if (!cam) return;
+    fixarCotaDeReferencia();
     patchView(id, { ...cam, thumbUrl: sceneRef.current?.captureImage(240) ?? undefined });
     setSaveMsg("Vista recapturada (salve para aplicar)");
   }
@@ -933,6 +1016,16 @@ export default function IvmEditorPage() {
     setVias((atual) => atual.map((v) => (v.id === id ? { ...v, ...patch } : v)));
   }
   const superficies: Superficie[] = entorno.superficies ?? [];
+  /**
+   * As duas listas moram no MESMO array, separadas só por `somenteCorte`.
+   *
+   * Superfície e corte compartilham tudo o que é trabalhoso — contorno no mapa,
+   * medição de cotas, pivôs, folga — e diferem apenas no desenho final. Guardar
+   * em arrays distintos duplicaria a persistência, o histórico e o recorte para
+   * ganhar nada; separar na tela é o que o usuário precisa, e é aqui.
+   */
+  const areasPintadas = superficies.filter((s) => !s.somenteCorte);
+  const cortes = superficies.filter((s) => s.somenteCorte);
   /** Mesmo cuidado do `setVias`: a lista vem de dentro do atualizador. */
   function setSuperficies(next: Superficie[] | ((atual: Superficie[]) => Superficie[])) {
     registrarHistorico();
@@ -961,6 +1054,55 @@ export default function IvmEditorPage() {
   function patchArea(id: string, patch: Partial<Superficie>) {
     setSuperficies((atual) => atual.map((s) => (s.id === id ? { ...s, ...patch } : s)));
   }
+
+  /**
+   * Cria a plataforma usando a mesma silhueta que recorta a fotogrametria.
+   *
+   * A silhueta já vem transformada pelo Scene3D: posição, rotação, escala e
+   * offsets do empreendimento estão incorporados. As cotas ficam vazias até a
+   * medição explícita porque recortar antes de os tiles terminarem de carregar
+   * é justamente o que produz plataformas enterradas ou flutuando.
+   */
+  function criarPlataformaDoModelo() {
+    if (areasPintadas.some((s) => s.plataforma)) {
+      setSaveMsg("Já existe uma plataforma do empreendimento. Remova-a antes de gerar outra.");
+      return;
+    }
+    const implantacao = sceneRef.current?.contornosDoModelo();
+    if (!implantacao) {
+      setSaveMsg(
+        "O modelo ainda não disponibilizou a base. Espere o GLB terminar de carregar e tente novamente.",
+      );
+      return;
+    }
+    const contornos = implantacao.contornos.filter((anel) => anel.length >= 3);
+    if (!contornos.length) return;
+    const ids = contornos.map(() => genId("plataforma"));
+    const novas: Superficie[] = contornos.map((pontos, i) => ({
+      id: ids[i],
+      nome: contornos.length > 1 ? `Plataforma ${i + 1}` : "Plataforma do empreendimento",
+      tipo: "concreto",
+      plataforma: true,
+      contornoAproximado: implantacao.aproximado || undefined,
+      // O piso passa 35 cm sobre a borda da fotogrametria. Essa sobreposição
+      // esconde a rachadura que aparece quando corte e malha terminam juntos.
+      folgaCorte: -0.35,
+      ajusteAltura: 0,
+      pontos,
+    }));
+    setSuperficies((atual) => [...atual, ...novas]);
+    // A própria plataforma já recorta com uma borda menor que o piso. Manter o
+    // recorte automático junto abriria o buraco até a borda exata do GLB e
+    // anularia a sobreposição que esconde a emenda.
+    if (project?.data.config.recorteTerreno) setConfig({ recorteTerreno: undefined });
+    setAbertoEntorno({ tipo: "area", id: ids[0] });
+    setTracandoArea(null);
+    setAreaAlturaId(null);
+    setPreviewAreas(false);
+    setSaveMsg(implantacao.aproximado
+      ? "Plataforma retangular criada pela caixa do GLB antigo. Confira/redesenhe o contorno, depois meça o terreno."
+      : `${novas.length} plataforma(s) criada(s) pela silhueta do modelo. Agora meça o terreno e escolha a cota final.`);
+  }
   function patchTracadoVia(id: string, pontos: Via["pontos"]) {
     // Qualquer mudança horizontal invalida as alturas medidas anteriormente.
     setVias((atual) => atual.map((v) => (v.id === id
@@ -987,6 +1129,41 @@ export default function IvmEditorPage() {
    */
   const [previewNoturno, setPreviewNoturno] = useState(false);
 
+  /**
+   * Preview do modo SEM cidade 3D (estúdio).
+   *
+   * Mesma lógica do preview noturno: o mini mapa só é desenhado com a
+   * fotogrametria desligada, e o editor sempre a manteve ligada. Sem este
+   * interruptor, calibrar o mini mapa seria salvar às cegas e conferir na
+   * vitrine publicada — exatamente o que o preview noturno existe para evitar.
+   *
+   * Bônus de calibração: sem a fotogrametria por cima, dá para ver se o
+   * terreno do mini mapa encontra a base do prédio ou se atravessa por dentro.
+   */
+  const [previewEstudio, setPreviewEstudio] = useState(false);
+
+  /**
+   * O pivô da cena aponta para o MINI MAPA, e não para o empreendimento.
+   *
+   * Exclusivo por necessidade: dois pivôs na tela seriam dois conjuntos de
+   * alças sobrepostas, sem pista de qual move o quê — e um arraste distraído
+   * desmancharia o encaixe do prédio achando que estava mexendo no terreno.
+   *
+   * Estado de TELA, não do projeto: é o que se está fazendo agora, não uma
+   * propriedade do empreendimento. Quem persiste é o cadeado (`mapaTravado`).
+   */
+  const [editandoMapa, setEditandoMapa] = useState(false);
+
+  /**
+   * O mini mapa foi retirado da cena por quebrar o render.
+   *
+   * Precisa ser dito, e no lugar onde se resolve: o arquivo continua salvo no
+   * projeto e some da tela sem explicação nenhuma. Quem subiu há dez segundos
+   * conclui que o upload falhou e tenta de novo — o mesmo arquivo, o mesmo
+   * resultado.
+   */
+  const [mapaErro, setMapaErro] = useState<string | null>(null);
+
   /** Liga/desliga o preview e leva o relógio junto — como faz a vitrine. */
   function alternarPreviewNoturno() {
     if (!ambiente) return;
@@ -1003,6 +1180,17 @@ export default function IvmEditorPage() {
     if (tab !== "ambiente") setPreviewNoturno(false);
   }, [tab]);
 
+  /** Mesmo motivo: o interruptor do estúdio mora na aba "modelo". */
+  useEffect(() => {
+    if (tab !== "modelo") { setPreviewEstudio(false); setEditandoMapa(false); }
+  }, [tab]);
+
+  // Sem preview não há mini mapa desenhado, e um pivô sobre a fotogrametria
+  // moveria um objeto que ninguém está vendo.
+  useEffect(() => {
+    if (!previewEstudio) setEditandoMapa(false);
+  }, [previewEstudio]);
+
 
   /**
    * Há um posicionamento por clique em curso. Declarado aqui, antes dos memos
@@ -1010,8 +1198,7 @@ export default function IvmEditorPage() {
    * trata o clique de posicionar como prioritário, mas as alças e as caixas
    * ignoram profundidade e o interceptariam antes.
    */
-  const placing = !!placingPoiId || placingBuilding || !!placingTorreId
-    || !!placingUnidadeId;
+  const placing = !!placingPoiId || placingBuilding || !!placingTorreId || !!placingUnidadeId;
 
   // Preview do espelho 3D enquanto se calibra as torres na aba Unidades.
   const [torreSelId, setTorreSelId] = useState<string>("");
@@ -1038,7 +1225,7 @@ export default function IvmEditorPage() {
     if (tab !== "unidades" || !building || !pavCfg || unidades.length === 0) return [];
     // Ao posicionar a torre, o espelho sai da frente: senão o clique acerta uma
     // caixa em vez do terreno. Fica só o contorno da torre para guiar.
-    if (placingTorreId) return [];
+    if (placingTorreId || placingUnidadeId) return [];
     return buildUnitBoxes({
       buildingId: building.id,
       unidades,
@@ -1073,7 +1260,7 @@ export default function IvmEditorPage() {
       opacidade: 0.45,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, building, pavCfg, unidades, torres, placingTorreId, unidSel, isolarPavimento]);
+  }, [tab, building, pavCfg, unidades, torres, placingTorreId, placingUnidadeId, unidSel, isolarPavimento]);
 
   // ===== Níveis e cortes ======================================================
   /** Níveis editados do projeto (vazio = ainda usando a escada automática). */
@@ -1097,6 +1284,7 @@ export default function IvmEditorPage() {
       n.camPitch ?? pavCfg.camPitch,
       n.camGiro ?? pavCfg.camGiro,
       1.4,
+      n.plantaArea,
     );
   }
 
@@ -1181,7 +1369,7 @@ export default function IvmEditorPage() {
    * ou a que o fatiamento da torre lhe dá.
    *
    * É o que permite pegar QUALQUER unidade na cena e arrastá-la. Antes só as
-   * avulsas tinham pivô — e como num projeto típico elas são um punhado entre
+   * unidades com posição personalizada tinham pivô — e como num projeto típico elas são um punhado entre
    * centenas, clicar numa unidade normal não mostrava pivô nenhum. A posição
    * própria passa a nascer no primeiro arraste, no lugar exato onde a unidade
    * já estava.
@@ -1195,7 +1383,7 @@ export default function IvmEditorPage() {
   }
 
   /**
-   * Pivô do alvo local: unidade avulsa, grupo de avulsas ou volume da torre.
+   * Pivô do alvo local: unidade selecionada, grupo ou volume da torre.
    *
    * A prioridade é a da atenção do usuário: o que ele acabou de selecionar
    * ganha o pivô; sem seleção, ele fica no volume da torre em calibração.
@@ -1413,7 +1601,7 @@ export default function IvmEditorPage() {
         unidades.map((u) => {
           if (u.id !== uid) return u;
           // Unidade ainda da grade: o pivô nasce aqui, no lugar em que o
-          // fatiamento já a desenhava, e a partir de agora ela é avulsa.
+          // fatiamento já a desenhava, e a partir de agora ela guarda posição própria.
           const base = posicaoEfetiva(u);
           return base ? { ...u, posicao: { ...base, ...patch } } : u;
         }),
@@ -1510,9 +1698,15 @@ export default function IvmEditorPage() {
    */
   const itemFotoRef = useRef<HTMLInputElement>(null);
   const aplicarFotoRef = useRef<((url: string) => void) | null>(null);
+  const itemVideoRef = useRef<HTMLInputElement>(null);
+  const aplicarVideoRef = useRef<((url: string) => void) | null>(null);
   function pedirFotoItem(_id: string, aplicar: (url: string) => void) {
     aplicarFotoRef.current = aplicar;
     itemFotoRef.current?.click();
+  }
+  function pedirVideoItem(_id: string, aplicar: (url: string) => void) {
+    aplicarVideoRef.current = aplicar;
+    itemVideoRef.current?.click();
   }
 
   /**
@@ -1699,6 +1893,95 @@ export default function IvmEditorPage() {
     return true;
   }
 
+  /**
+   * Envia um GLB depois de consertar o que o Cesium não perdoa.
+   *
+   * Ver `sanearGlb`: um índice de canal de UV que o exportador escreveu e a
+   * malha não tem faz o shader não compilar e a cena inteira parar. O conserto
+   * é no chunk JSON, o binário passa intacto, e o que mudou é dito em
+   * português — o silêncio aqui seria pior que o erro, porque o arquivo salvo
+   * deixaria de ser o arquivo enviado sem ninguém saber.
+   */
+  async function uploadGlb(file: File): Promise<string | null> {
+    setSaveMsg("Verificando o modelo...");
+    const { arquivo, correcoes } = await sanearGlb(file);
+    const url = await upload(arquivo);
+    if (url && correcoes.length) {
+      setSaveMsg(`Modelo corrigido no envio — ${correcoes.join("; ")}`);
+    }
+    return url;
+  }
+
+  /**
+   * Importa uma PASTA glTF (`.gltf` + `.bin` + texturas) como um GLB único.
+   *
+   * O caminho antigo — subir um `.glb` pronto — continua igual e é o mais
+   * curto. Este existe porque o 3ds Max não exporta `.glb`: exporta uma pasta,
+   * e subir só o `.gltf` dela dá um modelo sem geometria e sem textura, sem
+   * nada na tela que explique o porquê. A conversão acontece no servidor
+   * (`gltf-worker.ts`), e o resultado sobe pelo upload de sempre.
+   *
+   * A pasta pode conter um `.glb` pronto — exportador que gera os dois
+   * formatos. Nesse caso não há o que converter, e ele segue pelo fluxo normal:
+   * é mais rápido e passa pela mesma checagem de peso do envio manual.
+   */
+  async function importarPasta(lista: File[]): Promise<string | null> {
+    if (!lista.length) {
+      setSaveMsg("Nenhum arquivo veio na seleção.");
+      return null;
+    }
+    const escolha = lerEscolhaPasta(lista);
+
+    if (!escolha.gltf) {
+      if (!escolha.glb) {
+        setSaveMsg("Nenhum .gltf ou .glb nessa pasta.");
+        return null;
+      }
+      if (!conferirPesoGlb(escolha.glb)) return null;
+      return uploadGlb(escolha.glb);
+    }
+
+    setImportandoPasta(true);
+    try {
+      const r = await importarPastaGltf(escolha, {}, (p) => setSaveMsg(p.texto));
+      const mb = (r.bytes / (1024 * 1024)).toFixed(1);
+
+      /**
+       * O `.glb` convertido sobe pelo MESMO caminho do envio manual.
+       *
+       * É o que faz a importação funcionar igual no modo local e no Supabase:
+       * o worker devolve um arquivo comum, e daqui para a frente ele não se
+       * distingue de um `.glb` que alguém escolheu no disco.
+       */
+      setSaveMsg(`Convertido (${mb} MB). Enviando...`);
+      const url = await upload(r.arquivo);
+      if (!url) return null;
+
+      const avisos = [
+        r.faltando.length
+          ? `${r.faltando.length} textura(s) não estavam na pasta `
+            + `(${r.faltando.slice(0, 3).join(", ")}${r.faltando.length > 3 ? "..." : ""})`
+          : "",
+        // Sem silhueta o recorte da fotogrametria não sai — e isso não aparece
+        // na tela, então tem de ser dito aqui.
+        r.contornos ? "" : "sem contorno: o recorte do terreno não vai sair",
+        ...r.correcoes,
+      ].filter(Boolean);
+
+      setSaveMsg(
+        `Modelo importado: ${r.resumo}`
+        + (avisos.length ? ` — ATENÇÃO: ${avisos.join("; ")}` : "")
+        + " (salve para aplicar)",
+      );
+      return url;
+    } catch (e) {
+      setSaveMsg(`Erro na importação: ${e instanceof Error ? e.message : ""}`);
+      return null;
+    } finally {
+      setImportandoPasta(false);
+    }
+  }
+
   async function upload(file: File): Promise<string | null> {
     if (!project) return null;
     setSaveMsg("Enviando arquivo...");
@@ -1775,21 +2058,31 @@ export default function IvmEditorPage() {
 
   function onEditPlace(_id: string, lat: number, lng: number) {
     if (placingUnidadeId) {
-      // Converte o ponto clicado para as coordenadas do modelo. A altura não
-      // vem de um clique 2D: usa o pavimento da unidade como base, e o Z fica
-      // ajustável no painel.
       const local = sceneRef.current?.modelLocalFromLatLng(_id, lat, lng);
-      const u = unidades.find((x) => x.id === placingUnidadeId);
-      if (local && u && pavCfg) {
-        const zBase = pavCfg.baseZ + pavCfg.nivelM * u.pavimento;
-        setUnidades(
-          unidades.map((x) =>
-            x.id === placingUnidadeId
-              ? { ...x, posicao: { ...(x.posicao ?? {}), x: local.x, y: local.y, z: x.posicao?.z ?? zBase } }
-              : x,
-          ),
-        );
+      const unidade = unidades.find((u) => u.id === placingUnidadeId);
+      if (!local || !unidade || !building || !pavCfg) {
+        setSaveMsg("Não foi possível posicionar a unidade. Verifique se o modelo 3D está carregado.");
+        return;
       }
+      const caixa = buildUnitBoxes({ buildingId: building.id, unidades, torres, pavCfg })
+        .find((item) => item.id === unidade.id);
+      if (!caixa) {
+        setSaveMsg("A unidade não tem volume 3D. Configure a torre antes de posicioná-la.");
+        return;
+      }
+      setUnidades(unidades.map((u) => u.id === unidade.id
+        ? { ...u, posicao: {
+            x: local.x, y: local.y,
+            z: u.posicao?.z ?? caixa.z - caixa.dz / 2,
+            dx: u.posicao?.dx ?? caixa.dx,
+            dy: u.posicao?.dy ?? caixa.dy,
+            dz: u.posicao?.dz ?? caixa.dz,
+            rot: u.posicao?.rot ?? caixa.rot,
+            rotX: u.posicao?.rotX ?? caixa.rotX,
+            rotY: u.posicao?.rotY ?? caixa.rotY,
+            planta: u.posicao?.planta,
+          } }
+        : u));
       setPlacingUnidadeId(null);
       return;
     }
@@ -1889,6 +2182,17 @@ export default function IvmEditorPage() {
    */
   const travado = !!c.travado;
 
+  /** Cadeado do mini mapa — ver `mapaTravado` em `ProjectConfig`. */
+  const mapaTravado = !!c.mapaTravado;
+  /**
+   * O pivô em cena é o do mini mapa AGORA?
+   *
+   * Precisa das quatro condições: estar na aba certa, com o preview ligado
+   * (senão o objeto nem é desenhado), com GLB para mover e sem cadeado.
+   */
+  const pivoNoMapa = tab === "modelo" && previewEstudio && !!c.mapaUrl
+    && !mapaTravado && editandoMapa;
+
   /**
    * Checagens antes de publicar. Não bloqueiam nada — o editor não deve decidir
    * pelo usuário —, mas nenhum projeto vai ao ar sem que os buracos estejam
@@ -1946,9 +2250,9 @@ export default function IvmEditorPage() {
   const abaAtual = TABS.find((t) => t.id === tab);
 
   return (
-    <div className="ed flex h-screen w-full flex-col overflow-hidden bg-[#0a0a0a] text-white">
+    <div className="ed ed-editor flex h-screen w-full flex-col overflow-hidden bg-[#0a0a0a] text-white">
       {/* ================= BARRA DE DOCUMENTO ================= */}
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b border-[var(--ed-line)] bg-[var(--ed-chrome)] px-2">
+      <header className="ed-topbar flex h-11 shrink-0 items-center gap-2 border-b border-[var(--ed-line)] bg-[var(--ed-chrome)] px-2">
         <Link href="/admin" title="Voltar aos projetos"
           className="flex h-7 w-7 items-center justify-center rounded-[4px] text-white/50 transition-colors hover:bg-white/5 hover:text-white">
           <ArrowLeft className="h-4 w-4" />
@@ -2073,13 +2377,13 @@ export default function IvmEditorPage() {
         </div>
       )}
 
-      <div className="flex min-h-0 flex-1">
+      <div className="ed-workspace flex min-h-0 flex-1">
         {/* ================= RAIL DE SEÇÕES =================
             Ícones numa coluna, no lugar das pílulas que quebravam em três
             linhas — o padrão de VS Code, Figma e Unreal. */}
-        <nav className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-[var(--ed-line)] bg-[var(--ed-chrome)] py-2">
+        <nav className="ed-rail flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-[var(--ed-line)] bg-[var(--ed-chrome)] py-2" aria-label="Seções do editor">
           {TABS.map((t) => (
-            <button key={t.id} onClick={() => setTab(t.id)}
+            <button key={t.id} onClick={() => setTab(t.id)} title={t.label} aria-label={t.label}
               className={`group relative flex h-9 w-9 items-center justify-center rounded-[4px] transition-colors ${
                 tab === t.id ? "bg-teal-500/12 text-teal-300" : "text-white/35 hover:bg-white/5 hover:text-white/80"
               }`}>
@@ -2095,15 +2399,13 @@ export default function IvmEditorPage() {
         {/* ================= VIEWPORT =================
             Espaço próprio, não sobreposto pelos painéis: o Cesium se
             redimensiona sozinho ao container. */}
-        <main className="relative min-w-0 flex-1 bg-[#0a0a0a]">
-          {/* Com mapa 3D próprio a cena não precisa da chave do Google — mas
-              ainda espera o `/api/config` responder (`apiKey` deixa de ser
-              nulo), senão ela montaria e remontaria ao trocar a base. */}
-          {apiKey !== null && (apiKey || c.mapa3d) && (
+        <main className="ed-viewport relative min-w-0 flex-1 bg-[#0a0a0a]">
+          {apiKey !== null && (apiKey || c.mapaUrl) && (
             <Scene3D
+          key={tentativaCena}
           ref={sceneRef}
           apiKey={apiKey}
-          mapa3d={c.mapa3d ?? null}
+          fotogrametria={!semFotogrametria && !!apiKey}
           buildings={buildings}
           solarUtc={utcDate}
           /* Sem isto o `daylight` da cena ficava travado no padrão (45°): a
@@ -2114,10 +2416,43 @@ export default function IvmEditorPage() {
           /* Preview do noturno: é o que dá resposta ao slider de realce. */
           noturno={previewNoturno}
           realceNoturno={ambiente?.realceNoturno}
+          /* Preview do estúdio: é o único lugar onde o mini mapa aparece. */
+          /* Sem fotogrametria nao ha cidade a mostrar; o mini mapa assume. */
+          cidade={!previewEstudio && !semFotogrametria && !!apiKey}
+          sombras={ambiente?.sombras}
+          mapaBase={mapaBase}
+          gizmoMapa={pivoNoMapa}
+          onMapaErro={setMapaErro}
+          /* Traduz o vocabulário comum do pivô para os campos do mini mapa.
+             Rede de segurança igual à do empreendimento: travado, descarta. */
+          onMapaTransform={(patch) => {
+            if (mapaTravado) return;
+            setConfig({
+              ...(patch.offsetEast !== undefined && { mapaOffsetEast: patch.offsetEast }),
+              ...(patch.offsetNorth !== undefined && { mapaOffsetNorth: patch.offsetNorth }),
+              ...(patch.heightOffset !== undefined && { mapaHeightOffset: patch.heightOffset }),
+              ...(patch.heading !== undefined && { mapaHeading: patch.heading }),
+              ...(patch.pitch !== undefined && { mapaPitch: patch.pitch }),
+              ...(patch.roll !== undefined && { mapaRoll: patch.roll }),
+              ...(patch.scale !== undefined && { mapaScale: patch.scale }),
+            });
+          }}
           selectedId={emp.id}
           editMode
           onReady={() => { setReady(true); setCenaErro(null); }}
           onModelLoading={setModeloCarregando}
+          /* No editor o erro é BANNER, não tela: quem está calibrando precisa
+             do painel vivo para trocar a URL do GLB e salvar o que já fez. */
+          onModelError={(msg) => setCenaErro(`O modelo 3D não entrou na cena: ${msg}`)}
+          /* Grava a cota do terreno no projeto — é ela que deixa a vitrine
+             abrir sem a fotogrametria. Meio metro de tolerância: a sonda varia
+             um pouco entre execuções, e regravar o projeto a cada refresh por
+             causa de centímetros só encheria o histórico. */
+          onAlturaSolo={(_id, altura) => {
+            const salva = project?.data.config.alturaSolo;
+            if (salva != null && Math.abs(salva - altura) < 0.5) return;
+            setConfig({ alturaSolo: altura });
+          }}
           onError={setCenaErro}
           onEditPlace={onEditPlace}
           /* Rede de segurança: sem pivô não há arraste, mas se algum caminho
@@ -2126,12 +2461,18 @@ export default function IvmEditorPage() {
           unitBoxes={unitBoxes}
           towerOutline={towerOutline}
           placementActive={placing}
+          placementTarget={placingPoiId ? "poi" : placingUnidadeId ? "unit" : placingTorreId ? "tower" : placingBuilding ? "building" : undefined}
+          onPlacementMiss={() => setSaveMsg(
+            placingPoiId
+              ? "Não encontrei o mundo do Google nesse ponto. Clique sobre uma área visível da cidade."
+              : "Não encontrei uma superfície nesse ponto. Tente novamente sobre o mapa.",
+          )}
           gizmoModo={gizmoModo}
           onGizmoInfo={setGizmoInfo}
           /* O pivô do empreendimento só existe onde ele se edita: fora dessas
              duas abas as alças ficavam no meio da cena roubando o clique. E
              some de vez quando o encaixe está travado — é o ponto do cadeado. */
-          gizmoEmpreendimento={(tab === "modelo" || tab === "local") && !placing && !travado}
+          gizmoEmpreendimento={(tab === "modelo" || tab === "local") && !placing && !travado && !pivoNoMapa}
           gizmoLocal={gizmoLocal}
           onGizmoLocalTransform={onGizmoLocal}
           corteArea={corteArea}
@@ -2140,6 +2481,8 @@ export default function IvmEditorPage() {
             c.recorteTerreno ? { ...c.recorteTerreno, preview: previewRecorte } : null
           }
           previewRecorte={previewRecorte}
+          previewAreas={previewAreas}
+          onRecortePegada={setRecortePegada}
           vias={vias}
           corVia={entorno.corVia}
           viaEditandoId={viaAlturaId}
@@ -2151,6 +2494,7 @@ export default function IvmEditorPage() {
           onUnidadePlanta={setPlantaUnidade}
           superficies={superficies}
           areaEditandoId={areaAlturaId}
+          modoPivoArea={modoPivoArea}
           onAreaPontos={(areaId, pontos) => patchArea(areaId, { pontos })}
           onSelectUnit={(uid, mods) => {
             const u = unidades.find((x) => x.id === uid);
@@ -2200,10 +2544,42 @@ export default function IvmEditorPage() {
                   O restante do editor segue funcionando — salve o que já fez (Ctrl+S)
                   antes de recarregar.
                 </p>
+                {/*
+                  Sem isto, a falha do Google tirava do ar justamente a tela em
+                  que as câmeras salvas podem ser consertadas — e elas são o que
+                  quebra quando a fotogrametria some. O editor ficava incapaz de
+                  corrigir o próprio problema.
+                */}
+                {!semFotogrametria && (
+                  <button
+                    onClick={() => recarregarCena(true)}
+                    className="mt-2 rounded-[3px] border border-white/15 bg-white/5 px-2 py-1 text-[10px] text-white/80 hover:bg-white/10"
+                  >
+                    Editar em 3D sem a fotogrametria
+                  </button>
+                )}
               </div>
               <button onClick={() => setCenaErro(null)} title="Dispensar"
                 className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-white/10 hover:text-white/80">
                 <X className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+
+          {/*
+            Modo reduzido: precisa ficar VISÍVEL enquanto durar.
+            Quem realinha uma câmera aqui está gravando coordenadas contra um
+            terreno estimado; saber disso no momento da decisão é a diferença
+            entre um ajuste consciente e uma surpresa quando a cidade voltar.
+          */}
+          {semFotogrametria && !cenaErro && (
+            <div className="absolute right-3 top-3 z-30 flex items-center gap-2 rounded-[4px] border border-amber-400/25 bg-[#1a1712]/95 px-2.5 py-1.5 text-[10px] text-amber-200/90 shadow-xl">
+              <span>3D sem fotogrametria · entorno pelo GLB, cota estimada</span>
+              <button
+                onClick={() => recarregarCena(false)}
+                className="rounded-[3px] border border-white/15 px-1.5 py-0.5 text-white/70 hover:bg-white/10"
+              >
+                Tentar com a cidade
               </button>
             </div>
           )}
@@ -2244,13 +2620,13 @@ export default function IvmEditorPage() {
           }}
           onDoubleClick={() => setLarguraPainel(360)}
           title="Arraste para redimensionar · duplo clique para restaurar"
-          className="w-1 shrink-0 cursor-col-resize bg-[var(--ed-line)] transition-colors hover:bg-teal-400/60"
+          className="ed-divider w-1 shrink-0 cursor-col-resize bg-[var(--ed-line)] transition-colors hover:bg-teal-400/60"
         />
 
         {/* ================= INSPETOR ================= */}
         <aside
           style={{ width: larguraPainel }}
-          className="flex shrink-0 flex-col border-l border-[var(--ed-line)] bg-[var(--ed-bg)]">
+          className="ed-inspector flex shrink-0 flex-col border-l border-[var(--ed-line)] bg-[var(--ed-bg)]">
           <div className="flex h-8 shrink-0 items-center gap-1.5 border-b border-[var(--ed-line)] px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/45">
             {abaAtual?.icon}
             {abaAtual?.label}
@@ -2347,6 +2723,16 @@ export default function IvmEditorPage() {
                   const url = await upload(f);
                   if (url) aplicar(url);
                 }} />
+              <input ref={itemVideoRef} type="file" accept="video/*" className="hidden"
+                onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  e.target.value = "";
+                  const aplicar = aplicarVideoRef.current;
+                  aplicarVideoRef.current = null;
+                  if (!f || !aplicar) return;
+                  const url = await upload(f);
+                  if (url) aplicar(url);
+                }} />
 
               <Section title="Destaques">
                 <ListaRica
@@ -2363,6 +2749,7 @@ export default function IvmEditorPage() {
                   itens={lazer}
                   onItens={(n) => setEmp({ amenities: n })}
                   onEnviarFoto={pedirFotoItem}
+                  onEnviarVideo={pedirVideoItem}
                   vazio="Nenhum item de lazer ainda."
                   exemplo="Ex: Piscina com borda infinita"
                 />
@@ -2449,106 +2836,6 @@ export default function IvmEditorPage() {
             </Section>
           )}
 
-          {/* ===== Base do mundo =====
-              A fotogrametria do Google não existe em todo endereço, e onde
-              existe nem sempre serve — cidade pequena entra esticada, obra
-              recente aparece como terreno baldio. Quando for esse o caso, o
-              mapa 3D que o estúdio já modela substitui a captura por inteiro. */}
-          {tab === "local" && (
-            <Section title="Base do mundo">
-              <div className="flex gap-1">
-                {([
-                  [false, "Fotogrametria", "Captura fotorrealista do Google."],
-                  [true, "Mapa 3D (GLB)", "Modelo próprio do estúdio no lugar da captura."],
-                ] as const).map(([glb, rotulo, ajuda]) => (
-                  <button key={rotulo} title={ajuda}
-                    onClick={() => setConfig({
-                      // Sair do mapa apaga a configuração inteira, e é de
-                      // propósito: guardar uma URL inerte faz a próxima pessoa
-                      // achar que o mapa está ligado quando não está.
-                      mapa3d: glb ? (c.mapa3d ?? { url: "" }) : undefined,
-                    })}
-                    className={`flex flex-1 items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] transition-colors ${
-                      !!c.mapa3d === glb
-                        ? "border-teal-400/50 bg-teal-500/15 font-semibold text-teal-300"
-                        : "border-white/[0.08] text-white/50 hover:border-white/20 hover:text-white/85"
-                    }`}>
-                    {rotulo}
-                  </button>
-                ))}
-              </div>
-
-              {!c.mapa3d ? (
-                <p className="text-[10px] leading-relaxed text-white/25">
-                  A cena usa a captura do Google. Troque para <b>Mapa 3D</b> quando
-                  o local não tiver fotogrametria decente — ou quando o entorno
-                  precisar mostrar o projeto aprovado, e não o que existe hoje.
-                </p>
-              ) : (
-                <>
-                  <div>
-                    <label className="mb-0.5 block text-[11px] text-white/50">Mapa (GLB)</label>
-                    <div className="flex gap-1.5">
-                      <input type="text" value={c.mapa3d.url} placeholder="/uploads/mapa.glb ou URL"
-                        onChange={(e) => setConfig({ mapa3d: { ...c.mapa3d!, url: e.target.value } })}
-                        className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
-                      <button onClick={() => mapaGlbRef.current?.click()} className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20">
-                        <Upload className="h-3 w-3" />
-                      </button>
-                      <input ref={mapaGlbRef} type="file" accept=".glb,.gltf" className="hidden"
-                        onChange={async (e) => {
-                          const f = e.target.files?.[0];
-                          e.target.value = "";
-                          if (!f || !conferirPesoGlb(f)) return;
-                          const u = await upload(f);
-                          if (u) setConfig({ mapa3d: { ...c.mapa3d!, url: u } });
-                        }} />
-                    </div>
-                  </div>
-
-                  {!c.mapa3d.url && (
-                    <p className="rounded-[3px] bg-amber-400/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-200/80">
-                      Sem arquivo a cena fica <b>sem chão</b>: a fotogrametria já
-                      não é baixada e não há nada no lugar dela.
-                    </p>
-                  )}
-
-                  {/* Encaixe por NÚMEROS, não por pivô. O mapa se posiciona uma
-                      vez, a partir das coordenadas com que foi exportado, e
-                      depois é o empreendimento que se move sobre ele. */}
-                  <Slider label="Rotação" v={c.mapa3d.heading ?? 0} min={0} max={360} step={1} suffix="°"
-                    onChange={(x) => setConfig({ mapa3d: { ...c.mapa3d!, heading: x } })} />
-                  <Num label="Escala" v={c.mapa3d.scale ?? 1}
-                    onChange={(x) => setConfig({ mapa3d: { ...c.mapa3d!, scale: x } })} />
-                  <Slider label="Altitude" v={c.mapa3d.heightOffset ?? 0} min={-200} max={1500} step={0.5} suffix="m"
-                    onChange={(x) => setConfig({ mapa3d: { ...c.mapa3d!, heightOffset: x } })} />
-                  <Slider label="Mover L↔O" v={c.mapa3d.offsetEast ?? 0} min={-2000} max={2000} step={1} suffix="m"
-                    onChange={(x) => setConfig({ mapa3d: { ...c.mapa3d!, offsetEast: x } })} />
-                  <Slider label="Mover N↔S" v={c.mapa3d.offsetNorth ?? 0} min={-2000} max={2000} step={1} suffix="m"
-                    onChange={(x) => setConfig({ mapa3d: { ...c.mapa3d!, offsetNorth: x } })} />
-                  <p className="text-[10px] leading-relaxed text-white/25">
-                    A âncora é a coordenada do empreendimento, acima. A
-                    <b> altitude</b> é absoluta: sem fotogrametria não há terreno
-                    a medir, e é o próprio mapa que define a cota do chão —
-                    suba-o até o empreendimento pousar na superfície.
-                  </p>
-
-                  <label className="flex items-center gap-1.5 text-[11px] text-white/60">
-                    <input type="checkbox" checked={!!c.mapa3d.comFotogrametria}
-                      onChange={(e) => setConfig({ mapa3d: { ...c.mapa3d!, comFotogrametria: e.target.checked } })}
-                      className="accent-teal-400" />
-                    Manter a fotogrametria por baixo
-                  </label>
-                  <p className="text-[10px] leading-relaxed text-white/25">
-                    Serve para <b>conferir o encaixe</b> contra a captura real, e
-                    para mapas que cobrem só a quadra — a fotogrametria responde
-                    pelo resto do horizonte. Ligar recria a cena.
-                  </p>
-                </>
-              )}
-            </Section>
-          )}
-
           {tab === "local" && (
             <Section title="Recorte do terreno">
               <p className="text-[10px] leading-relaxed text-white/35">
@@ -2559,7 +2846,7 @@ export default function IvmEditorPage() {
 
               <label className="flex items-center gap-1.5 text-[11px] text-white/60">
                 <input type="checkbox" checked={!!c.recorteTerreno}
-                  onChange={(e) => setConfig({ recorteTerreno: e.target.checked ? { folga: 1.1 } : undefined })}
+                  onChange={(e) => setConfig({ recorteTerreno: e.target.checked ? { folga: 1 } : undefined })}
                   className="accent-teal-400" />
                 Recortar na vitrine publicada
               </label>
@@ -2568,18 +2855,57 @@ export default function IvmEditorPage() {
                 <>
                   {/* Em PORCENTAGEM, não em multiplicador: "110%" se lê de
                       imediato, "1,1×" pede uma conta. E a faixa desce abaixo de
-                      100% porque a caixa do GLB costuma ser MAIOR que a
-                      construção — marquise, beiral e platibanda inflam os
-                      extremos, e o recorte acaba comendo calçada. */}
+                      100% para permitir compensar marquise, beiral e platibanda
+                      que avancem além da área que deve ser removida. */}
                   <Slider label="Tamanho do recorte"
-                    v={Math.round((c.recorteTerreno.folga ?? 1.1) * 100)}
+                    v={Math.round((c.recorteTerreno.folga ?? 1) * 100)}
                     min={50} max={200} step={1} suffix="%"
                     onChange={(v) => setConfig({ recorteTerreno: { folga: v / 100 } })} />
                   <p className="text-[10px] leading-relaxed text-white/25">
-                    <b>100%</b> é a caixa do modelo exata. Abaixo disso o buraco
-                    encolhe para dentro dela; acima, sobra terreno recortado em
+                    <b>100%</b> é o contorno do modelo. Abaixo disso o buraco
+                    encolhe para dentro dele; acima, sobra terreno recortado em
                     volta.
                   </p>
+
+                  {/* A falta de contorno não aparece na cena: o recorte
+                      simplesmente não desenha. Sem este aviso, o sintoma é
+                      "liguei e não aconteceu nada", sem pista do motivo. */}
+                  {(recortePegada === "sem-pegada" || recortePegada === "ilegivel") && (
+                    <div className="space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                      <p className="text-[11px] font-semibold text-amber-300">
+                        {recortePegada === "sem-pegada"
+                          ? "Este modelo não tem contorno — o recorte não sai."
+                          : "Não foi possível ler o contorno deste modelo."}
+                      </p>
+                      <p className="text-[10px] leading-relaxed text-white/60">
+                        {recortePegada === "sem-pegada" ? (
+                          <>
+                            A silhueta é calculada sobre a malha <b>durante a
+                            importação</b> e gravada dentro do <code>.glb</code>.
+                            GLBs enviados prontos, ou importados antes deste
+                            recurso, não a possuem — e reenviar o mesmo arquivo
+                            não a cria.{" "}
+                            <b>Reimporte a pasta</b> pelo botão de pasta: a
+                            conversão calcula a silhueta e grava dentro do arquivo.
+                            Se você já não tem a pasta, rode{" "}
+                            <code>npm run pegada -- caminho/modelo.glb</code> na
+                            sua máquina e reenvie o <code>.pegada.glb</code> gerado.
+                          </>
+                        ) : (
+                          <>
+                            O arquivo não respondeu à leitura do cabeçalho. Se
+                            ele está num domínio externo, o servidor precisa
+                            liberar CORS e requisições <code>Range</code>.
+                          </>
+                        )}
+                      </p>
+                      <p className="text-[10px] leading-relaxed text-white/40">
+                        Enquanto isso o recorte fica desligado de propósito: usar
+                        a caixa do modelo devolveria o quadrado que o contorno
+                        veio corrigir.
+                      </p>
+                    </div>
+                  )}
 
                   {/* A pré-visualização é temporária e não é gravada: ela existe
                       para conferir, não para trabalhar com o buraco aberto. */}
@@ -2609,10 +2935,10 @@ export default function IvmEditorPage() {
                   )}
 
                   <p className="text-[10px] leading-relaxed text-white/25">
-                    A pegada é <b>medida no GLB</b> a cada carga, então acompanha
-                    troca de modelo e de encaixe sozinha. É a <b>caixa</b> do
-                    modelo, não a silhueta: a forma real do prédio não existe nos
-                    metadados do arquivo.
+                    A pegada é <b>calculada sobre a malha</b> durante a importação
+                    e acompanha troca de modelo e de encaixe sozinha. O navegador
+                    lê o contorno pronto sem precisar decodificar novamente toda
+                    a geometria.
                     {!c.modelUrl && (
                       <span className="text-amber-300"> Sem modelo 3D não há o que medir — o recorte não acontece.</span>
                     )}
@@ -2793,8 +3119,11 @@ export default function IvmEditorPage() {
                     <div className="mt-1.5 space-y-1">
                       <button
                         onClick={async () => {
-                          if (previewRecorte) {
+                          // Medir precisa do terreno NO LUGAR; qualquer uma
+                          // das prévias abre o buraco e a medição cai no vazio.
+                          if (previewRecorte || previewAreas) {
                             setPreviewRecorte(false);
+                            setPreviewAreas(false);
                             setSaveMsg("Recorte ocultado. Aguarde o terreno reaparecer e clique novamente para criar os pivôs.");
                             return;
                           }
@@ -2814,7 +3143,7 @@ export default function IvmEditorPage() {
                             })),
                           });
                           setViaAlturaId(via.id);
-                          setPreviewRecorte(true);
+                          setPreviewAreas(true);
                           const min = Math.min(...cotas);
                           const max = Math.max(...cotas);
                           setSaveMsg(`Cotas medidas: ${min.toFixed(1)} a ${max.toFixed(1)} m (salve para aplicar)`);
@@ -2844,7 +3173,7 @@ export default function IvmEditorPage() {
                               setTracandoArea(null);
                               setAreaAlturaId(null);
                               setViaAlturaId(ativar ? via.id : null);
-                              if (ativar) setPreviewRecorte(true);
+                              if (ativar) setPreviewAreas(true);
                             }}
                             className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
                               viaAlturaId === via.id
@@ -2900,14 +3229,46 @@ export default function IvmEditorPage() {
               pivô manual, recorte da fotogrametria), com contorno fechado
               livre em vez de fita de largura constante. */}
           {tab === "local" && (
-            <Section title={`Superfícies (${superficies.length})`} aberta={false}>
+            <Section title={`Plataformas e superfícies (${areasPintadas.length})`} aberta={false}>
               <div>
                 <p className="mb-2 text-[9px] leading-relaxed text-white/30">
-                  Gramado, pátio, espelho d'água. Substituem o borrão da
-                  fotogrametria em volta do prédio por piso limpo e texturado.
+                  Recortam a fotogrametria e colocam piso com fechamento lateral
+                  no lugar. A plataforma pode seguir o relevo, ser nivelada e
+                  subir ou descer inteira para encontrar a base do prédio.
                 </p>
 
                 <button
+                  onClick={criarPlataformaDoModelo}
+                  className="mb-1.5 flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-amber-300">
+                  <Box className="h-3.5 w-3.5" />
+                  Criar plataforma pela base do modelo
+                </button>
+
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button
+                    onClick={() => {
+                      const id = genId("plataforma");
+                      setSuperficies((atual) => [...atual, {
+                        id,
+                        nome: "Plataforma do empreendimento",
+                        tipo: "concreto",
+                        plataforma: true,
+                        folgaCorte: -0.35,
+                        ajusteAltura: 0,
+                        pontos: [],
+                      }]);
+                      if (c.recorteTerreno) setConfig({ recorteTerreno: undefined });
+                      setAbertoEntorno({ tipo: "area", id });
+                      setTracandoVia(null);
+                      setViaAlturaId(null);
+                      setAreaAlturaId(null);
+                      setTracandoArea(id);
+                    }}
+                    className="flex items-center justify-center gap-1 rounded-[3px] border border-amber-400/35 px-2 py-1.5 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/10">
+                    <Crosshair className="h-3 w-3" />
+                    Desenhar plataforma
+                  </button>
+                  <button
                   onClick={() => {
                     const id = genId("area");
                     setSuperficies((atual) => [...atual, { id, tipo: "grama", pontos: [] }]);
@@ -2917,21 +3278,31 @@ export default function IvmEditorPage() {
                     setAreaAlturaId(null);
                     setTracandoArea(id);
                   }}
-                  className="flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-teal-500 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
-                  <Plus className="h-3.5 w-3.5" />
-                  Nova superfície
-                </button>
+                  className="flex items-center justify-center gap-1 rounded-[3px] border border-teal-400/35 px-2 py-1.5 text-[10px] font-semibold text-teal-200 hover:bg-teal-400/10">
+                    <Plus className="h-3 w-3" />
+                    Superfície livre
+                  </button>
+                </div>
 
-                {!superficies.length && (
+                {!areasPintadas.length && (
                   <p className="mt-1.5 rounded-[3px] border border-dashed border-white/10 px-2 py-3 text-center text-[10px] text-white/30">
                     Nenhuma superfície ainda.
                   </p>
                 )}
 
-                {superficies.map((area) => {
+                {areasPintadas.map((area) => {
                   const aberto = abertoEntorno?.tipo === "area" && abertoEntorno.id === area.id;
                   const temCota = area.pontos.length >= 3
                     && area.pontos.every((p) => Number.isFinite(p.altura));
+                  const cotasArea = area.pontos
+                    .map((p) => p.altura)
+                    .filter((h): h is number => typeof h === "number" && Number.isFinite(h));
+                  const cotaMedia = cotasArea.length
+                    ? cotasArea.reduce((s, h) => s + h, 0) / cotasArea.length
+                    : null;
+                  const desnivel = cotasArea.length
+                    ? Math.max(...cotasArea) - Math.min(...cotasArea)
+                    : null;
                   const tracando = tracandoArea === area.id;
                   const ajustando = areaAlturaId === area.id;
                   return (
@@ -2944,19 +3315,26 @@ export default function IvmEditorPage() {
                     <LinhaEntorno
                       cor={area.cor ?? area.tinta ?? COR_SUPERFICIE[area.tipo] ?? "#4e7c42"}
                       nome={area.nome}
-                      vazio={`Superfície de ${TIPOS_SUPERFICIE.find((t) => t.id === area.tipo)?.nome.toLowerCase() ?? "piso"}`}
+                      vazio={area.plataforma
+                        ? "Plataforma do empreendimento"
+                        : `Superfície de ${TIPOS_SUPERFICIE.find((t) => t.id === area.tipo)?.nome.toLowerCase() ?? "piso"}`}
                       aberto={aberto}
                       ativo={tracando || ajustando}
                       onClick={() => abrirEntorno("area", area.id)}
                       selos={
                         <>
+                          {area.contornoAproximado && !tracando && (
+                            <SeloEntorno tom="pendente">contorno aproximado</SeloEntorno>
+                          )}
                           {tracando && <SeloEntorno tom="ativo">contornando</SeloEntorno>}
                           {ajustando && <SeloEntorno tom="ativo">ajustando</SeloEntorno>}
                           {!tracando && !ajustando && (
                             area.pontos.length < 3
                               ? <SeloEntorno tom="pendente">sem contorno</SeloEntorno>
                               : temCota
-                                ? <SeloEntorno tom="pronto">recortando</SeloEntorno>
+                                ? <SeloEntorno tom="pronto">
+                                    {area.plataforma && (desnivel ?? 0) <= 0.02 ? "nivelada" : "recortando"}
+                                  </SeloEntorno>
                                 : <SeloEntorno tom="neutro">drapejada</SeloEntorno>
                           )}
                         </>
@@ -2965,6 +3343,13 @@ export default function IvmEditorPage() {
 
                     {aberto && (
                     <div className="border-t border-white/[0.06] p-1.5">
+                    {area.contornoAproximado && (
+                      <p className="mb-1.5 rounded-[3px] border border-amber-400/25 bg-amber-400/10 px-2 py-1.5 text-[9px] leading-relaxed text-amber-200/80">
+                        Este GLB não traz a silhueta real. A plataforma nasceu da
+                        caixa retangular do modelo; confira o limite no mapa e
+                        redesenhe se estiver cobrindo rua ou terreno vizinho.
+                      </p>
+                    )}
                     <div className="flex items-center gap-1.5">
                       <input value={area.nome ?? ""} placeholder="Sem nome"
                         onChange={(e) => patchArea(area.id, { nome: e.target.value })}
@@ -3011,6 +3396,8 @@ export default function IvmEditorPage() {
                             // não tem altura, e altura velha em posição nova
                             // mente.
                             pontos: pts.map((p) => ({ lat: p.lat, lng: p.lng })),
+                            ajusteAltura: 0,
+                            contornoAproximado: undefined,
                           })}
                           className="h-56 w-full overflow-hidden rounded-[4px]"
                         />
@@ -3087,8 +3474,9 @@ export default function IvmEditorPage() {
                       <div className="mt-1.5 space-y-1">
                         <button
                           onClick={async () => {
-                            if (previewRecorte) {
+                            if (previewRecorte || previewAreas) {
                               setPreviewRecorte(false);
+                              setPreviewAreas(false);
                               setSaveMsg("Recorte ocultado. Espere o terreno reaparecer e clique de novo para medir.");
                               return;
                             }
@@ -3100,9 +3488,10 @@ export default function IvmEditorPage() {
                             }
                             patchArea(area.id, {
                               pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
+                              ajusteAltura: 0,
                             });
                             setAreaAlturaId(area.id);
-                            setPreviewRecorte(true);
+                            setPreviewAreas(true);
                             setSaveMsg(`Cotas medidas: ${Math.min(...cotas).toFixed(1)} a ${Math.max(...cotas).toFixed(1)} m (salve para aplicar)`);
                           }}
                           className="w-full rounded-[3px] bg-teal-500 py-1 text-[10px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
@@ -3113,6 +3502,78 @@ export default function IvmEditorPage() {
 
                         {area.pontos.every((p) => Number.isFinite(p.altura)) && (
                           <>
+                            <div className="space-y-1 rounded-[3px] border border-amber-400/20 bg-amber-400/[0.04] p-1.5">
+                              <NumIn
+                                label="Subir/descer conjunto (m)"
+                                v={area.ajusteAltura ?? 0}
+                                step={0.1}
+                                casas={2}
+                                onChange={(x) => {
+                                  const anterior = area.ajusteAltura ?? 0;
+                                  const proximo = Math.max(-100, Math.min(100, x));
+                                  const delta = proximo - anterior;
+                                  patchArea(area.id, {
+                                    ajusteAltura: proximo,
+                                    pontos: area.pontos.map((p) => ({
+                                      ...p,
+                                      altura: (p.altura as number) + delta,
+                                    })),
+                                  });
+                                  setPreviewAreas(true);
+                                }}
+                              />
+                              <div className={`grid gap-1 ${area.plataforma ? "grid-cols-2" : "grid-cols-1"}`}>
+                                <button
+                                  onClick={() => {
+                                    if (cotaMedia == null) return;
+                                    const cota = Math.round(cotaMedia * 100) / 100;
+                                    patchArea(area.id, {
+                                      ajusteAltura: 0,
+                                      pontos: area.pontos.map((p) => ({ ...p, altura: cota })),
+                                    });
+                                    setPreviewAreas(true);
+                                    setSaveMsg(`Superfície nivelada em ${cota.toFixed(2)} m.`);
+                                  }}
+                                  className="rounded-[3px] border border-white/10 py-1 text-[9px] font-semibold text-white/60 hover:border-white/25 hover:text-white">
+                                  Nivelar pela média
+                                </button>
+                                {area.plataforma && (
+                                  <button
+                                    onClick={() => {
+                                      const cota = sceneRef.current?.cotaBaseDoModelo();
+                                      if (cota == null) {
+                                        setSaveMsg("Ainda não consegui ler a base do GLB. Espere o modelo terminar de carregar e tente novamente.");
+                                        return;
+                                      }
+                                      if (cotaMedia != null && Math.abs(cota - cotaMedia) > 30) {
+                                        setSaveMsg(
+                                          `A base geométrica está ${(cota - cotaMedia).toFixed(1)} m longe do piso. O GLB pode conter subsolo ou a medição pode ter acertado um telhado; ajuste manualmente.`,
+                                        );
+                                        return;
+                                      }
+                                      // Três centímetros para baixo evitam z-fighting quando o
+                                      // GLB também traz uma laje exatamente na cota mínima.
+                                      const arredondada = Math.round((cota - 0.03) * 100) / 100;
+                                      patchArea(area.id, {
+                                        ajusteAltura: 0,
+                                        pontos: area.pontos.map((p) => ({ ...p, altura: arredondada })),
+                                      });
+                                      setPreviewAreas(true);
+                                      setSaveMsg(`Plataforma alinhada 3 cm abaixo da base geométrica do modelo: ${arredondada.toFixed(2)} m.`);
+                                    }}
+                                    className="rounded-[3px] border border-amber-400/35 py-1 text-[9px] font-semibold text-amber-200 hover:bg-amber-400/10">
+                                    Encostar no modelo
+                                  </button>
+                                )}
+                              </div>
+                              <p className="text-[9px] leading-relaxed text-white/35">
+                                Cota média <b className="text-white/60">{cotaMedia?.toFixed(2)} m</b>
+                                {desnivel != null && <> · desnível <b className="text-white/60">{desnivel.toFixed(2)} m</b></>}.
+                                {area.plataforma
+                                  ? " O recorte começa 35 cm para dentro do piso para esconder a emenda lateral."
+                                  : " Use folga negativa para o piso passar sobre a emenda lateral."}
+                              </p>
+                            </div>
                             <button
                               onClick={() => {
                                 const ativar = areaAlturaId !== area.id;
@@ -3120,7 +3581,7 @@ export default function IvmEditorPage() {
                                 setTracandoArea(null);
                                 setViaAlturaId(null);
                                 setAreaAlturaId(ativar ? area.id : null);
-                                if (ativar) setPreviewRecorte(true);
+                                if (ativar) setPreviewAreas(true);
                               }}
                               className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
                                 areaAlturaId === area.id
@@ -3129,14 +3590,41 @@ export default function IvmEditorPage() {
                               }`}>
                               {areaAlturaId === area.id ? "Concluir ajuste" : "Ajustar no 3D"}
                             </button>
+                            {/* O modo do arraste como BOTAO, e nao so como Shift: um
+                                modificador escondido nao se descobre, e quem nao o
+                                conhecesse concluia que o pivo so subia e descia. */}
+                            {areaAlturaId === area.id && (
+                              <div>
+                                <label className="mb-0.5 block text-[10px] text-white/45">
+                                  Arrastar o pivô
+                                </label>
+                                <div className="flex gap-1">
+                                  {([
+                                    ["altura", "↕ Altura"],
+                                    ["plano", "↔ Lados"],
+                                  ] as const).map(([id, rotulo]) => (
+                                    <button key={id}
+                                      onClick={() => setModoPivoArea(id)}
+                                      className={`flex-1 rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                        modoPivoArea === id
+                                          ? "border-lime-400/60 bg-lime-400/15 text-lime-200"
+                                          : "border-white/10 text-white/55 hover:border-white/25"
+                                      }`}>
+                                      {rotulo}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             <NumIn label="Folga do corte (m)" v={area.folgaCorte ?? 0}
                               step={0.1} casas={2}
                               onChange={(x) => patchArea(area.id, {
                                 folgaCorte: Math.max(-5, Math.min(5, x)),
                               })} />
                             <p className="text-[9px] leading-relaxed text-white/30">
-                              Arraste o pivô <b className="text-lime-300">verde</b> para
-                              cima e para baixo. <b>Shift</b> arrasta no plano do chão.
+                              Arraste o pivô <b className="text-lime-300">verde</b> no
+                              modo escolhido acima. <b>Shift</b> inverte o modo sem
+                              largar o mouse.
                             </p>
                           </>
                         )}
@@ -3145,6 +3633,242 @@ export default function IvmEditorPage() {
                     </div>
                     )}
                   </div>
+                  );
+                })}
+              </div>
+            </Section>
+          )}
+
+          {/* CORTE MANUAL: a mesma máquina da superfície (contorno no mapa,
+              cota medida uma vez, pivô que sobe, desce e anda no plano), mas
+              sem pintar piso nenhum. Existe porque o recorte automático nasce
+              da silhueta do GLB — cobre exatamente a geometria e depende de o
+              arquivo trazer a anotação. Quando esse recorte não serve, este
+              aqui é o controle na mão. */}
+          {tab === "local" && (
+            <Section title={`Cortes manuais (${cortes.length})`} aberta={false}>
+              <div>
+                <p className="mb-2 text-[9px] leading-relaxed text-white/30">
+                  Abre um buraco na fotogrametria com o contorno que você
+                  desenhar, e não pinta nada por cima — quem ocupa o lugar é o
+                  próprio modelo. Use quando o recorte automático não pegar a
+                  área certa.
+                </p>
+
+                {/* Os dois recortes são independentes e SOMAM. Quem desenhou um
+                    corte à mão quase sempre o fez porque o automático não
+                    servia; deixá-los ligados juntos empilha dois buracos. */}
+                {cortes.length > 0 && c.recorteTerreno && (
+                  <div className="mb-2 space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                    <p className="text-[10px] leading-relaxed text-amber-200/90">
+                      O <b>recorte automático</b> também está ligado. Os dois se
+                      somam na vitrine, um por cima do outro.
+                    </p>
+                    <button
+                      onClick={() => setConfig({ recorteTerreno: undefined })}
+                      className="w-full rounded-[3px] border border-amber-400/50 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-400/15">
+                      Desligar o recorte automático
+                    </button>
+                  </div>
+                )}
+
+                <button
+                  onClick={() => {
+                    const id = genId("corte");
+                    setSuperficies((atual) => [
+                      ...atual,
+                      { id, tipo: "grama", pontos: [], somenteCorte: true },
+                    ]);
+                    setAbertoEntorno({ tipo: "area", id });
+                    setTracandoVia(null);
+                    setViaAlturaId(null);
+                    setAreaAlturaId(null);
+                    setTracandoArea(id);
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-[3px] bg-amber-400 px-3 py-1.5 text-[11px] font-semibold text-[#0a0a0a] hover:bg-amber-300">
+                  <Scissors className="h-3.5 w-3.5" />
+                  Novo corte manual
+                </button>
+
+                {!cortes.length && (
+                  <p className="mt-1.5 rounded-[3px] border border-dashed border-white/10 px-2 py-3 text-center text-[10px] text-white/30">
+                    Nenhum corte manual ainda.
+                  </p>
+                )}
+
+                {cortes.map((area) => {
+                  const aberto = abertoEntorno?.tipo === "area" && abertoEntorno.id === area.id;
+                  const temCota = area.pontos.length >= 3
+                    && area.pontos.every((p) => Number.isFinite(p.altura));
+                  const tracando = tracandoArea === area.id;
+                  const ajustando = areaAlturaId === area.id;
+                  return (
+                    <div key={area.id}
+                      className={`mt-1.5 overflow-hidden rounded-[4px] border transition-colors ${
+                        tracando || ajustando
+                          ? "border-amber-400/60 ring-1 ring-amber-400/25"
+                          : aberto ? "border-white/20" : "border-white/[0.08]"
+                      }`}>
+                      <LinhaEntorno
+                        cor="#ffb020"
+                        nome={area.nome}
+                        vazio="Corte manual"
+                        aberto={aberto}
+                        ativo={tracando || ajustando}
+                        onClick={() => abrirEntorno("area", area.id)}
+                        selos={
+                          <>
+                            {tracando && <SeloEntorno tom="ativo">contornando</SeloEntorno>}
+                            {ajustando && <SeloEntorno tom="ativo">ajustando</SeloEntorno>}
+                            {!tracando && !ajustando && (
+                              area.pontos.length < 3
+                                ? <SeloEntorno tom="pendente">sem contorno</SeloEntorno>
+                                : temCota
+                                  ? <SeloEntorno tom="pronto">recortando</SeloEntorno>
+                                  : <SeloEntorno tom="pendente">sem cota</SeloEntorno>
+                            )}
+                          </>
+                        }
+                      />
+
+                      {aberto && (
+                        <div className="border-t border-white/[0.06] p-1.5">
+                          <div className="flex items-center gap-1.5">
+                            <input value={area.nome ?? ""} placeholder="Sem nome"
+                              onChange={(e) => patchArea(area.id, { nome: e.target.value })}
+                              className={`${CAMPO} min-w-0 flex-1`} />
+                            <button onClick={() => {
+                                setTracandoVia(null);
+                                setViaAlturaId(null);
+                                setAreaAlturaId(null);
+                                setTracandoArea(tracando ? null : area.id);
+                              }}
+                              title="Desenhar o contorno no mapa"
+                              className={`shrink-0 rounded-[3px] p-1 ${
+                                tracando ? "bg-amber-400 text-[#0a0a0a]" : "text-white/40 hover:bg-white/10 hover:text-white"
+                              }`}>
+                              <Crosshair className="h-3 w-3" />
+                            </button>
+                            <button onClick={() => {
+                                setSuperficies((atual) => atual.filter((x) => x.id !== area.id));
+                                if (tracandoArea === area.id) setTracandoArea(null);
+                                if (areaAlturaId === area.id) setAreaAlturaId(null);
+                              }}
+                              className="shrink-0 rounded-[3px] p-1 text-white/30 hover:bg-red-500/15 hover:text-red-300">
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+
+                          {tracando && (
+                            <div className="mt-1.5">
+                              <p className="mb-1 rounded-[3px] bg-amber-400/10 px-2 py-1.5 text-[10px] leading-relaxed text-amber-200/80">
+                                Clique no mapa marcando os cantos. O contorno fecha
+                                sozinho do último ponto ao primeiro — não repita o
+                                inicial. <b>Botão direito</b> num ponto remove.
+                              </p>
+                              <MapaEntorno
+                                centro={{ lat: c.lat ?? emp.lat, lng: c.lng ?? emp.lng }}
+                                pois={[]}
+                                cor="#ffb020"
+                                fechado
+                                tracado={area.pontos}
+                                editandoTracado
+                                onTracado={(pts) => patchArea(area.id, {
+                                  pontos: pts.map((p) => ({ lat: p.lat, lng: p.lng })),
+                                })}
+                                className="h-56 w-full overflow-hidden rounded-[4px]"
+                              />
+                            </div>
+                          )}
+
+                          {area.pontos.length >= 3 && (
+                            <div className="mt-1.5 space-y-1.5 rounded-[3px] border border-white/[0.06] p-1.5">
+                              <button
+                                onClick={async () => {
+                                  if (previewRecorte || previewAreas) {
+                                    setPreviewRecorte(false);
+                                    setPreviewAreas(false);
+                                    setSaveMsg("Recorte ocultado. Espere o terreno reaparecer e clique de novo para medir.");
+                                    return;
+                                  }
+                                  setSaveMsg(`Medindo o terreno de ${area.nome || "corte"}...`);
+                                  const cotas = await sceneRef.current?.medirCotas(area.pontos);
+                                  if (!cotas) {
+                                    setSaveMsg("Erro: não consegui medir o terreno. Aproxime a câmera da área, espere os tiles e tente de novo.");
+                                    return;
+                                  }
+                                  patchArea(area.id, {
+                                    pontos: area.pontos.map((p, i) => ({ ...p, altura: cotas[i] })),
+                                  });
+                                  setAreaAlturaId(area.id);
+                                  setPreviewAreas(true);
+                                  setSaveMsg(`Cotas medidas: ${Math.min(...cotas).toFixed(1)} a ${Math.max(...cotas).toFixed(1)} m (salve para aplicar)`);
+                                }}
+                                className="w-full rounded-[3px] bg-teal-500 py-1 text-[10px] font-semibold text-[#0a0a0a] hover:bg-teal-400">
+                                {temCota ? "Remedir o terreno" : "Medir terreno e criar pivôs"}
+                              </button>
+
+                              {temCota && (
+                                <>
+                                  <button
+                                    onClick={() => {
+                                      const ativar = areaAlturaId !== area.id;
+                                      setTracandoVia(null);
+                                      setTracandoArea(null);
+                                      setViaAlturaId(null);
+                                      setAreaAlturaId(ativar ? area.id : null);
+                                      if (ativar) setPreviewAreas(true);
+                                    }}
+                                    className={`w-full rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                      areaAlturaId === area.id
+                                        ? "border-amber-400/60 bg-amber-400/15 text-amber-200"
+                                        : "border-white/10 text-white/60 hover:border-white/25"
+                                    }`}>
+                                    {areaAlturaId === area.id ? "Concluir ajuste" : "Ajustar no 3D"}
+                                  </button>
+                                  {/* O modo do arraste como BOTAO, e nao so como Shift: um
+                                      modificador escondido nao se descobre, e quem nao o
+                                      conhecesse concluia que o pivo so subia e descia. */}
+                                  {areaAlturaId === area.id && (
+                                    <div>
+                                      <label className="mb-0.5 block text-[10px] text-white/45">
+                                        Arrastar o pivô
+                                      </label>
+                                      <div className="flex gap-1">
+                                        {([
+                                          ["altura", "↕ Altura"],
+                                          ["plano", "↔ Lados"],
+                                        ] as const).map(([id, rotulo]) => (
+                                          <button key={id}
+                                            onClick={() => setModoPivoArea(id)}
+                                            className={`flex-1 rounded-[3px] border py-1 text-[10px] font-semibold ${
+                                              modoPivoArea === id
+                                                ? "border-lime-400/60 bg-lime-400/15 text-lime-200"
+                                                : "border-white/10 text-white/55 hover:border-white/25"
+                                            }`}>
+                                            {rotulo}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <NumIn label="Folga do corte (m)" v={area.folgaCorte ?? 0}
+                                    step={0.1} casas={2}
+                                    onChange={(x) => patchArea(area.id, {
+                                      folgaCorte: Math.max(-5, Math.min(5, x)),
+                                    })} />
+                                  <p className="text-[9px] leading-relaxed text-white/30">
+                                    Arraste o pivô <b className="text-lime-300">verde</b> no
+                                    modo escolhido acima. <b>Shift</b> inverte o modo sem
+                                    largar o mouse.
+                                  </p>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
               </div>
@@ -3194,7 +3918,8 @@ export default function IvmEditorPage() {
                   </div>
                   <p className="text-[10px] leading-relaxed text-white/35">
                     Arraste a alça no modelo. <b>Ctrl</b> encaixa em passos redondos
-                    (1 m, 15°, 0,05) e <b>Shift</b> dá ajuste fino.
+                    (1 m, 15°, 0,05) e <b>Shift</b> dá ajuste fino — pode ser
+                    apertado e solto <i>no meio</i> do arraste, sem o modelo saltar.
                   </p>
                   <p className="text-[10px] leading-relaxed text-white/25">
                     <b>Alt + botão do meio</b> reposiciona o pivô no ponto clicado —
@@ -3219,19 +3944,232 @@ export default function IvmEditorPage() {
                   <input type="text" value={c.modelUrl ?? ""} placeholder="/models/arquivo.glb ou URL"
                     onChange={(e) => setConfig({ modelUrl: e.target.value })}
                     className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
-                  <button onClick={() => glbRef.current?.click()} className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20">
+                  <button onClick={() => glbRef.current?.click()} disabled={importandoPasta}
+                    title="Enviar um .glb pronto"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
                     <Upload className="h-3 w-3" />
+                  </button>
+                  <button onClick={() => pastaRef.current?.click()} disabled={importandoPasta}
+                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                    {importandoPasta
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <FolderUp className="h-3 w-3" />}
                   </button>
                   <input ref={glbRef} type="file" accept=".glb" className="hidden"
                     onChange={async (e) => {
                       const f = e.target.files?.[0];
                       e.target.value = ""; // permite reenviar o mesmo arquivo
                       if (!f || !conferirPesoGlb(f)) return;
-                      const u = await upload(f);
+                      const u = await uploadGlb(f);
+                      if (u) setConfig({ modelUrl: u });
+                    }} />
+                  <input ref={pastaRef} type="file" multiple className="hidden" {...ATRIBUTOS_PASTA}
+                    onChange={async (e) => {
+                      // COPIA antes de limpar: `value = ""` esvazia o proprio
+                      // FileList, e guardar so a referencia deixava a lista
+                      // vazia na hora de usar.
+                      const arquivos = Array.from(e.target.files ?? []);
+                      e.target.value = ""; // permite reenviar a mesma pasta
+                      const u = await importarPasta(arquivos);
                       if (u) setConfig({ modelUrl: u });
                     }} />
                 </div>
+                {/* O andamento também vai para a barra do topo, mas ela fica
+                    longe do botão: numa importação de minutos, sem sinal aqui
+                    o clique parece não ter feito nada. */}
+                {importandoPasta ? (
+                  <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-relaxed text-teal-300">
+                    <Loader2 className="mt-px h-3 w-3 shrink-0 animate-spin" />
+                    {saveMsg || "Importando..."}
+                  </p>
+                ) : (
+                  <p className="mt-1 text-[10px] leading-relaxed text-white/30">
+                    A <b>pasta</b> aceita a exportação crua do 3ds Max
+                    (<code>.gltf</code> + <code>.bin</code> + texturas) e devolve um{" "}
+                    <code>.glb</code> único, já texturizado, compactado e com o
+                    contorno para o recorte. A conversão roda aqui no navegador,
+                    então funciona igual no site publicado. O envio direto espera
+                    um <code>.glb</code> pronto.
+                  </p>
+                )}
               </div>
+            </Section>
+          )}
+
+          {tab === "modelo" && (
+            <Section title="Mini mapa (sem cidade 3D)" aberta={false}>
+              <p className="text-[10px] leading-relaxed text-white/35">
+                GLB de terreno/quadra que entra no lugar da fotogrametria quando a
+                cidade 3D é desligada. Sem ele, esse modo deixa o prédio sobre um
+                fundo liso. Opcional — vazio, nada muda.
+              </p>
+              {/* O preview vem ANTES do resto, como no modo noturno: com a
+                  cidade ligada o mini mapa não é desenhado, e mexer nos sliders
+                  abaixo não mudaria um pixel na tela. */}
+              <button
+                onClick={() => setPreviewEstudio((v) => !v)}
+                className={`flex w-full items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors ${
+                  previewEstudio
+                    ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
+                    : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
+                }`}>
+                {previewEstudio
+                  ? <><Globe className="h-3.5 w-3.5" /> Voltar à cidade 3D</>
+                  : <><MapIcon className="h-3.5 w-3.5" /> Pré-visualizar sem a cidade</>}
+              </button>
+              {!previewEstudio && (
+                <p className="text-[10px] leading-relaxed text-white/30">
+                  Ligue o preview para ver o mini mapa e o efeito dos ajustes abaixo.
+                </p>
+              )}
+              <div>
+                <label className="mb-0.5 block text-[11px] text-white/50">Asset (GLB)</label>
+                <div className="flex gap-1.5">
+                  <input type="text" value={c.mapaUrl ?? ""} placeholder="/models/terreno.glb ou URL"
+                    onChange={(e) => setConfig({ mapaUrl: e.target.value })}
+                    className="min-w-0 flex-1 rounded-md bg-white/10 px-2 py-1 font-mono text-[11px] outline-none ring-1 ring-white/10 focus:ring-teal-400/50" />
+                  <button onClick={() => mapaGlbRef.current?.click()} disabled={importandoPasta}
+                    title="Enviar um .glb pronto"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                    <Upload className="h-3 w-3" />
+                  </button>
+                  <button onClick={() => mapaPastaRef.current?.click()} disabled={importandoPasta}
+                    title="Importar a pasta exportada do 3ds Max (.gltf + .bin + texturas)"
+                    className="rounded-md bg-white/10 px-2 py-1 hover:bg-white/20 disabled:opacity-40">
+                    {importandoPasta
+                      ? <Loader2 className="h-3 w-3 animate-spin" />
+                      : <FolderUp className="h-3 w-3" />}
+                  </button>
+                  <input ref={mapaPastaRef} type="file" multiple className="hidden" {...ATRIBUTOS_PASTA}
+                    onChange={async (e) => {
+                      // COPIA antes de limpar: `value = ""` esvazia o proprio
+                      // FileList, e guardar so a referencia deixava a lista
+                      // vazia na hora de usar.
+                      const arquivos = Array.from(e.target.files ?? []);
+                      e.target.value = ""; // permite reenviar a mesma pasta
+                      const u = await importarPasta(arquivos);
+                      // Mesmo motivo do envio direto: quem acabou de importar o
+                      // mini mapa quer ver onde ele caiu.
+                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                    }} />
+                  <input ref={mapaGlbRef} type="file" accept=".glb" className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = ""; // permite reenviar o mesmo arquivo
+                      if (!f || !conferirPesoGlb(f)) return;
+                      const u = await uploadGlb(f);
+                      // Subir o mini mapa já liga o preview: quem acabou de
+                      // enviar quer ver onde ele caiu, e com a cidade ligada
+                      // não veria nada acontecer.
+                      if (u) { setMapaErro(null); setConfig({ mapaUrl: u }); setPreviewEstudio(true); }
+                    }} />
+                </div>
+                {importandoPasta && (
+                  <p className="mt-1 flex items-start gap-1.5 text-[10px] leading-relaxed text-teal-300">
+                    <Loader2 className="mt-px h-3 w-3 shrink-0 animate-spin" />
+                    {saveMsg || "Importando..."}
+                  </p>
+                )}
+              </div>
+              {mapaErro && (
+                <div className="space-y-1 rounded-[4px] border border-amber-400/30 bg-amber-400/10 p-2">
+                  <p className="text-[11px] font-semibold text-amber-300">
+                    O mini mapa saiu da cena — o GLB quebrou o render.
+                  </p>
+                  <p className="text-[10px] leading-relaxed text-white/60">
+                    Quase sempre é <b>material com textura numa malha sem UV</b>: o
+                    Cesium gera o shader esperando a coordenada de textura, ela não
+                    existe, e a compilação falha. Reexporte com o UV desdobrado, ou
+                    troque as texturas por cor sólida no terreno.
+                  </p>
+                  <p className="break-all font-mono text-[9px] leading-relaxed text-white/35">
+                    {mapaErro}
+                  </p>
+                  <button onClick={() => setMapaErro(null)}
+                    className="text-[10px] text-white/45 underline hover:text-white/80">
+                    Dispensar
+                  </button>
+                </div>
+              )}
+              {c.mapaUrl && (
+                <>
+                  {/* Pivô e cadeado, como no empreendimento. O par de botões
+                      fica junto porque um é o antídoto do outro: o cadeado
+                      existe para o encaixe acertado não ser desfeito por um
+                      arraste distraído depois. */}
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => setEditandoMapa((v) => !v)}
+                      disabled={mapaTravado || !previewEstudio}
+                      title={mapaTravado
+                        ? "Encaixe do mini mapa travado — destrave para mover"
+                        : !previewEstudio
+                          ? "Ligue o preview sem a cidade para ver o mini mapa"
+                          : "Mostra as alças de mover/girar/escalar no mini mapa (esconde o pivô do empreendimento)"}
+                      className={`flex flex-1 items-center justify-center gap-1.5 rounded-[3px] border py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+                        pivoNoMapa
+                          ? "border-teal-400/50 bg-teal-500/15 text-teal-300 hover:bg-teal-500/25"
+                          : "border-white/[0.08] text-white/55 hover:border-white/25 hover:text-white/85"
+                      }`}>
+                      <Move className="h-3.5 w-3.5" />
+                      {pivoNoMapa ? "Editando na cena" : "Editar na cena"}
+                    </button>
+                    <button
+                      onClick={() => setConfig({ mapaTravado: !mapaTravado })}
+                      title={mapaTravado
+                        ? "Encaixe travado — clique para destravar"
+                        : "Travar o encaixe do mini mapa"}
+                      className={`flex items-center gap-1.5 rounded-[3px] border px-2 text-[11px] transition-colors ${
+                        mapaTravado
+                          ? "border-amber-400/40 bg-amber-400/15 text-amber-300 hover:bg-amber-400/25"
+                          : "border-white/[0.08] text-white/40 hover:border-white/25 hover:text-white/80"
+                      }`}>
+                      {mapaTravado ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />}
+                    </button>
+                  </div>
+                  {pivoNoMapa && (
+                    <p className="text-[10px] leading-relaxed text-white/30">
+                      As alças usam a ferramenta escolhida acima (Mover/Girar/Escalar)
+                      e o pivô do empreendimento fica escondido enquanto isso.
+                      <b>Alt + botão do meio</b> reposiciona o pivô no ponto clicado —
+                      útil para girar o terreno pela quina que encosta na calçada.
+                    </p>
+                  )}
+                  {mapaTravado && (
+                    <p className="text-[10px] leading-relaxed text-white/35">
+                      Encaixe travado: o pivô saiu da cena e os controles abaixo
+                      estão inertes. O mini mapa continua aparecendo normalmente.
+                    </p>
+                  )}
+                  {/* Transformação PRÓPRIA, separada da do prédio: os dois GLBs
+                      quase nunca vêm no mesmo referencial. Ver `MapaBase`. */}
+                  <Slider label="Rotação" v={c.mapaHeading ?? 0} min={0} max={360} step={1} suffix="°"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaHeading: x })} />
+                  <Slider label="Inclinar" v={c.mapaPitch ?? 0} min={-180} max={180} step={1} suffix="°"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaPitch: x })} />
+                  <Slider label="Rolar" v={c.mapaRoll ?? 0} min={-180} max={180} step={1} suffix="°"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaRoll: x })} />
+                  <Num label="Escala" v={c.mapaScale ?? 1} disabled={mapaTravado} onChange={(x) => setConfig({ mapaScale: x })} />
+                  <Slider label="Altura base" v={c.mapaHeightOffset ?? 0} min={-80} max={150} step={0.5} suffix="m"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaHeightOffset: x })} />
+                  <Slider label="Mover L↔O" v={c.mapaOffsetEast ?? 0} min={-400} max={400} step={1} suffix="m"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaOffsetEast: x })} />
+                  <Slider label="Mover N↔S" v={c.mapaOffsetNorth ?? 0} min={-400} max={400} step={1} suffix="m"
+                    disabled={mapaTravado}
+                    onChange={(x) => setConfig({ mapaOffsetNorth: x })} />
+                  <button
+                    onClick={() => setConfig({ mapaUrl: "" })}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-md bg-white/5 px-3 py-1.5 text-[11px] text-white/50 hover:bg-red-500/15 hover:text-red-300">
+                    <Trash2 className="h-3 w-3" /> Remover o mini mapa
+                  </button>
+                </>
+              )}
             </Section>
           )}
 
@@ -3253,7 +4191,7 @@ export default function IvmEditorPage() {
                 title="A vista marcada com estrela na sequência do tour é a que abre a experiência pública; esta aqui é o enquadramento bruto do viewport.">
                 Enquadramento de partida da cena, antes de qualquer vista.
               </p>
-              <button onClick={() => { const cam = sceneRef.current?.getCurrentCamera(); if (cam) setConfig({ camera: cam }); }}
+              <button onClick={() => { const cam = sceneRef.current?.getCurrentCamera(); if (cam) { fixarCotaDeReferencia(); setConfig({ camera: cam }); } }}
                 className="flex w-full items-center justify-center gap-2 rounded-[3px] bg-white/10 px-3 py-1.5 text-[11px] text-white/80 hover:bg-white/20">
                 <Camera className="h-3.5 w-3.5" /> {c.camera ? "Recapturar" : "Capturar"}
               </button>
@@ -3301,7 +4239,7 @@ export default function IvmEditorPage() {
                     <button
                       onClick={() => {
                         const cam = sceneRef.current?.getCurrentCamera();
-                        if (cam) setConfig({ [campo]: cam });
+                        if (cam) { fixarCotaDeReferencia(); setConfig({ [campo]: cam }); }
                       }}
                       className="flex flex-1 items-center justify-center gap-1.5 rounded-[3px] bg-white/10 px-2 py-1 text-[10px] text-white/80 hover:bg-white/20">
                       <Camera className="h-3 w-3" /> {valor ? "Recapturar" : "Capturar"}
@@ -3858,7 +4796,14 @@ export default function IvmEditorPage() {
               placingTorreId={placingTorreId}
               onPlacingTorre={setPlacingTorreId}
               placingUnidadeId={placingUnidadeId}
-              onPlacingUnidade={setPlacingUnidadeId}
+              onPlacingUnidade={(id) => {
+                setPlacingUnidadeId(id);
+                if (id) {
+                  setPlacingPoiId(null);
+                  setPlacingTorreId(null);
+                  setPlacingBuilding(false);
+                }
+              }}
               sel={unidSel}
               onSel={setUnidSel}
               onSelClique={selecionarUnidade}
@@ -4566,6 +5511,35 @@ export default function IvmEditorPage() {
                       material emissivo no próprio GLB.
                     </p>
                   </>
+                )}
+              </Section>
+
+              <Section title="Sombras" aberta={false}>
+                <p className="text-[10px] leading-relaxed text-white/35">
+                  Sem a fotogrametria não há terreno onde a sombra caia, e sobra o
+                  modelo sombreando a si mesmo — que costuma ler mal. Com a cidade
+                  ligada as sombras são o produto da simulação solar.
+                </p>
+                <div className="flex gap-1">
+                  {([
+                    ["sempre", "Sempre"],
+                    ["com-cidade", "Só com cidade"],
+                    ["nunca", "Nunca"],
+                  ] as const).map(([v, label]) => (
+                    <button key={v} onClick={() => setAmbiente({ sombras: v })}
+                      className={`flex-1 rounded-[3px] border py-1.5 text-[11px] transition-colors ${
+                        ambiente.sombras === v
+                          ? "border-teal-400/50 bg-teal-500/15 font-semibold text-teal-300"
+                          : "border-white/[0.08] text-white/50 hover:border-white/20 hover:text-white/85"
+                      }`}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {ambiente.sombras !== "sempre" && !previewEstudio && (
+                  <p className="text-[10px] leading-relaxed text-white/30">
+                    Para ver o efeito, ligue o preview sem a cidade na aba Modelo.
+                  </p>
                 )}
               </Section>
 

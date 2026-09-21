@@ -14,12 +14,14 @@ import type { EditablePoi } from "@/lib/ivm-store";
  * inteiro na lista da esquerda (nome, ícone, tempo); repetir isso num cartão
  * vazio seria ruído ocupando um terço da cena.
  */
-export function CartaoPoi({ poi, estilo, onFechar, onFoto }: {
+export function CartaoPoi({ poi, estilo, onFechar, onFoto, mostrarBasico = false }: {
   poi: EditablePoi | null;
   estilo?: EstiloPoi;
   onFechar: () => void;
   /** Abre a foto em tela cheia — reaproveita o lightbox da vitrine. */
   onFoto?: (url: string) => void;
+  /** No mapa mobile não há lista: nome, categoria e tempo já justificam o cartão. */
+  mostrarBasico?: boolean;
 }) {
   const [iFoto, setIFoto] = useState(0);
 
@@ -31,7 +33,7 @@ export function CartaoPoi({ poi, estilo, onFechar, onFoto }: {
   if (!poi) return null;
   const fotos = poi.fotos ?? [];
   const temConteudo = fotos.length > 0 || !!poi.descricao?.trim();
-  if (!temConteudo) return null;
+  if (!temConteudo && !mostrarBasico) return null;
 
   const Icone = iconeDaCategoria(poi.categoria, estilo);
   const cor = corDaCategoriaPoi(poi.categoria, estilo);
@@ -47,7 +49,7 @@ export function CartaoPoi({ poi, estilo, onFechar, onFoto }: {
     */
     <div
       data-testid="cartao-poi"
-      className="absolute right-4 top-[72px] z-30 flex max-h-[calc(100vh-96px)] w-[min(92vw,340px)] flex-col overflow-hidden rounded-[10px] glassmorphism shadow-2xl"
+      className="v-poi-card absolute right-4 top-[72px] z-30 flex max-h-[calc(100dvh-96px)] w-[min(92vw,340px)] flex-col overflow-hidden rounded-[10px] glassmorphism shadow-2xl"
     >
       {fotos.length > 0 && (
         <div className="relative shrink-0">

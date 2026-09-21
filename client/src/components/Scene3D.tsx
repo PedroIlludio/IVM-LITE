@@ -9,6 +9,7 @@ import {
   JulianDate,
   HeadingPitchRoll,
   HeadingPitchRange,
+  Intersect,
   HeightReference,
   BoundingSphere,
   Transforms,
@@ -47,6 +48,7 @@ import {
   type Cesium3DTileset,
 } from "cesium";
 import { createVision3DViewer, FALLBACK_GROUND_HEIGHT } from "@/lib/cesium-setup";
+import { elevacaoDoTerreno } from "@/lib/elevacao";
 import { corDaCategoriaPoi } from "@/lib/poi-icones";
 import { medirGlb, type CaixaGlb } from "@/lib/glb-bounds";
 import {
@@ -58,8 +60,8 @@ import {
 import {
   METROS_POR_LADRILHO, texturaDe, COR_SUPERFICIE,
 } from "@/lib/texturas-superficie";
-import type { Building3D } from "@/lib/vision3d-config";
-import type { Mapa3DCfg } from "@/lib/ivm-store";
+import type { Building3D, MapaBase } from "@/lib/vision3d-config";
+import type { SombrasModo } from "@/lib/ivm-store";
 import type { CameraView } from "@/lib/placements";
 import type { UnitBox } from "@/lib/unidades3d";
 
@@ -95,8 +97,17 @@ export interface TowerOutline {
 
 export interface Scene3DHandle {
   getCurrentCamera: () => CameraView | null;
+  /**
+   * Cota do terreno em uso sob o empreendimento, ou `null` se ela ainda for o
+   * fallback (nada medido nem calibrado).
+   *
+   * Existe para o editor poder GRAVAR a referencia de altura no mesmo gesto em
+   * que grava uma camera — ver `alturaSolo`.
+   */
+  cotaDoSolo: () => number | null;
   flyToCamera: (cam: CameraView, duration?: number) => void;
-  flyToPoi: (lat: number, lng: number) => void;
+  /** Voa até um POI. `cam` (enquadramento salvo) é usado só se for plausível. */
+  flyToPoi: (lat: number, lng: number, cam?: CameraView) => void;
   flyHome: () => void;
   /** Corta o modelo do empreendimento selecionado (null = limpa). */
   cutAtFloor: (corte: CorteDef | number | null) => void;
@@ -112,9 +123,18 @@ export interface Scene3DHandle {
   viewCorteDeCima: (
     corte: CorteDef, distancia: number,
     pitchGraus?: number, giroGraus?: number, duration?: number,
+    areaEnquadramento?: CorteDef["area"],
   ) => void;
   /** Enquadra o prédio selecionado (visão externa). */
   frameBuilding: () => void;
+  /**
+   * O empreendimento já está enquadrado na tela?
+   *
+   * Serve para NÃO mexer na câmera quando não precisa. Os botões da vitrine
+   * voavam para o enquadramento gravado no editor toda vez, e isso jogava fora
+   * o ponto de vista que o visitante acabou de construir girando a maquete.
+   */
+  predioEnquadrado: () => boolean;
   /** Enquadra uma unidade do espelho 3D (pelo id da caixa). */
   frameUnit: (
     unitId: string,
@@ -136,6 +156,22 @@ export interface Scene3DHandle {
    * cota.
    */
   medirCotas: (pontos: PontoGeo[]) => Promise<number[] | null>;
+  /**
+   * Contornos da implantação gravados no GLB, já convertidos para latitude e
+   * longitude com a transformação atual do empreendimento.
+   *
+   * A altura não é devolvida de propósito: a plataforma mede a fotogrametria
+   * antes de decidir em que cota ficará. `null` significa que o modelo ainda
+   * está sendo lido. Modelos antigos, sem `ivmFootprintV1`, devolvem a caixa da
+   * base marcada como aproximada; aqui ela é segura porque a plataforma também
+   * PREENCHE o recorte, em vez de deixar um quadrado vazio.
+   */
+  contornosDoModelo: () => {
+    contornos: PontoGeo[][];
+    aproximado: boolean;
+  } | null;
+  /** Cota absoluta do centro da base geométrica do GLB já transformado. */
+  cotaBaseDoModelo: () => number | null;
 }
 
 // A cor do POI vem de `lib/poi-icones`, a mesma fonte do mapa 2D e do editor.
@@ -144,21 +180,7 @@ export interface Scene3DHandle {
 // escolhida no mapa, com outra cor na lista do editor e cinza na cena 3D.
 
 interface Scene3DProps {
-  /**
-   * Chave do Google. Pode vir vazia quando o projeto traz o próprio mapa 3D —
-   * nesse caso nenhuma requisição ao Google acontece.
-   */
   apiKey: string;
-  /**
-   * Mapa 3D do projeto no lugar da fotogrametria.
-   *
-   * Presente e com `url`, a captura do Google não é sequer baixada e este GLB
-   * vira o chão da cena: é contra ele que `pickGround` (o clique de posicionar)
-   * e `clampToHeightMostDetailed` (a altura do terreno) trabalham, porque o
-   * Cesium consulta a GEOMETRIA da cena — não importa se veio de tileset ou de
-   * modelo.
-   */
-  mapa3d?: Mapa3DCfg | null;
   buildings: Building3D[];
   /** Instante UTC do sol (já convertido do horário local). */
   solarUtc: Date;
@@ -167,18 +189,44 @@ interface Scene3DProps {
   selectedId: string | null;
   editMode?: boolean;
   onSelect?: (id: string | null) => void;
+  /**
+   * A cena está apresentável: viewer montado, voo de abertura concluído e a
+   * fotogrametria da vista inicial carregada (ver `aguardarFotogrametria`).
+   *
+   * Não confundir com "o viewer existe": isso acontece muito antes, e a cena
+   * interna já opera a partir dali (o `readyRef` é que libera os efeitos de
+   * sincronia e o download do GLB). Este aviso é para a TELA — é ele que
+   * decide a hora de tirar a capa de carregamento.
+   */
   onReady?: () => void;
   /**
    * Há um GLB baixando agora.
    *
-   * `onReady` avisa que o VIEWER existe — o que acontece em milissegundos,
-   * muito antes de o modelo estar na cena. Quem só escutava `onReady` tirava a
-   * tela de carregamento cedo demais e o prédio surgia do nada, segundos
-   * depois, sobre uma cena já entregue como pronta. Este aviso cobre justamente
-   * a janela entre uma coisa e outra.
+   * O download do modelo corre em paralelo com o streaming da fotogrametria e
+   * pode terminar depois dela. Quem só escutava `onReady` tirava a tela de
+   * carregamento cedo demais e o prédio surgia do nada, segundos depois, sobre
+   * uma cena já entregue como pronta. Este aviso cobre a janela entre uma
+   * coisa e outra.
    */
   onModelLoading?: (carregando: boolean) => void;
   onError?: (msg: string) => void;
+  /**
+   * O GLB do empreendimento NÃO entrou na cena.
+   *
+   * Separado de `onModelLoading`, que só diz que a espera acabou. Os dois
+   * estavam colados: o `errorEvent` do modelo caía no mesmo `concluir()` do
+   * sucesso, então falhar era indistinguível de terminar. A vitrine tirava a
+   * capa e abria a fotogrametria sem prédio nenhum — um mapa do bairro
+   * anunciado como empreendimento.
+   */
+  onModelError?: (msg: string) => void;
+  /**
+   * A cota do terreno sob o empreendimento acabou de ser medida.
+   *
+   * O editor grava no projeto (ver `ProjectConfig.alturaSolo`); é o que
+   * permite à vitrine abrir sem a fotogrametria depois.
+   */
+  onAlturaSolo?: (buildingId: string, altura: number) => void;
   /** Clique no terreno em modo edição, com um empreendimento selecionado. */
   onEditPlace?: (id: string, lat: number, lng: number) => void;
   /** Arraste dos gizmos (modo edição): atualiza posição/rotação/escala ao vivo. */
@@ -225,10 +273,90 @@ interface Scene3DProps {
   /** Há um posicionamento por clique em curso: o clique não seleciona, posiciona. */
   placementActive?: boolean;
   /**
+   * O que está sendo posicionado.
+   *
+   * POI é um caso especial: a coordenada precisa vir da fotogrametria do
+   * Google, e não do GLB, do pivô ou do próprio marcador que estiverem
+   * desenhados por cima do mesmo pixel.
+   */
+  placementTarget?: "poi" | "building" | "tower" | "unit";
+  /** Clique de posicionamento que não encontrou uma superfície utilizável. */
+  onPlacementMiss?: () => void;
+  /**
    * Modo noturno: baixa a luz da cena e realça o modelo para ele não virar uma
    * silhueta preta. Não acende janelas — isso depende de material emissivo no
    * próprio GLB, que o Cesium respeita mas não sabe criar.
    */
+  /**
+   * Mostrar a fotogrametria do Google (a cidade em volta).
+   *
+   * Desligada, o empreendimento fica "flutuando": o GLB, o espelho de vendas e
+   * a simulação solar continuam inteiros, e o que sai é o streaming de tiles —
+   * de longe o item mais caro da cena, e o que trava tablet.
+   */
+  cidade?: boolean;
+  /**
+   * Pedir a fotogrametria do Google ao montar a cena.
+   *
+   * Diferente de `cidade`, que so esconde um tileset JA baixado: com `false`
+   * aqui o pedido nunca sai. E a diferenca entre uma cena que sobrevive a
+   * falha do Google e uma que nao chega a existir por causa dela — o
+   * carregamento do tileset acontece DENTRO da criacao do Viewer, e falhar ali
+   * derrubava a cena inteira, junto com o empreendimento.
+   */
+  fotogrametria?: boolean;
+  /**
+   * Quando projetar sombras — ver `AmbienteCfg.sombras`.
+   *
+   * A regra mora AQUI, e não em quem chama, porque ela depende de `cidade`,
+   * que é prop desta cena. Fosse resolvida nas páginas, editor e vitrine
+   * teriam de manter a mesma condição em dois lugares.
+   */
+  sombras?: SombrasModo;
+  /**
+   * GLB de terreno/entorno que entra no lugar da fotogrametria.
+   *
+   * Só é desenhado com `cidade` DESLIGADA. Os dois juntos ocupariam o mesmo
+   * chão, disputando profundidade pixel a pixel — e a razão de existir do mini
+   * mapa é justamente não precisar do streaming do Google.
+   */
+  mapaBase?: MapaBase | null;
+  /**
+   * Navegação em ÓRBITA em torno do empreendimento.
+   *
+   * O controle padrão do Cesium é de globo: arrastar gira a Terra e, de perto,
+   * isso se lê como arrastar o chão — some com o prédio de vista e ninguém
+   * entende como voltar. Numa vitrine o objeto é UM só, então o gesto natural é
+   * o de maquete: arrasta e o prédio roda, roda do mouse aproxima e afasta.
+   *
+   * Ligada só na vitrine. O editor precisa de câmera livre para posicionar
+   * modelo, traçar via e desenhar área.
+   */
+  orbitar?: boolean;
+  /**
+   * O que a órbita gira em torno, quando a vista está focada em algo DENTRO
+   * do prédio.
+   *
+   * A órbita nasceu com um pivô só, o centro do empreendimento, e foi por isso
+   * que ela precisou ser desligada na unidade e no pavimento: lá a câmera está
+   * olhando de perto, e girar em torno do centro do prédio mandava o alvo para
+   * fora da tela ao primeiro arraste. Desligar resolvia o sintoma e cobrava o
+   * preço de a navegação virar a do globo justamente onde examinar de perto é
+   * a tarefa.
+   *
+   * Com o pivô certo, o modo volta a valer nas três vistas.
+   */
+  orbitaAlvo?: {
+    unidadeId?: string | null;
+    pavimentoZ?: number | null;
+    /** Centro da torre do pavimento aberto, em X/Y do MODELO. */
+    torreXY?: { x: number; y: number } | null;
+    /**
+     * A câmera está DENTRO do prédio (vista do andar): o pivô vai à frente
+     * dela, e o arraste vira olhar em volta em vez de orbitar.
+     */
+    naCamera?: boolean;
+  } | null;
   noturno?: boolean;
   /** Quanto realçar o modelo à noite (0..1). */
   realceNoturno?: number;
@@ -248,6 +376,14 @@ interface Scene3DProps {
   recorteTerreno?: { folga?: number; preview?: boolean } | null;
   /** Preview temporário compartilhado pelo recorte da base e das vias. */
   previewRecorte?: boolean;
+  /**
+   * Prévia SÓ de vias, superfícies e cortes manuais.
+   *
+   * Separada de `previewRecorte` porque o recorte automático do prédio e os
+   * cortes desenhados à mão são recursos independentes: ver um não deveria
+   * acender o outro. Ver `aplicarRecorteTerreno`.
+   */
+  previewAreas?: boolean;
   /**
    * Vias desenhadas sobre a fotogrametria, traçadas no mapa em lat/lng.
    *
@@ -279,6 +415,15 @@ interface Scene3DProps {
   /** Contorno alterado ao arrastar um pivô da área. */
   onAreaPontos?: (areaId: string, pontos: Superficie["pontos"]) => void;
   /**
+   * Como o arraste do pivo de area/corte se move por padrao.
+   *
+   * `altura` sobe e desce; `plano` anda no chao. Existe como PROP, e nao so
+   * como o atalho de Shift que ja havia, porque um modificador escondido nao se
+   * descobre: quem nao o conhece conclui que o pivo so faz uma das duas coisas.
+   * O Shift continua valendo, agora invertendo o modo escolhido aqui.
+   */
+  modoPivoArea?: "altura" | "plano";
+  /**
    * Ferramenta ativa do gizmo, como em qualquer editor 3D: só a alça da
    * ferramenta escolhida aparece. Com as cinco alças na tela ao mesmo tempo,
    * acertar a certa era loteria.
@@ -301,7 +446,56 @@ interface Scene3DProps {
   gizmoLocal?: GizmoLocal | null;
   /** Arraste do pivô local, em coordenadas do modelo. */
   onGizmoLocalTransform?: (id: string, patch: GizmoLocalPatch) => void;
+  /**
+   * Pivô do MINI MAPA em vez do empreendimento.
+   *
+   * Exclusivo por natureza: dois pivôs na tela ao mesmo tempo seriam dois
+   * conjuntos de alças sobrepostas e nenhuma pista de qual move o quê. Quem
+   * decide é o editor — ligar este desliga o `gizmoEmpreendimento`.
+   */
+  gizmoMapa?: boolean;
+  /** Arraste do pivô do mini mapa, no mesmo vocabulário do empreendimento. */
+  onMapaTransform?: (patch: MapaPatch) => void;
+  /**
+   * O mini mapa foi retirado da cena por ter quebrado o render.
+   *
+   * Não é o mesmo que `onError`: aquele é a cena inteira falhando e vira tela
+   * de erro. Aqui a vitrine segue viva sem o terreno, e o aviso existe para
+   * quem ACABOU de subir o arquivo no editor saber por que ele sumiu.
+   */
+  onMapaErro?: (msg: string) => void;
+  /**
+   * Em que pé está a pegada usada para recortar a fotogrametria.
+   *
+   * Existe porque a ausência da silhueta é um NÃO-EVENTO na tela: sem a
+   * anotação `ivmFootprintV1` o recorte simplesmente não desenha nada, e não
+   * há como distinguir "não recortou" de "recortou e ficou igual". Antes havia
+   * o retângulo da caixa como último recurso; ele foi removido justamente por
+   * produzir o quadrado que a silhueta veio evitar, e com ele foi embora o
+   * único sinal visível de que faltava contorno.
+   *
+   * - `medindo`   — o cabeçalho do GLB ainda está sendo lido;
+   * - `ok`        — silhueta encontrada e aplicada;
+   * - `sem-pegada`— o arquivo carregou, mas não traz `ivmFootprintV1`;
+   * - `ilegivel`  — não deu para ler o cabeçalho do arquivo.
+   */
+  onRecortePegada?: (estado: "medindo" | "ok" | "sem-pegada" | "ilegivel") => void;
 }
+
+/**
+ * Patch do pivô do mini mapa.
+ *
+ * Mesmos nomes de campo do empreendimento — os dois são transformações em ENU
+ * sobre a mesma âncora, então o arraste que escreve `offsetEast` num escreve
+ * `offsetEast` no outro. Quem traduz para `mapaOffsetEast` é o editor, na hora
+ * de gravar. Sem `pitch`/`roll`: ver a doc de `MapaBase`.
+ */
+export type MapaPatch = Partial<
+  Record<
+    "offsetEast" | "offsetNorth" | "heightOffset" | "heading" | "pitch" | "roll" | "scale",
+    number
+  >
+>;
 
 /** Ferramentas de manipulação do modelo. */
 export type GizmoModo = "mover" | "girar" | "escalar";
@@ -371,6 +565,15 @@ interface BuildingNode {
   /** Símbolo em uso no marcador — se mudar, o marcador é recriado. */
   markerImg?: string;
   groundHeight: number;
+  /**
+   * A cota ja foi MEDIDA (ou veio calibrada do projeto)?
+   *
+   * `false` significa que `groundHeight` e o fallback de 3 m — um chute de
+   * nivel do mar. A distincao importa porque so nesse estado as cameras
+   * salvas do projeto sao inuteis: elas guardam altitude absoluta e apontam
+   * para o terreno real, nao para o chute.
+   */
+  cotaConfiavel?: boolean;
 }
 
 // Paleta da marca Quinta das Mangueiras.
@@ -392,40 +595,165 @@ function linhaDaAlca(opts: PolylineGraphics.ConstructorOptions): PolylineGraphic
   return opts;
 }
 
+/**
+ * Fundo do modo estúdio (entorno escondido).
+ *
+ * Cinza claro levemente frio: é o fundo de render de apresentação de maquete —
+ * claro o bastante para a silhueta escura do prédio se destacar, neutro o
+ * bastante para não disputar com a fachada nem sugerir hora do dia.
+ */
+const FUNDO_ESTUDIO = "#d6d8da";
+
+// --- Espera da fotogrametria --------------------------------------------------
+
+/**
+ * Não entregar a cena antes disto: o voo de abertura dura 1,6s a 2s e só
+ * quando ele acaba é que os tiles pedidos são os do enquadramento final.
+ */
+const TILES_ESPERA_MINIMA_MS = 2500;
+/**
+ * Teto duro da espera.
+ *
+ * A tela de carregamento é honesta enquanto tem fim. Numa conexão ruim a
+ * fotogrametria pode simplesmente não terminar, e aí é melhor entrar com o
+ * chão ainda carregando — dá para orbitar enquanto ele resolve — do que
+ * segurar o visitante para sempre numa tela que não explica nada.
+ */
+export const TILES_TETO_MS = 20000;
+/** Intervalo da checagem. */
+const TILES_PASSO_MS = 250;
+/**
+ * Checagens seguidas confirmando o entorno antes de acreditar nele.
+ *
+ * O streaming trabalha em levas: entre uma e a seguinte existe um instante em
+ * que nada está pendente e ainda falta metade da cidade. Três amostras
+ * (750 ms) atravessam essas folgas; um carregamento de verdade terminado
+ * permanece terminado.
+ */
+const TILES_ESTAVEL = 3;
+
+/**
+ * Distância do pivô de "olhar em volta", em metros à frente da câmera.
+ *
+ * Longe o bastante para o giro não ser degenerado (pivô EM cima da câmera não
+ * tem eixo), perto o bastante para o gesto ler como virar a cabeça, e não como
+ * orbitar um objeto.
+ */
+const PIVO_OLHAR_M = 30;
+
+/** Parte de `Cesium3DTilesetStatistics` que interessa; fora dos tipos públicos. */
+interface EstatisticasTileset {
+  numberOfTilesWithContentReady?: number;
+}
+
+/**
+ * Segura o `onReady` até o ENTORNO da vista inicial estar na tela.
+ *
+ * O que é "entorno" depende do modo, e por isso a condição chega de fora: com
+ * a cidade 3D é a fotogrametria do Google; sem ela, o mini mapa. Os dois
+ * carregam de formas completamente diferentes — streaming de milhares de tiles
+ * contra um GLB único —, e a espera não tem por que saber disso.
+ *
+ * Por que checagem por tempo e não por evento: com `requestRenderMode` a cena
+ * para de desenhar quando nada muda, e os eventos do tileset dependem do ciclo
+ * de render. O `allTilesLoaded` ainda dispara a cada vez que o carregamento
+ * zera — inclusive no meio do voo, para um enquadramento intermediário que
+ * ninguém vai ver. Um `setInterval` não tem nenhuma dessas armadilhas.
+ *
+ * Três exigências, e nenhuma sozinha basta:
+ *
+ * 1. o voo de abertura terminou (`TILES_ESPERA_MINIMA_MS`) — antes disso o que
+ *    está carregando é o enquadramento errado;
+ * 2. `entornoNaTela()` — há chão desenhado, não só ausência de pendências;
+ * 3. isso se mantém por `TILES_ESTAVEL` amostras — atravessa a folga entre
+ *    levas de download, onde a bandeira pisca "pronto" pela metade.
+ *
+ * E um teto, para a espera sempre acabar.
+ */
+function aguardarEntorno(
+  entornoNaTela: () => boolean,
+  cancelado: () => boolean,
+  pronto: () => void,
+) {
+  const inicio = Date.now();
+  let estavel = 0;
+  const timer = setInterval(() => {
+    const decorrido = Date.now() - inicio;
+    // Desmontou no meio da espera (troca de rota, "Tentar de novo"): não
+    // entregar uma cena que já não existe.
+    if (cancelado()) return clearInterval(timer);
+    // O teto vem antes de tudo: é a promessa de que esta espera acaba.
+    if (decorrido >= TILES_TETO_MS) {
+      clearInterval(timer);
+      pronto();
+      return;
+    }
+    if (decorrido < TILES_ESPERA_MINIMA_MS) return;
+
+    estavel = entornoNaTela() ? estavel + 1 : 0;
+    if (estavel < TILES_ESTAVEL) return;
+
+    clearInterval(timer);
+    pronto();
+  }, TILES_PASSO_MS);
+}
+
 const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   {
-    apiKey, mapa3d = null,
-    buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
-    onModelLoading, onError,
+    apiKey, buildings, solarUtc, solarAltitude = 45, selectedId, editMode, onSelect, onReady,
+    onModelLoading, onError, onModelError, onAlturaSolo,
     onEditPlace, onEditTransform, unitBoxes, onSelectUnit, towerOutline, placementActive,
-    noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
-    gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform, corteArea = null,
+    placementTarget, onPlacementMiss,
+    cidade = true, fotogrametria = true, mapaBase = null, sombras = "sempre",
+    orbitar = false, orbitaAlvo = null, noturno, realceNoturno = 0.45, onCameraMove, gizmoModo = "mover", onGizmoInfo,
+    gizmoEmpreendimento = true, gizmoLocal = null, onGizmoLocalTransform,
+    gizmoMapa = false, onMapaTransform, onMapaErro, onRecortePegada, corteArea = null,
     plantaPavimento = null,
-    recorteTerreno = null, previewRecorte = false, vias = null, corVia,
+    recorteTerreno = null, previewRecorte = false, previewAreas = false,
+    vias = null, corVia,
     viaEditandoId = null, onViaPerfil,
-    superficies = null, areaEditandoId = null, onAreaPontos,
+    superficies = null, areaEditandoId = null, onAreaPontos, modoPivoArea = "altura",
     unidadePlantaId = null, onUnidadePlanta,
   },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Viewer | null>(null);
+  const skyBoxRef = useRef<Viewer["scene"]["skyBox"] | null>(null);
   const nightStageRef = useRef<PostProcessStage | null>(null);
   const nightAmountRef = useRef(0);
   const tilesetRef = useRef<Cesium3DTileset | null>(null);
-  /** Mapa 3D do projeto, quando ele substitui a fotogrametria. */
-  const mapaRef = useRef<Model | null>(null);
-  /** URL do mapa que está na cena; trocou, o modelo é refeito. */
-  const mapaUrlRef = useRef<string | undefined>(undefined);
-  /** URL do mapa em voo AGORA — mesmo motivo de `loadingUrl` nos prédios. */
-  const mapaCarregandoRef = useRef<string | undefined>(undefined);
-  const mapaAtualRef = useRef(mapa3d);
-  mapaAtualRef.current = mapa3d;
+  /** GLB do mini mapa em cena — ver `syncMapaBase`. */
+  const mapaModelRef = useRef<Model | null>(null);
   /**
-   * Recorte da superfície. A coleção é criada UMA vez e presa ao alvo (o
-   * tileset do Google ou o mapa 3D do projeto): reatribuir `clippingPolygons`
-   * obrigaria o Cesium a refazer a textura de distância e recarregar tiles a
-   * cada mudança.
+   * URL do mini mapa que DERRUBOU o render.
+   *
+   * Sem esta memória a recuperação vira um laço: o efeito volta a pedir o
+   * mesmo arquivo, ele quebra o render de novo, e a cena passa a piscar entre
+   * carregar e falhar. Zerada quando o editor aponta para outro arquivo — um
+   * upload novo merece uma tentativa nova.
+   */
+  const mapaBloqueadoRef = useRef<string | null>(null);
+  /**
+   * URLs de GLB do empreendimento que derrubaram o render.
+   *
+   * Mesmo papel de `mapaBloqueadoRef`, e pela mesma razão: sem a memória, o
+   * `reconcile` recarrega o culpado no quadro seguinte e a cena entra num laço
+   * de quebrar e recarregar. Guardado por URL, some sozinho quando o editor
+   * aponta para outro arquivo.
+   */
+  const modelosBloqueadosRef = useRef<Set<string>>(new Set());
+  /**
+   * URL do mini mapa em cena OU em voo agora.
+   *
+   * Mesmo papel do `loadingUrl` do prédio: sem ela, cada re-render do editor
+   * (uma por tecla digitada) dispararia outro download do mesmo arquivo.
+   */
+  const mapaUrlRef = useRef<string | null>(null);
+  /**
+   * Recorte da fotogrametria. A coleção é criada UMA vez e presa ao tileset:
+   * reatribuir `clippingPolygons` obrigaria o Cesium a refazer a textura de
+   * distância e recarregar tiles a cada mudança.
    */
   const recorteRef = useRef<ClippingPolygonCollection | null>(null);
   const recorteAtualRef = useRef(recorteTerreno);
@@ -438,6 +766,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    */
   const previewRecorteRef = useRef(previewRecorte);
   previewRecorteRef.current = previewRecorte;
+  const previewAreasRef = useRef(previewAreas);
+  previewAreasRef.current = previewAreas;
   /**
    * `?recorteDebug=1` na URL: escreve no console por que o recorte cortou ou não
    * e pinta a textura de distância do Cesium sobre a cena (vermelho = fora do
@@ -449,8 +779,21 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     recorteDebugRef.current =
       new URLSearchParams(window.location.search).get("recorteDebug") === "1";
   }
-  /** Caixa medida de cada GLB, por URL. Medida uma vez por arquivo. */
+  /** Caixa e pegada medidas de cada GLB, por URL. */
   const caixaGlbRef = useRef<Map<string, CaixaGlb | null>>(new Map());
+  /** Evita duas leituras concorrentes do cabeçalho do mesmo GLB. */
+  const medicaoGlbEmCursoRef = useRef<Set<string>>(new Set());
+  /**
+   * Último estado de pegada avisado ao editor.
+   *
+   * `aplicarRecorteTerreno` roda a cada mudança de câmera, via ou seleção;
+   * avisar sempre viraria um `setState` por quadro. Só a TRANSIÇÃO interessa.
+   */
+  const pegadaAvisadaRef = useRef<string | null>(null);
+  const onRecortePegadaRef = useRef(onRecortePegada);
+  onRecortePegadaRef.current = onRecortePegada;
+  /** URLs antigas em memória são revalidadas uma vez em busca da pegada. */
+  const pegadaRevalidadaRef = useRef<Set<string>>(new Set());
   /** Entidades das vias desenhadas. */
   const viasRef = useRef<Entity[]>([]);
   const viasAtualRef = useRef<Via[]>(vias ?? []);
@@ -465,6 +808,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   areaEditandoRef.current = areaEditandoId;
   const onAreaPontosRef = useRef(onAreaPontos);
   onAreaPontosRef.current = onAreaPontos;
+  // Lida no meio do arraste, entao precisa da ref e nao da prop.
+  const modoPivoAreaRef = useRef(modoPivoArea);
+  modoPivoAreaRef.current = modoPivoArea;
   /**
    * Caixas das unidades por REF.
    *
@@ -564,6 +910,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   onSelectRef.current = onSelect;
   const placementRef = useRef(placementActive);
   placementRef.current = placementActive;
+  const placementTargetRef = useRef(placementTarget);
+  placementTargetRef.current = placementTarget;
+  const onPlacementMissRef = useRef(onPlacementMiss);
+  onPlacementMissRef.current = onPlacementMiss;
   const onCameraMoveRef = useRef(onCameraMove);
   onCameraMoveRef.current = onCameraMove;
   const gizmoModoRef = useRef(gizmoModo);
@@ -580,6 +930,16 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   /** Impede um carregamento tardio do GLB de sequestrar a câmera do usuário. */
   const cameraInteragidaRef = useRef(false);
   // Aparência do modelo: lida também pelo espelho 3D, que tem prioridade.
+  const cidadeRef = useRef(cidade);
+  cidadeRef.current = cidade;
+  const mapaBaseRef = useRef(mapaBase);
+  mapaBaseRef.current = mapaBase;
+  /** Vigília que devolve a câmera à órbita quando o voo termina. */
+  const reatarRef = useRef<number | null>(null);
+  const orbitarRef = useRef(orbitar);
+  orbitarRef.current = orbitar;
+  const orbitaAlvoRef = useRef(orbitaAlvo);
+  orbitaAlvoRef.current = orbitaAlvo;
   const noturnoRef = useRef(noturno);
   noturnoRef.current = noturno;
   const realceRef = useRef(realceNoturno);
@@ -602,6 +962,18 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   gizmoLocalRef.current = gizmoLocal;
   const onGizmoLocalTransformRef = useRef(onGizmoLocalTransform);
   onGizmoLocalTransformRef.current = onGizmoLocalTransform;
+  const gizmoMapaRef = useRef(gizmoMapa);
+  gizmoMapaRef.current = gizmoMapa;
+  const onMapaTransformRef = useRef(onMapaTransform);
+  onMapaTransformRef.current = onMapaTransform;
+  const onMapaErroRef = useRef(onMapaErro);
+  onMapaErroRef.current = onMapaErro;
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const onModelErrorRef = useRef(onModelError);
+  onModelErrorRef.current = onModelError;
+  const onAlturaSoloRef = useRef(onAlturaSolo);
+  onAlturaSoloRef.current = onAlturaSolo;
   /**
    * Frame ao vivo do gizmo, lido pelas CallbackProperty.
    *
@@ -635,6 +1007,23 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     eastObj: Cartesian3;
     northObj: Cartesian3;
     upObj: Cartesian3;
+    /**
+     * Eixos do frame com o HEADING aplicado e mais nada.
+     *
+     * Existem porque as três rotações do empreendimento não giram em torno das
+     * colunas da matriz final — giram em torno dos eixos dos fatores que as
+     * produzem. Em `Rz(−heading)·Ry(−pitch)·Rx(roll)`:
+     *
+     * - `heading` gira em torno do vertical do ENU (nunca da coluna 2);
+     * - `pitch` gira em torno do NORTE JÁ GIRADO pelo heading (`hNorth`);
+     * - `roll` gira em torno da coluna 0, que já é `eastObj`.
+     *
+     * Com o prédio aprumado (pitch e roll em zero) tudo isto coincide com as
+     * colunas, que foi por que passou despercebido. Basta inclinar o modelo
+     * para o anel passar a girar em torno de um eixo diferente do que desenha.
+     */
+    hEast: Cartesian3;
+    hNorth: Cartesian3;
     L: number;
     /** Alvo local (eixos do modelo) em vez do empreendimento (eixos ENU). */
     local: boolean;
@@ -655,6 +1044,23 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     /** `sX`/`sY`/`sZ` redimensionam UM eixo; `scale` é a escala uniforme. */
     kind: "tE" | "tN" | "tU" | AnelKind | "scale" | "sX" | "sY" | "sZ";
     local: boolean;
+    /** O alvo é o mini mapa: o patch vai para `onMapaTransform`. */
+    mapa: boolean;
+    /**
+     * O Shift estava pressionado no último quadro.
+     *
+     * Guardado para detectar a TROCA de modo: ver `rebasear` em `gizmoMove`.
+     */
+    shiftAtivo: boolean;
+    /**
+     * O pivô foi movido À MÃO (Alt+meio) neste arraste.
+     *
+     * Separado de `pivot`, que agora também é preenchido sozinho quando o
+     * alvo nasce com pivô deslocado: só o gesto deliberado merece ser
+     * anunciado na barra de informação. Avisar "em torno do pivô" o tempo todo
+     * transformaria a mensagem em ruído de fundo.
+     */
+    pivotMovido: boolean;
     /** b.scale no início do arraste (mundo → modelo). */
     escala: number;
     axisO: Cartesian3; // origem do eixo/plano fixada no início do arraste
@@ -723,6 +1129,37 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   // após qualquer mutação (sol, seleção, modelo, POIs) para refletir a mudança.
   const requestRender = () => viewerRef.current?.scene.requestRender();
 
+  /**
+   * Render sob demanda x render contínuo, conforme o que está na cena.
+   *
+   * `requestRenderMode` existe por performance: parada, a cena não redesenha e
+   * a navegação nesta máquina (WebGL degradado) deixa de engasgar. O preço
+   * aparece quando entra GEOMETRIA DE ENTIDADE — as caixas do espelho e a
+   * planta do pavimento. O Cesium as compila em lote ao longo de vários frames
+   * e atualiza o lote a cada tique do relógio, mas só DESENHA quando alguém
+   * pede um frame. Daí os dois sintomas relatados:
+   *
+   * - a caixa só aparecia ao abrir o DevTools, porque o redimensionamento da
+   *   janela força um redesenho que ninguém tinha pedido;
+   * - no zoom os blocos "deslocavam", porque o lote acompanhava a câmera um
+   *   passo atrás do resto da cena.
+   *
+   * Enquanto houver essa geometria em cena, o modo sob demanda sai. Ele volta
+   * assim que ela some, que é o estado em que a vitrine passa a maior parte do
+   * tempo — a economia continua onde ela vale.
+   */
+  function ajustarModoDeRender() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    const temGeometriaViva = (unitBoxes?.length ?? 0) > 0 || !!plantaPavimento?.url;
+    const sobDemanda = !temGeometriaViva;
+    if (v.scene.requestRenderMode === sobDemanda) return;
+    v.scene.requestRenderMode = sobDemanda;
+    // Sai do modo sob demanda com um frame na mão: sem ele a cena ficaria
+    // esperando o próximo pedido justamente no instante da troca.
+    v.scene.requestRender();
+  }
+
   /** Resolve o eixo e as duas alturas de cada seção da via. */
   function dadosVerticaisDaVia(via: Via): {
     eixo: PontoGeo[];
@@ -756,30 +1193,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * clique, e o editor ficava sem chão de referência.
    */
   function aplicarRecorteTerreno() {
-    /**
-     * Quem leva o buraco é QUEM FAZ O CHÃO — o tileset do Google quando ele
-     * existe, senão o mapa 3D do projeto. Os dois expõem `clippingPolygons` com
-     * o mesmo contrato, e uma coleção do Cesium só aceita um dono, então o alvo
-     * é um só e a escolha é aqui.
-     */
-    const ts = (tilesetRef.current ?? mapaRef.current) as
-      | { clippingPolygons: ClippingPolygonCollection | undefined }
-      | null;
+    const ts = tilesetRef.current;
     const viewer = viewerRef.current;
     if (!ts || !viewer || viewer.isDestroyed()) return;
     const cfg = recorteAtualRef.current;
     // A via é um recurso independente do recorte da base do prédio. Antes,
     // desligar `recorteTerreno` desligava também TODAS as vias, embora elas
     // tivessem traçado, largura e cotas válidos.
-    const podeVisualizar = !editRef.current || previewRecorteRef.current || !!cfg?.preview;
-    const recortaPredio = !!cfg && podeVisualizar;
-    const recortaVias = podeVisualizar;
+    /**
+     * DUAS pré-visualizações, não uma.
+     *
+     * O recorte automático (a silhueta do GLB) e os cortes desenhados à mão são
+     * recursos independentes, e antes compartilhavam a mesma chave: ligar a
+     * prévia para ajustar um corte manual acendia junto o buraco automático, e
+     * os dois apareciam sobrepostos. Pior num caso em que o corte manual existe
+     * justamente porque o automático não serve.
+     *
+     * `previewRecorte` continua acendendo os dois — é o botão histórico, que
+     * significa "quero ver o recorte inteiro". `previewAreas` acende só vias,
+     * superfícies e cortes, e é o que os botões dessas seções usam.
+     *
+     * Na vitrine (`!editRef.current`) tudo vale, como sempre: lá quem decide o
+     * que existe é a configuração salva, não a prévia.
+     */
+    const preverTudo = !editRef.current || previewRecorteRef.current || !!cfg?.preview;
+    const recortaPredio = !!cfg && preverTudo;
+    const recortaVias = preverTudo || previewAreasRef.current;
     /** Diagnóstico do `?recorteDebug=1`: preenchido ao longo da função. */
     const diag: Record<string, unknown> = {
       editMode: !!editRef.current,
       previewRecorte: previewRecorteRef.current,
+      previewAreas: previewAreasRef.current,
       cfgPreview: !!cfg?.preview,
-      podeVisualizar, recortaPredio, recortaVias,
+      preverTudo, recortaPredio, recortaVias,
       vias: (viasAtualRef.current ?? []).length,
       viasComAltura: 0, quadsDeVia: 0, poligonos: 0,
     };
@@ -809,19 +1255,54 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       diag.suportado = true;
       const polygons: ClippingPolygon[] = [];
 
+      /**
+       * Diz ao editor por que o recorte do prédio saiu (ou não saiu).
+       *
+       * Sem isto a falta da silhueta é indistinguível de tudo certo: nos dois
+       * casos a tela fica igual. Quem acabou de ligar o recorte precisa saber
+       * que o modelo é antigo e pede reimportação — não adivinhar.
+       */
+      if (recortaPredio && b?.modelUrl) {
+        const medindo = medicaoGlbEmCursoRef.current.has(b.modelUrl);
+        const estado = medindo
+          ? "medindo"
+          : !caixa
+            ? "ilegivel"
+            : caixa.contornos?.length ? "ok" : "sem-pegada";
+        diag.pegadaEstado = estado;
+        if (pegadaAvisadaRef.current !== estado) {
+          pegadaAvisadaRef.current = estado;
+          onRecortePegadaRef.current?.(estado);
+        }
+      }
+
       if (recortaPredio && b && node && caixa) {
-        const folga = cfg?.folga ?? 1.1;
+        const folga = cfg?.folga ?? 1;
         const cx = (caixa.min[0] + caixa.max[0]) / 2;
         const cy = (caixa.min[1] + caixa.max[1]) / 2;
-        const hx = ((caixa.max[0] - caixa.min[0]) / 2) * folga;
-        const hy = ((caixa.max[1] - caixa.min[1]) / 2) * folga;
-        // Os quatro cantos, em metros do modelo, levados ao mundo pela MESMA
-        // função que posiciona as caixas das unidades — assim o recorte não
-        // pode divergir de onde o prédio realmente está.
-        const positions = ([[-hx, -hy], [hx, -hy], [hx, hy], [-hx, hy]] as const).map(
-          ([dx, dy]) => poseNoModelo(b, node.groundHeight, cx + dx, cy + dy, 0, 0).position,
-        );
-        polygons.push(new ClippingPolygon({ positions }));
+        /**
+         * GLBs importados pela plataforma trazem a silhueta horizontal real em
+         * `scene.extras`. Cada ponto é levado ao mundo pela MESMA função que
+         * posiciona o modelo e as unidades, portanto rotação, escala e offsets
+         * continuam perfeitamente alinhados.
+         *
+         * Arquivo antigo ou enviado já pronto pode não ter essa anotação. Ele
+         * não recebe recorte automático até ser reprocessado: usar sua caixa
+         * envolvente aqui produziria exatamente o quadrado preto indesejado.
+         */
+        const contornos = caixa.contornos ?? [];
+        for (const contorno of contornos) {
+          const positions = contorno.map(([x, y]) => {
+            // A folga mantém o comportamento do slider: escala a pegada a
+            // partir do centro geral do modelo, inclusive em formas côncavas.
+            const px = cx + (x - cx) * folga;
+            const py = cy + (y - cy) * folga;
+            return poseNoModelo(b, node.groundHeight, px, py, 0, 0).position;
+          });
+          if (positions.length >= 3) polygons.push(new ClippingPolygon({ positions }));
+        }
+        diag.pegada = contornos.length ? "malha" : "ausente";
+        diag.contornosPredio = contornos.length;
       }
 
       /**
@@ -1166,25 +1647,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         ? pts.map((p, i) => Cartesian3.fromDegrees(p.lng, p.lat, alturas[i]))
         : Cartesian3.fromDegreesArray(pts.flatMap((p) => [p.lng, p.lat]));
 
-      areasRef.current.push(v.entities.add({
-        id: `area:${area.id}`,
-        polygon: alturas
-          ? {
-              hierarchy: new PolygonHierarchy(contorno),
-              perPositionHeight: true,
-              // Mesma saia da via, e pelo mesmo motivo: o recorte é uma coluna
-              // vertical, então debaixo da área não sobra terreno. Sem a parede
-              // se enxerga o vazio pela beirada.
-              extrudedHeight: Math.min(...alturas) - PROFUNDIDADE_VIA,
-              material,
-              shadows: ShadowMode.RECEIVE_ONLY,
-            }
-          : {
-              hierarchy: new PolygonHierarchy(contorno),
-              classificationType: ClassificationType.CESIUM_3D_TILE,
-              material,
-            },
-      }));
+      /**
+       * CORTE MANUAL não pinta: ele só abre o buraco.
+       *
+       * O recorte em si não sai daqui — quem o monta é `aplicarRecorteTerreno`,
+       * a partir das cotas, e isso vale igual para os dois casos. O que se pula
+       * é apenas o polígono desenhado. Debaixo do empreendimento quem preenche
+       * o vazio é o próprio GLB; pintar piso ali só poria uma superfície
+       * disputando espaço com o modelo.
+       *
+       * A borda branca e os pivôs continuam, senão o corte viraria invisível no
+       * editor e não haveria o que arrastar.
+       */
+      if (!area.somenteCorte) {
+        areasRef.current.push(v.entities.add({
+          id: `area:${area.id}`,
+          polygon: alturas
+            ? {
+                hierarchy: new PolygonHierarchy(contorno),
+                perPositionHeight: true,
+                // Mesma saia da via, e pelo mesmo motivo: o recorte é uma coluna
+                // vertical, então debaixo da área não sobra terreno. Sem a parede
+                // se enxerga o vazio pela beirada.
+                extrudedHeight: Math.min(...alturas) - PROFUNDIDADE_VIA,
+                material,
+                shadows: ShadowMode.RECEIVE_ONLY,
+              }
+            : {
+                hierarchy: new PolygonHierarchy(contorno),
+                classificationType: ClassificationType.CESIUM_3D_TILE,
+                material,
+              },
+        }));
+      }
 
       if (editRef.current) {
         areasRef.current.push(v.entities.add({
@@ -1199,7 +1694,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
                 ),
             width: 2,
             clampToGround: !alturas,
-            material: new ColorMaterialProperty(Color.WHITE.withAlpha(0.7)),
+            // O corte é a única área sem preenchimento: sem uma cor própria na
+            // borda, ele fica indistinguível de uma superfície ainda sem piso.
+            material: new ColorMaterialProperty(
+              area.somenteCorte
+                ? Color.fromCssColorString("#ffb020").withAlpha(0.9)
+                : Color.WHITE.withAlpha(0.7),
+            ),
           },
         }));
       }
@@ -1361,6 +1862,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Imperative handle (usado pelo editor / páginas) ------------------------
   useImperativeHandle(ref, () => ({
+    cotaDoSolo: () => {
+      const id = selectedRef.current;
+      const node = id ? nodesRef.current.get(id) : undefined;
+      // Sem `cotaConfiavel` o valor e o fallback de 3 m: devolver isso como se
+      // fosse medida faria o editor gravar um chute no projeto.
+      return node?.cotaConfiavel ? node.groundHeight : null;
+    },
     getCurrentCamera: () => {
       const v = viewerRef.current;
       if (!v) return null;
@@ -1374,22 +1882,82 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         roll: CesiumMath.toDegrees(v.camera.roll),
       };
     },
-    flyToCamera: (cam, duration = 1.5) => flyToCamera(cam, duration),
-    flyToPoi: (lat, lng) => flyToPoi(lat, lng),
+    /**
+     * Camera salva do projeto — vista principal, tour, unidades, entorno.
+     *
+     * Todas guardam altitude ABSOLUTA e foram gravadas com o terreno real sob
+     * o empreendimento. Enquanto a cota nao for confiavel (sem fotogrametria e
+     * sem `alturaSolo`, com o predio no fallback de 3 m), elas apontam para
+     * onde o terreno ESTARIA, nao para onde o predio esta — num planalto, mais
+     * de um quilometro de erro, que na tela se le como "a camera foi para o
+     * infinito".
+     *
+     * A guarda mora AQUI, na fronteira do componente, e nao em cada chamador:
+     * sao quatro entradas hoje e o tour adiciona uma por vista salva. Repetir a
+     * condicao em cada uma garantiria que a proxima nasceria sem ela.
+     */
+    flyToCamera: (cam, duration = 1.5) => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      if (b && !tilesetRef.current && !node?.cotaConfiavel) {
+        return flyToBuilding(b, true);
+      }
+      flyToCamera(cam, duration);
+    },
+    flyToPoi: (lat, lng, cam) => flyToPoi(lat, lng, cam),
     flyHome: () => flyHome(),
     cutAtFloor: (modelZ) => cutAtFloor(modelZ),
     viewFromFloor: (camH, heading, duration) => viewFromFloor(camH, heading, duration),
     viewCutExternal: (duration) => viewCutExternal(duration),
-    viewCorteDeCima: (corte, distancia, pitchGraus, giroGraus, duration) =>
-      viewCorteDeCima(corte, distancia, pitchGraus, giroGraus, duration),
+    viewCorteDeCima: (corte, distancia, pitchGraus, giroGraus, duration, areaEnquadramento) =>
+      viewCorteDeCima(corte, distancia, pitchGraus, giroGraus, duration, areaEnquadramento),
     frameBuilding: () => {
       const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
       if (b) flyToBuilding(b);
     },
+    predioEnquadrado: () => predioEnquadrado(),
     frameUnit: (unitId, cam, duration) => frameUnit(unitId, cam, duration),
     modelLocalFromLatLng: (buildingId, lat, lng) => modelLocalFromLatLng(buildingId, lat, lng),
     captureImage: (maxW = 240, quality = 0.6) => captureImage(maxW, quality),
     medirCotas: (pontos) => medirCotas(pontos),
+    contornosDoModelo: () => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      const caixa = b?.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
+      if (!b || !node || !caixa) return null;
+      const aproximado = !caixa.contornos?.length;
+      const contornos = caixa.contornos?.length
+        ? caixa.contornos
+        : [[
+            [caixa.min[0], caixa.min[1]],
+            [caixa.max[0], caixa.min[1]],
+            [caixa.max[0], caixa.max[1]],
+            [caixa.min[0], caixa.max[1]],
+          ] as Array<[number, number]>];
+
+      return { aproximado, contornos: contornos.map((contorno) => contorno.map(([x, y]) => {
+        const mundo = poseNoModelo(b, node.groundHeight, x, y, 0, 0).position;
+        const carto = Cartographic.fromCartesian(mundo);
+        return {
+          lat: CesiumMath.toDegrees(carto.latitude),
+          lng: CesiumMath.toDegrees(carto.longitude),
+        };
+      })) };
+    },
+    cotaBaseDoModelo: () => {
+      const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+        ?? buildingsRef.current[0];
+      const node = b ? nodesRef.current.get(b.id) : undefined;
+      const caixa = b?.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
+      if (!b || !node || !caixa) return null;
+      const x = (caixa.min[0] + caixa.max[0]) / 2;
+      const y = (caixa.min[1] + caixa.max[1]) / 2;
+      const mundo = poseNoModelo(b, node.groundHeight, x, y, caixa.min[2], 0).position;
+      const carto = Cartographic.fromCartesian(mundo);
+      return Number.isFinite(carto.height) ? carto.height : null;
+    },
   }));
 
   /**
@@ -1408,8 +1976,26 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v || v.isDestroyed() || pontos.length < 2) return null;
     try {
       const sondas = pontos.map((p) => Cartesian3.fromDegrees(p.lng, p.lat, 3000));
+      /**
+       * A sonda quer a captura do Google, não o que nós pusemos sobre ela.
+       *
+       * Isto é especialmente importante para a plataforma criada pela pegada
+       * do GLB: seus pontos ficam exatamente sob fachadas, marquises e lajes.
+       * Sem exclusão, a altura medida pode ser a do telhado do empreendimento
+       * novo ou a da própria plataforma numa remedida.
+       */
+      const excluir: object[] = [];
+      for (const node of Array.from(nodesRef.current.values())) {
+        if (node.model) excluir.push(node.model);
+        if (node.box) excluir.push(node.box);
+      }
+      if (mapaModelRef.current) excluir.push(mapaModelRef.current);
+      excluir.push(...areasRef.current, ...viasRef.current);
       const timeout = new Promise<undefined>((r) => setTimeout(() => r(undefined), 15000));
-      const res = await Promise.race([v.scene.clampToHeightMostDetailed(sondas), timeout]);
+      const res = await Promise.race([
+        v.scene.clampToHeightMostDetailed(sondas, excluir),
+        timeout,
+      ]);
       if (!res || res.length !== pontos.length) return null;
       const cotas: number[] = [];
       for (const p of res) {
@@ -1452,32 +2038,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   }
 
   // --- Init do viewer + tiles -------------------------------------------------
-
-  /**
-   * A fotogrametria sai de cena quando o projeto traz o próprio mapa — a menos
-   * que se peça as duas juntas, que é como se confere um encaixe.
-   */
-  const semFotogrametria = !!mapa3d?.url?.trim() && !mapa3d.comFotogrametria;
-  /**
-   * Chave de recriação do Viewer.
-   *
-   * O tileset é anexado NA CRIAÇÃO, então trocar a base do mundo exige um
-   * viewer novo. Sem fotogrametria a chave é constante: assim a chegada tardia
-   * do `/api/config` (que só preenche `apiKey`) não derruba e remonta uma cena
-   * que nem usa o Google.
-   */
-  const chaveDaCena = semFotogrametria ? "sem-fotogrametria" : apiKey;
-
   useEffect(() => {
-    if (!containerRef.current || viewerRef.current) return;
-    if (!apiKey && !semFotogrametria) return;
+    if (!containerRef.current || viewerRef.current || (!apiKey && fotogrametria)) return;
     let destroyed = false;
     let handler: ScreenSpaceEventHandler | null = null;
     let aoPressionar: ((e: PointerEvent) => void) | null = null;
     let aoRolar: (() => void) | null = null;
     let encerrarArraste: (() => void) | null = null;
 
-    createVision3DViewer(containerRef.current, apiKey, { semFotogrametria })
+    createVision3DViewer(containerRef.current, apiKey, fotogrametria)
       .then(({ viewer, tileset }) => {
         if (destroyed) {
           if (!viewer.isDestroyed()) viewer.destroy();
@@ -1487,6 +2056,74 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         tilesetRef.current = tileset;
         readyRef.current = true;
         setPronto(true);
+
+        /**
+         * Sob `?recorteDebug=1`, o viewer fica alcançável pelo console.
+         *
+         * Recorte e superfícies só se conferem olhando o que foi realmente
+         * desenhado — quais entidades existem, quais polígonos entraram na
+         * coleção. Pelo log dá para saber o que a função DECIDIU; só pelo viewer
+         * dá para saber o que ela FEZ. Preso à mesma bandeira do log, então não
+         * existe para quem abre a vitrine.
+         */
+        if (recorteDebugRef.current) {
+          (window as unknown as Record<string, unknown>).__ivmViewer = viewer;
+        }
+
+        /**
+         * Um GLB de terceiros não pode derrubar a vitrine.
+         *
+         * Shader que não compila só falha na hora de DESENHAR — o download deu
+         * certo, `fromGltfAsync` resolveu, e o `catch` do carregamento nunca
+         * viu nada. O erro aparece no meio do laço de render, e o Cesium reage
+         * parando tudo: a cena inteira morre por causa de um arquivo de apoio.
+         *
+         * O mini mapa é o suspeito natural — é o último arquivo externo a
+         * entrar em cena e o único que não passou por calibração. Tirá-lo e
+         * retomar devolve a vitrine ao estado anterior (prédio sobre o fundo
+         * liso), que é uma experiência inteira, e não uma tela de erro.
+         */
+        viewer.scene.renderError.addEventListener((_cena: unknown, erro: unknown) => {
+          const msg = erro instanceof Error ? erro.message : String(erro);
+          const urlDoMapa = mapaUrlRef.current;
+          if (mapaModelRef.current && urlDoMapa) {
+            mapaBloqueadoRef.current = urlDoMapa;
+            descartarMapaBase();
+            onMapaErroRef.current?.(msg);
+            // Sem isto o laço fica parado mesmo com o culpado fora de cena.
+            viewer.useDefaultRenderLoop = true;
+            requestRender();
+            return;
+          }
+          /**
+           * 2. O outro arquivo de terceiros em cena é o GLB do empreendimento.
+           *
+           * Tirá-lo dói — é o produto —, mas a alternativa é pior: sem retomar
+           * o laço, a cena fica CONGELADA. No editor isso era especialmente
+           * traiçoeiro, porque o aviso diz "o restante segue funcionando" e o
+           * viewport, apesar de aceitar cliques, não redesenhava nada. Mover o
+           * empreendimento pelo mapa parecia simplesmente não funcionar.
+           */
+          const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+            ?? buildingsRef.current[0];
+          const node = b ? nodesRef.current.get(b.id) : undefined;
+          if (b && node?.model && node.loadedUrl) {
+            modelosBloqueadosRef.current.add(node.loadedUrl);
+            if (!viewer.isDestroyed()) viewer.scene.primitives.remove(node.model);
+            node.model = undefined;
+            node.loadedUrl = undefined;
+            onModelErrorRef.current?.(msg);
+            // Volume de referência no lugar do GLB: melhor um bloco no lugar
+            // certo do que um buraco onde estava o empreendimento.
+            upsertPlaceholder(b, node);
+            viewer.useDefaultRenderLoop = true;
+            requestRender();
+            return;
+          }
+
+          // 3. Não há o que remover: a falha é da própria cena.
+          onErrorRef.current?.(msg);
+        });
 
         // Clique: seleciona empreendimento OU reposiciona (modo edição).
         handler = new ScreenSpaceEventHandler(viewer.scene.canvas);
@@ -1686,9 +2323,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         });
 
         applySun();
-        // Antes do recorte e dos prédios: é o mapa que dá o chão contra o qual
-        // a altura do terreno é medida.
-        void sincronizarMapa3d();
         aplicarRecorteTerreno();
         reconcile();
         syncVias();
@@ -1700,12 +2334,44 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         const selB = selId ? buildingsRef.current.find((x) => x.id === selId) : undefined;
         if (selB) {
           flyToBuilding(selB);
-          showPoiMarkers(selB);
+          // O marcador usa `RELATIVE_TO_3D_TILE`, portanto só pertence ao
+          // mundo do Google. No estúdio ele ficava preso à altura elipsoidal e
+          // aparecia no fim da tela, muito abaixo do mini mapa.
+          if (cidadeRef.current) showPoiMarkers(selB);
+          else clearPoiMarkers();
           setTimeout(() => void sampleGroundFor(selB.id), 2500);
         } else {
           flyHome();
         }
-        onReady?.();
+        /**
+         * O que precisa estar na tela antes de abrir, conforme o modo.
+         *
+         * Sem a cidade 3D não há tile nenhum a esperar — o tileset está com
+         * `show = false` e nem pede. Esperar por ele ali prenderia a capa até o
+         * teto de 20s justamente no caminho que existe para ser RÁPIDO.
+         */
+        const entornoNaTela = () => {
+          // `!tileset` e o modo sem fotogrametria: nao ha streaming a aguardar,
+          // e ler `tileset.tilesLoaded` abaixo lancaria.
+          if (!cidadeRef.current || !tileset) {
+            // Quem faz o chão é o mini mapa; sem ele, não há o que aguardar.
+            const cfg = mapaBaseRef.current;
+            return !cfg?.url || !!mapaModelRef.current?.ready;
+          }
+          /**
+           * `tilesLoaded` NÃO significa "a fotogrametria está na tela".
+           *
+           * No Cesium ele é só `pendentes === 0 && processando === 0 &&
+           * tentados === 0` — um "nada em voo neste instante", verdade também
+           * ANTES do primeiro pedido sair. Era por isso que a capa saía cedo e
+           * o prédio aparecia flutuando: nenhum tile tinha chegado e a bandeira
+           * dizia que tinha acabado. `numberOfTilesWithContentReady` conta
+           * tiles com CONTEÚDO; zero é prova de que não há chão desenhado.
+           */
+          const st = (tileset as unknown as { statistics?: EstatisticasTileset }).statistics;
+          return tileset.tilesLoaded && (st?.numberOfTilesWithContentReady ?? 0) > 0;
+        };
+        aguardarEntorno(entornoNaTela, () => destroyed, () => onReady?.());
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Falha ao carregar os 3D Tiles";
@@ -1733,32 +2399,196 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (v && !v.isDestroyed()) v.destroy();
       viewerRef.current = null;
       tilesetRef.current = null;
-      mapaRef.current = null;
-      mapaUrlRef.current = undefined;
-      mapaCarregandoRef.current = undefined;
+      // Destruir o Viewer já levou o primitivo junto; aqui só se apagam as
+      // referências, para o próximo Viewer não achar que o mini mapa está em
+      // cena e pular o carregamento.
+      mapaModelRef.current = null;
+      mapaUrlRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chaveDaCena]);
-
-  // --- Mapa 3D: troca de arquivo e ajuste de encaixe ---------------------------
-  useEffect(() => {
-    if (!readyRef.current) return;
-    void sincronizarMapa3d();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    pronto, mapa3d?.url, mapa3d?.lat, mapa3d?.lng, mapa3d?.heading, mapa3d?.scale,
-    mapa3d?.heightOffset, mapa3d?.offsetEast, mapa3d?.offsetNorth,
-    // Sem `lat`/`lng` próprios a âncora é a do empreendimento; mover o projeto
-    // no mapa tem de levar o mapa junto, senão ele fica para trás.
-    buildings[0]?.lat, buildings[0]?.lng,
-  ]);
+  }, [apiKey, fotogrametria]);
 
   // --- Amostragem de altura do terreno (só do prédio selecionado, sob demanda) -
   // Evita forçar alta resolução na cidade toda (que floodava e travava). Amostra
   // 1 ponto, quando a câmera já está perto do prédio e os tiles carregaram.
+  /**
+   * Aplica ao empreendimento uma cota de terreno recem-medida.
+   *
+   * Extraido de `sampleGroundFor` porque agora existem DUAS fontes: a sonda
+   * contra a fotogrametria e o DEM publico do modo sem cidade. Tudo o que vem
+   * DEPOIS da medicao e identico nas duas — mini mapa, caixas do espelho,
+   * contorno da torre, reenquadramento —, e duplicar isso deixaria uma das
+   * cenas com metade dos elementos na cota antiga.
+   */
+  /**
+   * Plano de referencia deduzido da CAMERA SALVA do projeto.
+   *
+   * A cota do terreno so importa por um motivo: as cameras salvas guardam
+   * altitude absoluta, e o predio precisa estar na altura em que elas foram
+   * gravadas. Sendo assim, a propria camera responde a pergunta — ela e um
+   * registro de onde o chao estava naquele dia.
+   *
+   * A conta e a intersecao do raio de mira com o eixo vertical do
+   * empreendimento: anda-se pela direcao do `heading` ate a aproximacao maxima
+   * do predio e aplica-se o `pitch`.
+   *
+   * Nao subtrair meia altura do predio. Parece obvio (a camera "mira o meio")
+   * e esta errado: medido nos dados reais, a mira crua fica a ~9 m do valor do
+   * DEM, e subtraindo meia altura o resultado despenca 34 m ABAIXO dele. Quem
+   * enquadra um predio aponta para perto da base, nao para o meio.
+   *
+   * Preferido ao DEM por tres razoes: e instantaneo, nao depende de rede, e e
+   * COERENTE COM AS CAMERAS por construcao — que e exatamente o que se quer
+   * corrigir. Precisao aferida contra o SRTM: ~10 m.
+   */
+  function cotaPelaCameraSalva(b: Building3D): number | null {
+    const cam = b.camera;
+    if (!cam || !cameraAindaServe(b, cam)) return null;
+    const mPorLat = 111320;
+    const mPorLng = 111320 * Math.cos(CesiumMath.toRadians(b.lat));
+    const dE = (b.lng - cam.lng) * mPorLng;
+    const dN = (b.lat - cam.lat) * mPorLat;
+    const h = CesiumMath.toRadians(cam.heading);
+    // Projecao do vetor camera->predio na direcao para onde a camera olha.
+    const dist = dE * Math.sin(h) + dN * Math.cos(h);
+    /**
+     * Descarta o que a geometria nao sustenta: camera de costas para o predio
+     * (`dist` negativa) ou praticamente em cima dele, onde um erro de um grau
+     * no pitch vira dezenas de metros na mira.
+     */
+    if (!Number.isFinite(dist) || dist < 20) return null;
+    // Olhando para o horizonte ou para cima nao ha intersecao com o solo.
+    if (cam.pitch > -3) return null;
+    const cota = cam.height + dist * Math.tan(CesiumMath.toRadians(cam.pitch));
+    if (!Number.isFinite(cota)) return null;
+    // Sanidade: nada abaixo do fundo do mar nem acima do Himalaia.
+    if (cota < -500 || cota > 9000) return null;
+    return cota;
+  }
+
+  function aplicarCotaMedida(id: string, altura: number, persistir = false) {
+    const node = nodesRef.current.get(id);
+    if (!node) return;
+    const anterior = node.groundHeight;
+    node.groundHeight = altura;
+    /**
+     * Marcado ANTES do reenquadramento, de proposito.
+     *
+     * O voo logo abaixo passa por `flyToBuilding`, que decide entre a camera
+     * salva do projeto e a geometria do GLB olhando justamente esta flag. Com
+     * ela marcada depois, o voo que CORRIGE a cota seria o ultimo a ainda
+     * ignorar a camera salva — a cena acabaria certa e enquadrada errado.
+     *
+     * Tambem precisa vir antes do `if (!cur) return` seguinte: a cota foi
+     * medida de todo modo, e perder o registro disso faria a proxima camera
+     * salva ser descartada sem motivo.
+     */
+    node.cotaConfiavel = true;
+    /**
+     * So a medicao contra a FOTOGRAMETRIA vira `alturaSolo` no projeto.
+     *
+     * A medicao custa uma sonda contra a cidade inteira; quem puder guardar,
+     * guarde — e o que dispensa a proxima. Mas as outras duas fontes (camera
+     * salva e DEM) sao ESTIMATIVAS de ~10 m, e grava-las aqui as promoveria a
+     * "cota calibrada": o projeto passaria a carregar um chute com cara de
+     * medicao, e nada mais o corrigiria por conta propria.
+     *
+     * Deixando `alturaSolo` vazio, cada abertura re-deriva a estimativa — que
+     * e barata — e o campo continua reservado para o valor de verdade, quando
+     * a fotogrametria voltar.
+     */
+    if (persistir) onAlturaSoloRef.current?.(id, altura);
+    const cur = buildingsRef.current.find((x) => x.id === id);
+    if (!cur) return;
+    upsertMarker(cur, node);
+    if (cur.modelUrl) updateModelTransform(cur, node);
+    else upsertPlaceholder(cur, node);
+    // As caixas do espelho 3D usam a mesma matriz do modelo: sem isto, elas
+    // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
+    syncUnitBoxes();
+    syncTowerOutline();
+    // Pelo mesmo motivo: o mini mapa se assenta na cota medida
+    // (`alturaDoSoloBase`), e com a URL inalterada isto só reposiciona.
+    void syncMapaBase();
+    /**
+     * Reenquadra quando a cota corrigiu MUITO — e a câmera vai junto.
+     *
+     * O primeiro voo acontece com `groundHeight` no fallback de 3 m, porque a
+     * medição só é confiável 2,5 s depois, com os tiles carregados. Ao nível
+     * do mar isso não se nota. Numa cidade de planalto (Anápolis está a
+     * ~1.100 m) o prédio nasce 1.100 m abaixo do chão, a câmera é enquadrada
+     * nele e a vitrine abre DEBAIXO do terreno — tela preta com as emendas
+     * dos tiles, que foi o que apareceu.
+     *
+     * Corrigir a altura do prédio sem corrigir a da câmera resolvia metade: o
+     * prédio subia e a câmera continuava enterrada.
+     *
+     * 20 m de limiar separa "estava no fallback" de um reajuste fino, e
+     * `cameraInteragida` protege quem já tomou o controle da navegação — um
+     * voo inesperado no meio do gesto do visitante seria pior que o erro.
+     */
+    if (Math.abs(altura - anterior) > 20 && !cameraInteragidaRef.current) {
+      flyToBuilding(cur);
+    }
+    requestRender();
+  }
+
   async function sampleGroundFor(id: string) {
     const v = viewerRef.current;
     if (!v || !readyRef.current) return;
+    /**
+     * Sem fotogrametria nao ha solo a medir — e medir assim mesmo ESTRAGA a
+     * cena.
+     *
+     * A sonda cai de 3000 m sobre o empreendimento contando encontrar o
+     * terreno do Google. Sem o tileset, a unica superficie no caminho e o GLB
+     * do proprio empreendimento: a medicao volta com a altura do TELHADO, o
+     * `groundHeight` sobe a altura inteira do predio e o reenquadramento de
+     * `> 20 m` logo abaixo leva a camera junto para esse ponto errado. O
+     * sintoma e exatamente o relatado — a vitrine abre enquadrada e, dois
+     * segundos e meio depois, desliza para um lugar que nao e o
+     * empreendimento.
+     *
+     * A cota certa deveria estar no projeto (`alturaSolo`, gravada na
+     * calibracao do editor), mas projeto antigo pode nunca te-la recebido — e
+     * ai sobra o fallback de 3 m, que num planalto erra mais de um QUILOMETRO
+     * e joga todas as cameras salvas para fora do empreendimento.
+     *
+     * Entao mede-se de outro jeito: um DEM publico (SRTM, sem chave nem
+     * cartao). Grosseiro perto da fotogrametria, exato perto de 3 m.
+     */
+    if (!tilesetRef.current) {
+      const bSemFoto = buildingsRef.current.find((x) => x.id === id);
+      const nodeSemFoto = nodesRef.current.get(id);
+      if (!bSemFoto || !nodeSemFoto) return;
+      // Cota calibrada no editor tem precedencia: ela veio da fotogrametria,
+      // que e mais precisa que o DEM. Sobrescrever seria piorar.
+      if (nodeSemFoto.cotaConfiavel) return;
+      /**
+       * A camera salva do projeto vem PRIMEIRO.
+       *
+       * O DEM publico e correto, mas e um terceiro: 1000 chamadas por dia, uma
+       * por segundo, sem termos de uso comercial nem garantia de
+       * disponibilidade. Numa vitrine de plantao isso e um teto que se atinge,
+       * e a falha cairia justamente no dia de movimento.
+       *
+       * A camera nao tem teto, nao tem rede e concorda com o DEM dentro de
+       * ~10 m — e, por ser a propria referencia que se quer honrar, acerta o
+       * que de fato importa.
+       */
+      const porCamera = cotaPelaCameraSalva(bSemFoto);
+      if (porCamera != null) {
+        aplicarCotaMedida(id, porCamera);
+        return;
+      }
+      // Sem camera salva nao ha o que deduzir: ai sim o DEM.
+      const elev = await elevacaoDoTerreno(bSemFoto.lat, bSemFoto.lng);
+      // `null` = nao deu para saber. Mantem o fallback: a cena ja esta de pe,
+      // e o enquadramento por geometria cobre esse caso.
+      if (elev == null || !viewerRef.current) return;
+      aplicarCotaMedida(id, elev);
+      return;
+    }
     const b = buildingsRef.current.find((x) => x.id === id);
     const node = nodesRef.current.get(id);
     if (!b || !node) return;
@@ -1785,42 +2615,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     }
     try {
       const timeout = new Promise<undefined>((r) => setTimeout(() => r(undefined), 8000));
-      const res = await Promise.race([v.scene.clampToHeightMostDetailed([probe]), timeout]);
+      const excluir = Array.from(nodesRef.current.values()).flatMap((n) => [
+        ...(n.model ? [n.model] : []),
+        ...(n.box ? [n.box] : []),
+      ]);
+      const res = await Promise.race([
+        v.scene.clampToHeightMostDetailed([probe], excluir),
+        timeout,
+      ]);
       const p = res && res[0];
       if (!p || !viewerRef.current) return;
       const carto = Cartographic.fromCartesian(p);
       if (!carto || !Number.isFinite(carto.height)) return;
-      const anterior = node.groundHeight;
-      node.groundHeight = carto.height;
-      const cur = buildingsRef.current.find((x) => x.id === id);
-      if (!cur) return;
-      upsertMarker(cur, node);
-      if (cur.modelUrl) updateModelTransform(cur, node);
-      else upsertPlaceholder(cur, node);
-      // As caixas do espelho 3D usam a mesma matriz do modelo: sem isto, elas
-      // ficariam na altura de fallback enquanto o prédio vai para o terreno real.
-      syncUnitBoxes();
-      syncTowerOutline();
-      /**
-       * Reenquadra quando a cota corrigiu MUITO — e a câmera vai junto.
-       *
-       * O primeiro voo acontece com `groundHeight` no fallback de 3 m, porque a
-       * medição só é confiável 2,5 s depois, com os tiles carregados. Ao nível
-       * do mar isso não se nota. Numa cidade de planalto (Anápolis está a
-       * ~1.100 m) o prédio nasce 1.100 m abaixo do chão, a câmera é enquadrada
-       * nele e a vitrine abre DEBAIXO do terreno — tela preta com as emendas
-       * dos tiles, que foi o que apareceu.
-       *
-       * Corrigir a altura do prédio sem corrigir a da câmera resolvia metade: o
-       * prédio subia e a câmera continuava enterrada.
-       *
-       * 20 m de limiar separa "estava no fallback" de um reajuste fino, e
-       * `cameraInteragida` protege quem já tomou o controle da navegação — um
-       * voo inesperado no meio do gesto do visitante seria pior que o erro.
-       */
-      if (Math.abs(carto.height - anterior) > 20 && !cameraInteragidaRef.current) {
-        flyToBuilding(cur);
-      }
+      aplicarCotaMedida(id, carto.height, true);
       requestRender();
     } catch {
       /* mantém fallback */
@@ -1853,119 +2660,132 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     return Transforms.headingPitchRollToFixedFrame(origin, hpr);
   }
 
-  // --- Mapa 3D do projeto (substitui a fotogrametria) --------------------------
+  // --- Mini mapa (cena sem fotogrametria) --------------------------------------
 
   /**
-   * Encaixe do mapa no mundo.
+   * Altura do solo sob o empreendimento, medida contra a fotogrametria.
    *
-   * Sem `lat`/`lng` próprios, a âncora é a coordenada do empreendimento — é o
-   * que quase sempre se quer, porque o estúdio modela o mapa CENTRADO no
-   * terreno. A altura é absoluta (acima da elipsoide) e não amostrada: aqui não
-   * existe terreno a consultar, o mapa É o terreno.
+   * O mini mapa se assenta NELA, e não em zero: é assim que ele encontra o
+   * prédio, que já está posicionado a partir da mesma referência. Com o chão do
+   * mini mapa em zero absoluto, o prédio nasceria enterrado ou pairando —
+   * dezenas de metros de erro em terreno de planalto.
    */
-  function matrizDoMapa(cfg: Mapa3DCfg): Matrix4 {
-    const base = buildingsRef.current[0];
-    const lat = cfg.lat ?? base?.lat ?? 0;
-    const lng = cfg.lng ?? base?.lng ?? 0;
+  function alturaDoSoloBase(): number {
+    const nodes = nodesRef.current;
+    const sel = selectedRef.current;
+    const node = (sel ? nodes.get(sel) : undefined) ?? nodes.values().next().value;
+    return node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
+  }
+
+  function matrizMapaBase(cfg: MapaBase): Matrix4 {
     const mPorLat = 111320;
-    const mPorLng = 111320 * Math.cos(CesiumMath.toRadians(lat));
+    const mPorLng = 111320 * Math.cos(CesiumMath.toRadians(cfg.lat));
     const origem = Cartesian3.fromDegrees(
-      lng + (cfg.offsetEast ?? 0) / mPorLng,
-      lat + (cfg.offsetNorth ?? 0) / mPorLat,
-      cfg.heightOffset ?? 0,
+      cfg.lng + cfg.offsetEast / mPorLng,
+      cfg.lat + cfg.offsetNorth / mPorLat,
+      alturaDoSoloBase() + cfg.heightOffset,
     );
-    const hpr = new HeadingPitchRoll(CesiumMath.toRadians(cfg.heading ?? 0), 0, 0);
+    const hpr = new HeadingPitchRoll(
+      CesiumMath.toRadians(cfg.heading),
+      CesiumMath.toRadians(cfg.pitch),
+      CesiumMath.toRadians(cfg.roll),
+    );
     return Transforms.headingPitchRollToFixedFrame(origem, hpr);
   }
 
-  function descartarMapa3d() {
+  /** Tira o mini mapa da cena e devolve a memória de GPU. */
+  function descartarMapaBase() {
     const v = viewerRef.current;
-    const m = mapaRef.current;
-    mapaRef.current = null;
-    mapaUrlRef.current = undefined;
+    const m = mapaModelRef.current;
+    // `primitives.remove` já destrói o primitivo; destruir de novo lança.
     if (m && v && !v.isDestroyed()) v.scene.primitives.remove(m);
+    mapaModelRef.current = null;
+    mapaUrlRef.current = null;
   }
 
   /**
-   * Põe o mapa 3D na cena, troca quando a URL muda e só reposiciona quando não
-   * muda. Reposicionar é a operação frequente (o encaixe se ajusta em números,
-   * campo por campo) e recarregar o GLB a cada dígito digitado seria inviável.
+   * Põe (ou tira) o mini mapa conforme a configuração e o modo da cena.
+   *
+   * Reposicionar não recarrega: enquanto a URL for a mesma, mexer nos sliders
+   * do editor só troca a matriz. Recarregar um GLB de terreno a cada arraste de
+   * slider tornaria a calibração impraticável.
    */
-  async function sincronizarMapa3d() {
+  async function syncMapaBase() {
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
-    const cfg = mapaAtualRef.current;
-    const url = cfg?.url?.trim();
-    if (!cfg || !url) {
-      descartarMapa3d();
-      mapaCarregandoRef.current = undefined;
-      marcarCarregamento("mapa3d", false);
+    const cfg = mapaBaseRef.current;
+
+    // Com a cidade ligada o mini mapa não entra: ver a doc da prop `mapaBase`.
+    if (!cfg?.url || cidadeRef.current) {
+      descartarMapaBase();
       requestRender();
       return;
     }
-    if (mapaRef.current && mapaUrlRef.current === url) {
-      mapaRef.current.modelMatrix = matrizDoMapa(cfg);
-      mapaRef.current.scale = cfg.scale ?? 1;
-      requestRender();
+
+    // Arquivo que já quebrou o render não volta sozinho — ver `mapaBloqueadoRef`.
+    if (mapaBloqueadoRef.current === cfg.url) return;
+
+    if (mapaUrlRef.current === cfg.url) {
+      const m = mapaModelRef.current;
+      if (m) {
+        m.modelMatrix = matrizMapaBase(cfg);
+        m.scale = cfg.scale;
+        requestRender();
+      }
       return;
     }
-    if (mapaCarregandoRef.current === url) return;
-    mapaCarregandoRef.current = url;
-    marcarCarregamento("mapa3d", true);
+
+    descartarMapaBase();
+    const url = cfg.url;
+    // Outro arquivo, outra chance: o bloqueio é por URL, não permanente.
+    mapaBloqueadoRef.current = null;
+    mapaUrlRef.current = url;
     try {
-      const modelo = await Model.fromGltfAsync({
+      const gltf = await Model.fromGltfAsync({
         url,
-        modelMatrix: matrizDoMapa(cfg),
-        scale: cfg.scale ?? 1,
-        // O mapa recebe a sombra do empreendimento E projeta a dos volumes que
-        // ele próprio tenha. Diferente da fotogrametria, que fica fora do mapa
-        // de sombras porque já traz a iluminação assada na textura.
+        modelMatrix: matrizMapaBase(cfg),
+        scale: cfg.scale,
+        // O mini mapa é o CHÃO da cena: precisa receber a sombra do prédio,
+        // senão o edifício fica pousado sem peso. Projetar também é útil —
+        // relevo e vegetação modelados ganham volume.
         shadows: ShadowMode.ENABLED,
         incrementallyLoadTextures: false,
       });
-      const atual = viewerRef.current;
-      if (!atual || atual.isDestroyed() || mapaCarregandoRef.current !== url) {
-        modelo.destroy();
+      // Desmontou, trocaram o arquivo ou desligaram o mini mapa no meio do
+      // download: o que chegou já não é o pedido.
+      if (!viewerRef.current || v.isDestroyed() || mapaUrlRef.current !== url) {
+        gltf.destroy();
         return;
       }
-      const em = (modelo as unknown as { environmentMapManager?: { enabled: boolean } })
-        .environmentMapManager;
+      // Mesmo motivo do GLB do prédio: o mapa de ambiente dinâmico gera render
+      // contínuo, e a cena roda sob demanda.
+      const em = (gltf as unknown as { environmentMapManager?: { enabled: boolean } }).environmentMapManager;
       if (em) em.enabled = false;
-      (modelo as unknown as { id: unknown }).id = "mapa3d";
-      // Remove o anterior só agora: trocar de mapa com a cena vazia no meio
-      // deixaria um piscar de fundo preto onde antes havia chão.
-      descartarMapa3d();
-      atual.scene.primitives.add(modelo);
-      mapaRef.current = modelo;
-      mapaUrlRef.current = url;
-      // O recorte pode ter nascido antes do mapa (ou preso ao mapa anterior):
-      // é aqui que a coleção reencontra o dono.
-      aplicarRecorteTerreno();
-      requestRender();
-      const concluir = () => {
-        if (mapaCarregandoRef.current === url) mapaCarregandoRef.current = undefined;
-        marcarCarregamento("mapa3d", false);
-        // Reaplica o encaixe: os campos podem ter sido mexidos durante o
-        // download, e enquanto ele corria as atualizações não tinham onde
-        // pousar — o modelo ainda não existia.
-        const cfgAgora = mapaAtualRef.current;
-        if (cfgAgora?.url?.trim() === url && mapaRef.current) {
-          mapaRef.current.modelMatrix = matrizDoMapa(cfgAgora);
-          mapaRef.current.scale = cfgAgora.scale ?? 1;
-        }
-        requestRender();
-      };
-      if (modelo.ready) {
-        concluir();
-      } else {
-        const pronto = modelo.readyEvent.addEventListener(() => { pronto(); concluir(); });
-        const falhou = modelo.errorEvent.addEventListener(() => { falhou(); concluir(); });
+      // Sem realce de cor, ao contrário do prédio: o realce existe para
+      // levantar vidro escuro de fachada. Aplicado ao terreno, lavaria as
+      // texturas de asfalto e vegetação que dão a leitura de implantação.
+      (gltf as unknown as { id: unknown }).id = "mapa-base";
+      v.scene.primitives.add(gltf);
+      mapaModelRef.current = gltf;
+      /**
+       * O pivô só encontra o centro da geometria com o modelo PRONTO — antes
+       * disso `computeGframeMapa` cai na origem do arquivo. Sem este reajuste
+       * as alças ficariam plantadas lá até a próxima mudança qualquer.
+       */
+      if (gltf.ready) { updateGframe(); }
+      else {
+        const parar = gltf.readyEvent.addEventListener(() => {
+          parar();
+          updateGframe();
+          requestRender();
+        });
       }
-    } catch (e) {
-      console.error("[Scene3D] falha ao carregar o mapa 3D:", e);
-      mapaCarregandoRef.current = undefined;
-      marcarCarregamento("mapa3d", false);
-      onError?.("Não foi possível carregar o mapa 3D do projeto.");
+      requestRender();
+    } catch (err) {
+      // Falhar aqui não pode derrubar a cena: sem mini mapa o modo sem cidade
+      // volta a ser o que sempre foi — o prédio sobre o fundo liso.
+      mapaUrlRef.current = null;
+      console.warn("[Scene3D] mini mapa não carregou:", err);
     }
   }
 
@@ -1989,16 +2809,28 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     for (const node of Array.from(nodesRef.current.values())) {
       const m = node.model;
       if (!m) continue;
-      if (noturnoRef.current) {
+      /*
+        Luz GRAVADA no modelo (ver `CaixaGlb.luzGravada`): projeta sombra na
+        cidade, mas não recebe — a própria malha se sombreando vira uma trama
+        riscada sobre materiais unlit. E, de dia, nada de realce: a cor que veio
+        é a luz que o artista gravou.
+      */
+      const luzGravada = !!(node.loadedUrl && caixaGlbRef.current.get(node.loadedUrl)?.luzGravada);
+      m.shadows = luzGravada ? ShadowMode.CAST_ONLY : ShadowMode.ENABLED;
+      // O realce claro existe para o prédio não virar silhueta contra a
+      // cidade escurecida. No estúdio não há cidade escurecida — o modelo fica
+      // com a cor dele.
+      if (noturnoRef.current && cidadeRef.current) {
         m.color = Color.fromCssColorString("#cfe3f0");
         m.colorBlendMode = ColorBlendMode.MIX;
         m.colorBlendAmount = Math.max(0, Math.min(1, realceRef.current));
       } else {
         m.color = Color.fromCssColorString("#e6eef2");
         m.colorBlendMode = ColorBlendMode.MIX;
-        m.colorBlendAmount = 0.3;
+        m.colorBlendAmount = luzGravada ? 0 : 0.3;
       }
     }
+    requestRender();
   }
 
   /**
@@ -2137,6 +2969,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       v.entities.remove(plantaChaoRef.current);
       plantaChaoRef.current = null;
     }
+    ajustarModoDeRender();
     const p = plantaPavimento;
     if (!p?.url) return;
     const b = buildingsRef.current.find((x) => x.id === p.buildingId);
@@ -2423,6 +3256,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v || v.isDestroyed()) return;
     const boxes = unitBoxes ?? [];
     const vistos = new Set<string>();
+    ajustarModoDeRender();
 
     for (const ub of boxes) {
       const b = buildingsRef.current.find((x) => x.id === ub.buildingId);
@@ -2701,6 +3535,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v) return false;
     const pos = centroDaUnidade(unitId);
     if (!pos) return false;
+    soltarOrbita();
     v.camera.flyToBoundingSphere(new BoundingSphere(pos, 26), {
       duration,
       offset: new HeadingPitchRange(
@@ -2812,6 +3647,43 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     });
   }
 
+  /**
+   * Lê caixa/pegada e repacta o recorte quando terminar. A revalidação cobre
+   * Fast Refresh e GLB reprocessado no mesmo URL, sem martelar a rede a cada
+   * movimento do modelo.
+   */
+  function garantirMedicaoGlb(url: string, revalidar = false) {
+    if (medicaoGlbEmCursoRef.current.has(url)) return;
+    if (revalidar) {
+      if (pegadaRevalidadaRef.current.has(url)) return;
+      pegadaRevalidadaRef.current.add(url);
+    } else if (caixaGlbRef.current.has(url)) {
+      return;
+    }
+
+    medicaoGlbEmCursoRef.current.add(url);
+    if (!caixaGlbRef.current.has(url)) caixaGlbRef.current.set(url, null);
+    void medirGlb(url)
+      .then((caixa) => {
+        caixaGlbRef.current.set(url, caixa);
+        /**
+         * Sai da lista de "em curso" ANTES de reaplicar, não no `finally`.
+         *
+         * O recorte consulta este conjunto para distinguir "ainda estou lendo o
+         * cabeçalho" de "li e não havia silhueta". Reaplicando de dentro do
+         * `then`, com a URL ainda marcada, a cena se via medindo para sempre — e
+         * o aviso de modelo sem contorno nunca aparecia, que é exatamente o
+         * silêncio que ele existe para quebrar.
+         */
+        medicaoGlbEmCursoRef.current.delete(url);
+        aplicarRecorteTerreno();
+        // A medição pode chegar depois do modelo: só então se sabe se ele
+        // traz luz gravada.
+        aplicarAparenciaModelo();
+      })
+      .finally(() => medicaoGlbEmCursoRef.current.delete(url));
+  }
+
   async function loadModel(b: Building3D, node: BuildingNode) {
     const v = viewerRef.current;
     if (!v || !b.modelUrl) return;
@@ -2819,16 +3691,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     node.loadingUrl = url;
     marcarCarregamento(b.id, true);
 
-    // Mede a geometria em paralelo: e uma requisicao independente (so o
-    // cabecalho do arquivo) e o resultado so e necessario se o recorte estiver
-    // ligado. Uma vez por URL.
-    if (!caixaGlbRef.current.has(url)) {
-      caixaGlbRef.current.set(url, null); // reserva, para nao medir duas vezes
-      void medirGlb(url).then((caixa) => {
-        caixaGlbRef.current.set(url, caixa);
-        if (caixa) aplicarRecorteTerreno();
-      });
-    }
+    // Mede em paralelo; a geometria não precisa esperar a pegada para aparecer.
+    garantirMedicaoGlb(url);
 
     try {
       const gltf = await Model.fromGltfAsync({
@@ -2895,30 +3759,114 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
          */
         const sel = selectedRef.current;
         const atual = buildingsRef.current.find((x) => x.id === b.id);
+        /**
+         * Sem fotogrametria, a camera salva perde o direito de mandar.
+         *
+         * A regra original — "se ha camera salva, ela e a decisao de quem
+         * montou o projeto" — vale enquanto a cena for a mesma em que ela foi
+         * definida. No modo reduzido nao e: sem o terreno do Google nao ha o
+         * que sondar, a cota do predio cai para `alturaSolo`/fallback e a
+         * camera salva passa a mirar um ponto onde nao ha mais nada. O
+         * resultado e a tela vazia.
+         *
+         * Aqui o enquadramento vem da GEOMETRIA, que e sempre coerente com a
+         * pose em que o modelo foi realmente desenhado.
+         */
+        const semCotaConfiavel = !tilesetRef.current
+          && !nodesRef.current.get(b.id)?.cotaConfiavel;
+        const temCameraSalva = !!(atual?.camera && cameraAindaServe(atual, atual.camera));
         if (atual && sel === b.id && !cameraInteragidaRef.current
-          && !(atual.camera && cameraAindaServe(atual, atual.camera))) {
-          flyToBuilding(atual);
+          && (semCotaConfiavel || !temCameraSalva)) {
+          flyToBuilding(atual, semCotaConfiavel);
+        } else if (atual?.camera && sel === b.id && !cameraInteragidaRef.current
+          && temCameraSalva) {
+          /**
+           * A primeira camera costuma voar antes de o GLB estar pronto. Agora
+           * que a esfera real existe, reaplica a mesma vista sem animacao para
+           * corrigir apenas o centro horizontal ainda sob a capa de carga.
+           */
+          flyToCamera(atual.camera, 0);
+        } else {
+          /**
+           * Reata a orbita agora que existe geometria medida.
+           *
+           * `aplicarOrbita` desiste quando `esferaDoPredio` ainda nao tem o
+           * GLB (o proprio codigo diz "o `moveEnd` tenta de novo depois" — mas
+           * o `moveEnd` foi ABANDONADO por nao disparar com `requestRenderMode`,
+           * e nada assumiu esse retry). Restavam duas chances, as duas cedo
+           * demais: o efeito preso a `pronto` e a vigilia que reata apos um
+           * voo. Se as duas corressem antes do GLB medir — corrida que depende
+           * do tamanho do arquivo e da rede, por isso o defeito era
+           * INTERMITENTE — a cena ficava sem orbita, o arraste voltava a girar
+           * a Terra e o empreendimento saia de vista sem caminho de volta.
+           *
+           * O ramo que faltava e justamente este: quando o projeto TEM camera
+           * salva nao ha reenquadramento, logo nao ha voo, logo ninguem reatava.
+           *
+           * `aplicarOrbita` so troca o referencial (`lookAtTransform`), nao
+           * move a camera: chamar aqui nao mexe no enquadramento escolhido por
+           * quem montou o projeto. Fica no `else` porque, no ramo de cima, o
+           * voo precisa terminar antes — reatar durante o voo faria o `flyTo`
+           * ler o destino no referencial do alvo.
+           */
+          aplicarOrbita();
         }
       };
+      /**
+       * Confirma que o prédio foi DESENHADO antes de dizer que acabou.
+       *
+       * `readyEvent` significa "o Cesium pode desenhar isto", não "isto está na
+       * tela": entre os dois ainda há um quadro. Quem recebe o aviso tira a
+       * capa de carregamento, e tirá-la um quadro cedo demais entrega a
+       * fotogrametria com um buraco no lugar do empreendimento.
+       *
+       * `postRender` é a confirmação de que o quadro existiu; o `requestRender`
+       * garante que ele aconteça, já que a cena só desenha sob demanda.
+       */
+      const confirmarNaTela = () => {
+        const vv = viewerRef.current;
+        if (!vv || vv.isDestroyed()) return concluir();
+        const parar = vv.scene.postRender.addEventListener(() => {
+          parar();
+          concluir();
+        });
+        requestRender();
+      };
+
+      /**
+       * O modelo não entrou na cena.
+       *
+       * Antes isto chamava `concluir()` — o mesmo caminho do sucesso — com o
+       * argumento de que um GLB corrompido não podia prender a tela de
+       * carregamento para sempre. O argumento continua valendo: a espera
+       * termina. O que mudou é que ela termina DIZENDO que terminou mal, em vez
+       * de abrir uma vitrine sem o produto e deixar o visitante concluir
+       * sozinho que o empreendimento não existe.
+       */
+      const falhar = (msg: string) => {
+        console.error(`[Scene3D] modelo de ${b.id} não entrou na cena:`, msg);
+        if (node.loadingUrl === url) node.loadingUrl = undefined;
+        marcarCarregamento(b.id, false);
+        onModelErrorRef.current?.(msg);
+      };
+
       if (gltf.ready) {
-        concluir();
+        confirmarNaTela();
       } else {
         const pronto = gltf.readyEvent.addEventListener(() => {
           pronto();
-          concluir();
-          requestRender();
+          confirmarNaTela();
         });
-        // Sem isto, um GLB corrompido deixaria a tela de carregamento presa
-        // para sempre — o erro é do modelo, não motivo para reter a cena.
-        const falhou = gltf.errorEvent.addEventListener(() => {
+        const falhou = gltf.errorEvent.addEventListener((err: unknown) => {
           falhou();
-          concluir();
+          falhar(err instanceof Error ? err.message : String(err));
         });
       }
     } catch (e) {
       console.error(`[Scene3D] falha ao carregar modelo de ${b.id}:`, e);
       node.loadingUrl = undefined;
       marcarCarregamento(b.id, false);
+      onModelErrorRef.current?.(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -2926,9 +3874,21 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!node.model) return;
     node.model.modelMatrix = modelMatrix(b, node.groundHeight);
     node.model.scale = b.scale;
+    /**
+     * Silhueta: só no EDITOR.
+     *
+     * Ela marca qual prédio está selecionado — pergunta que só existe onde há
+     * vários e se escolhe um para mexer. Na vitrine o empreendimento é
+     * selecionado assim que o projeto carrega, e nunca é deselecionado: o
+     * resultado era um contorno turquesa permanente em volta do GLB inteiro,
+     * marcando uma seleção que o visitante não fez e não pode desfazer.
+     *
+     * Pior que inútil: é uma linha de 2px na cor da ferramenta por cima da
+     * fachada que se está vendendo.
+     */
     const isSel = b.id === selectedRef.current;
     node.model.silhouetteColor = Color.fromCssColorString(BRAND_TURQUOISE);
-    node.model.silhouetteSize = isSel ? 2 : 0;
+    node.model.silhouetteSize = isSel && editRef.current ? 2 : 0;
   }
 
   // ==== GIZMO DE MANIPULAÇÃO (modo edição) ===================================
@@ -2994,11 +3954,87 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * diferentes.
      */
     const obj = eixosDaMatriz(modelMatrix(b, node.groundHeight));
+    // Frame só com o heading: dele saem os eixos reais de pitch e roll.
+    const h = eixosDaMatriz(Transforms.headingPitchRollToFixedFrame(
+      origin, new HeadingPitchRoll(CesiumMath.toRadians(b.heading), 0, 0),
+    ));
     return {
       origin: pivotRef.current ?? origin, origemNatural: origin,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      hEast: h.east, hNorth: h.north,
       L, local: false, escala: b.scale,
+    };
+  }
+
+  /**
+   * O pivô do mini mapa está VALENDO agora?
+   *
+   * Não basta o editor pedir: sem GLB não há o que mover, e com a cidade 3D
+   * ligada o mini mapa nem é desenhado — as alças ficariam pairando sobre a
+   * fotogrametria, movendo um objeto invisível.
+   */
+  function alvoMapaAtivo(): MapaBase | null {
+    if (!gizmoMapaRef.current || cidadeRef.current) return null;
+    return mapaBaseRef.current ?? null;
+  }
+
+  /** Id do alvo quando o pivô é o do mini mapa. */
+  const MAPA_GIZMO_ID = "mapa-base";
+
+  /**
+   * Frame do pivô do mini mapa.
+   *
+   * Como o do empreendimento — ENU para as setas de mover, eixos do objeto
+   * para o resto —, e não como o local: o mini mapa não vive no espaço do
+   * modelo do prédio, ele tem transformação própria sobre a mesma âncora.
+   *
+   * O tamanho de reserva é maior que o do prédio (uma quadra é bem mais larga
+   * que uma torre), mas quem manda de fato é `alcaL()`, que mede em pixels.
+   */
+  function computeGframeMapa(cfg: MapaBase) {
+    const m = matrizMapaBase(cfg);
+    /**
+     * Onde a rotação ACONTECE: a origem da transformação, que é a origem do
+     * arquivo. Girar o heading gira em torno dela, e não há como mudar isso —
+     * é a conta que o `headingPitchRollToFixedFrame` faz.
+     */
+    const origemTransform = Matrix4.getTranslation(m, new Cartesian3());
+    const { east, north, up } = eixosDaMatriz(
+      Transforms.eastNorthUpToFixedFrame(origemTransform),
+    );
+    const obj = eixosDaMatriz(m);
+    const h = eixosDaMatriz(Transforms.headingPitchRollToFixedFrame(
+      origemTransform, new HeadingPitchRoll(CesiumMath.toRadians(cfg.heading), 0, 0),
+    ));
+
+    /**
+     * Onde a rotação PARECE acontecer: o centro do que está desenhado.
+     *
+     * Um terreno exportado da Unreal costuma sair com as coordenadas de mundo
+     * preservadas — a origem do arquivo fica onde era o zero da cena original,
+     * a centenas de metros da quadra modelada. Com o pivô ali, girar não
+     * girava o terreno: mandava ele descrever um arco enorme e sair de vista,
+     * que foi exatamente o relato de "roda do eixo de criação".
+     *
+     * O centro da esfera envolvente é onde a geometria está de fato. Pôr o
+     * pivô nele não muda a matemática da rotação — o `recentrar` do arraste já
+     * compensa o deslocamento, corrigindo os offsets para o ponto sob as alças
+     * ficar parado. A mesma máquina que o Alt+meio usa, agora ligada por
+     * padrão para o mini mapa.
+     */
+    const modelo = mapaModelRef.current;
+    // `ready` não é zelo redundante: o getter `boundingSphere` LANÇA enquanto o
+    // GLB não terminou de carregar, e `?.` não protege contra getter que lança.
+    const centro = modelo?.ready ? modelo.boundingSphere.center : undefined;
+
+    return {
+      origin: pivotRef.current ?? centro ?? origemTransform,
+      origemNatural: origemTransform,
+      east, north, up,
+      eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      hEast: h.east, hNorth: h.north,
+      L: 60, local: false, escala: cfg.scale || 1,
     };
   }
 
@@ -3038,6 +4074,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       origin: pivotRef.current ?? position, origemNatural: position,
       east, north, up,
       eastObj: obj.east, northObj: obj.north, upObj: obj.up,
+      // O alvo local gira nos eixos da própria peça; não há heading separado a
+      // desfazer. Preenchidos com os mesmos eixos para o frame ter um formato só.
+      hEast: obj.east, hNorth: obj.north,
       L, local: true, escala: b.scale,
     };
   }
@@ -3087,6 +4126,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       gframeRef.current = b && node ? computeGframeLocal(b, node, alvo) : null;
       return;
     }
+    // Antes do empreendimento: quando o editor pede o pivô do mini mapa, é
+    // ele que responde — os dois nunca aparecem juntos.
+    const mapa = alvoMapaAtivo();
+    if (mapa) { gframeRef.current = computeGframeMapa(mapa); return; }
     if (!gizmoEmpRef.current) { gframeRef.current = null; return; }
     const id = selectedRef.current;
     const b = id ? buildingsRef.current.find((x) => x.id === id) : undefined;
@@ -3124,10 +4167,16 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const eY = g.northObj;
     const eZ = g.upObj;
     if (kind === "rot") {
-      return g.local ? { n: eZ, u1: eX, u2: eY } : { n: eZ, u1: eY, u2: eX };
+      // Heading gira em torno do VERTICAL DO ENU. Usar a coluna 2 (`upObj`)
+      // funcionava só com o modelo aprumado; inclinado, o anel azul mostrava
+      // um eixo e escrevia noutro. `u1`/`u2` na ordem norte→leste porque
+      // heading é bússola: cresce no sentido horário.
+      return g.local ? { n: eZ, u1: eX, u2: eY } : { n: g.up, u1: g.north, u2: g.east };
     }
+    // Roll gira em torno da coluna 0 da matriz final — `eastObj` já é ela.
     if (kind === "rotX") return { n: eX, u1: eY, u2: eZ };
-    return g.local ? { n: eY, u1: eZ, u2: eX } : { n: eY, u1: eX, u2: eZ };
+    // Pitch gira em torno do norte JÁ GIRADO pelo heading, não da coluna 1.
+    return g.local ? { n: eY, u1: eZ, u2: eX } : { n: g.hNorth, u1: g.hEast, u2: g.up };
   }
 
   /** Campo que cada anel edita, conforme o alvo. */
@@ -3149,6 +4198,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (!alvo) return 0;
       return kind === "rot" ? alvo.rot : kind === "rotX" ? (alvo.rotX ?? 0) : (alvo.rotY ?? 0);
     }
+    // Mesmo mapeamento do empreendimento — `campoDoAnel` grava nos mesmos
+    // nomes de campo, e o editor os traduz para `mapaHeading`/`mapaPitch`/…
+    const mapa = alvoMapaAtivo();
+    if (mapa) return kind === "rot" ? mapa.heading : kind === "rotX" ? mapa.roll : mapa.pitch;
     const b = buildingsRef.current.find((x) => x.id === selectedRef.current);
     if (!b) return 0;
     return kind === "rot" ? b.heading : kind === "rotX" ? b.roll : b.pitch;
@@ -3471,7 +4524,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * leem o frame por CallbackProperty, então acompanhar o movimento não exige
    * reconstruí-las.
    */
-  const alvoChave = gizmoLocal ? `local:${gizmoLocal.id}` : gizmoEmpreendimento ? "emp" : "nenhum";
+  const alvoChave = gizmoLocal
+    ? `local:${gizmoLocal.id}`
+    // A cidade entra na chave porque ela decide se o alvo do mini mapa existe:
+    // religar a fotogrametria com o pivô dele em cena tem de apagar as alças.
+    : gizmoMapa && mapaBase && !cidade
+      ? "mapa"
+      : gizmoEmpreendimento ? "emp" : "nenhum";
   useEffect(() => {
     // O pivô reposicionado é auxílio de edição, não propriedade do alvo: ao
     // trocar de alvo ele volta ao centro, como no Unreal ao reselecionar.
@@ -3536,10 +4595,48 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
    * consultar: o chão é a fotogrametria, que é geometria como qualquer outra.
    * Daí as quatro tentativas, da mais exata para a mais grosseira.
    */
-  function pickGround(position: Cartesian2): Cartesian3 | undefined {
+  function pickGround(position: Cartesian2, preferirFotogrametria = false): Cartesian3 | undefined {
     const v = viewerRef.current;
     if (!v) return undefined;
     const scene = v.scene;
+
+    const ray = v.camera.getPickRay(position);
+
+    /**
+     * Para POI, mira primeiro SOMENTE a fotogrametria.
+     *
+     * `pickPosition` lê o primeiro pixel do buffer de profundidade. Um GLB,
+     * caixa, pivô ou marcador na frente do bairro ganha essa disputa e a
+     * coordenada gravada passa a ser a desse andaime de edição. O ray pick
+     * permite excluir todas as entidades e modelos locais, deixando apenas o
+     * tileset do Google como superfície possível.
+     */
+    if (preferirFotogrametria) {
+      if (!ray || !cidadeRef.current || !tilesetRef.current?.show) return undefined;
+      const excluir: object[] = [...v.entities.values];
+      if (mapaModelRef.current) excluir.push(mapaModelRef.current);
+      nodesRef.current.forEach((node) => {
+        if (node.model) excluir.push(node.model);
+      });
+      const cenaComRaio = scene as unknown as {
+        pickFromRay?: (
+          r: typeof ray,
+          objectsToExclude?: object[],
+          width?: number,
+        ) => { position?: Cartesian3 } | undefined;
+      };
+      try {
+        const google = cenaComRaio.pickFromRay?.(ray, excluir, 0.5)?.position;
+        if (google && Number.isFinite(google.x)) return google;
+      } catch {
+        /* o tile sob o cursor ainda pode estar entrando; cai no elipsoide */
+      }
+
+      // Para posicionar um POI interessam latitude/longitude. Se o tile ainda
+      // não terminou de carregar, o cruzamento com a Terra conserva essas
+      // coordenadas sem deixar o clique parecer quebrado.
+      return v.camera.pickEllipsoid(position, Ellipsoid.WGS84) ?? undefined;
+    }
 
     // 1) Buffer de profundidade — o mais exato quando existe.
     if (scene.pickPositionSupported) {
@@ -3547,7 +4644,6 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       if (p && Number.isFinite(p.x)) return p;
     }
 
-    const ray = v.camera.getPickRay(position);
     if (!ray) return undefined;
 
     // 2) Raio contra a geometria carregada (fotogrametria e modelo).
@@ -3671,8 +4767,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
     // Modo edição: clique no terreno reposiciona o que estiver sendo colocado.
     if (editRef.current && selectedRef.current && onEditPlaceRef.current) {
-      const world = pickGround(position);
-      if (!world) return;
+      const world = pickGround(position, placementTargetRef.current === "poi");
+      if (!world) {
+        onPlacementMissRef.current?.();
+        return;
+      }
       const carto = Cartographic.fromCartesian(world);
       onEditPlaceRef.current(
         selectedRef.current,
@@ -3700,7 +4799,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // `daylight` vai de 0 (sol 6° abaixo do horizonte) a 1 (12° acima): é a
     // faixa em que a cena passa de noite para dia cheio.
     const daylight = Math.max(0, Math.min(1, (solarAltitude + 6) / 18));
-    nightAmountRef.current = noturnoRef.current ? 1 : 1 - daylight;
+    /**
+     * Sem cidade, sem gradação noturna.
+     *
+     * O passe existe para corrigir a fotogrametria do Google, que traz a luz
+     * de meio-dia ASSADA na textura e continua parecendo dia por mais que se
+     * apague a luz da cena. No modo estúdio essa textura não está lá: o que
+     * sobra é o GLB, iluminado pelo sol de verdade. Aplicar o grade nele só o
+     * escurece e o tinge de azul sem motivo — e a noite ali se faz com o
+     * FUNDO, não recolorindo o produto.
+     */
+    nightAmountRef.current = !cidadeRef.current
+      ? 0
+      : (noturnoRef.current ? 1 : 1 - daylight);
 
     /**
      * Gradação noturna, em pós-processamento.
@@ -3711,6 +4822,18 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
      * Este passe corrige a imagem final: dessatura para um azul frio, escurece,
      * e preserva só os realces altos, que é o que faz o céu e o chão lerem como
      * noite.
+     *
+     * A tinta era (0.55, 0.68, 0.95) — azul no papel, cinza na tela: com o
+     * vermelho a 58% do azul, o que sobrava era ardósia neutra e a cena lia
+     * como "foto sem luz", não como noite. Três coisas mudaram:
+     *
+     * 1. tinta bem mais fria (0.34, 0.52, 1.00), que é a direção para onde a
+     *    visão escotópica já puxa o que se enxerga sob a lua;
+     * 2. piso azul-marinho nas sombras — noite de verdade não tem preto
+     *    neutro, tem céu refletido no que está escuro, e é esse pé levantado
+     *    que separa o azulado do apagado;
+     * 3. escurecimento de 0.32 para 0.40, compensando o brilho que a tinta
+     *    mais saturada tira. A cena fica igualmente escura, e azul.
      */
     if (!nightStageRef.current) {
       const stage = new PostProcessStage({
@@ -3721,15 +4844,43 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           void main() {
             vec4 source = texture(colorTexture, v_textureCoordinates);
             float luma = dot(source.rgb, vec3(0.2126, 0.7152, 0.0722));
-            // Azul frio de luar, a partir da luminância.
-            vec3 cooled = vec3(luma) * vec3(0.55, 0.68, 0.95);
-            cooled *= mix(1.0, 0.32, nightAmount);
+
+            // Luar: azul frio a partir da luminância.
+            vec3 luar = vec3(luma) * vec3(0.34, 0.52, 1.0);
+            luar *= mix(1.0, 0.40, nightAmount);
+
+            // Pé azul nas sombras, mais forte quanto mais escuro o pixel.
+            vec3 penumbra = vec3(0.020, 0.043, 0.094);
+            luar += penumbra * nightAmount * (1.0 - smoothstep(0.0, 0.55, luma));
+
+            /**
+             * Devolve a COR do que é muito colorido.
+             *
+             * Colapsar tudo na luminância apagava o espelho de vendas junto com
+             * a cidade: as caixas de disponível/reservada/vendida viravam o
+             * mesmo azul da fachada atrás delas, e o verde e o vermelho — que
+             * são informação, não cenário — sumiam da cena inteira.
+             *
+             * A separação é o próprio croma do pixel. Fotogrametria é concreto,
+             * asfalto e telha: croma baixo, e continua indo a azul. Um material
+             * de status é croma alto e quase nenhuma superfície fotografada
+             * chega perto — então basta reinjetar o desvio da luminância na
+             * medida em que o pixel é saturado.
+             */
+            float mx = max(source.r, max(source.g, source.b));
+            float mn = min(source.r, min(source.g, source.b));
+            float croma = mx > 0.001 ? (mx - mn) / mx : 0.0;
+            vec3 cor = (source.rgb - vec3(luma)) * mix(0.10, 0.62, smoothstep(0.25, 0.7, croma));
+            luar += cor;
+
             // Só o topo da faixa de luminância sobrevive como realce: é o que
             // deixa poste, janela acesa e reflexo aparecerem sem clarear tudo.
-            float highlight = smoothstep(0.72, 1.0, luma) * nightAmount * 0.12;
-            vec3 graded = mix(source.rgb, cooled, nightAmount)
-                        + vec3(highlight * 0.72, highlight * 0.82, highlight);
-            out_FragColor = vec4(graded, source.a);
+            // Continua quente, e agora contra um fundo azul ele finalmente
+            // lê como luz acesa em vez de mancha clara.
+            float highlight = smoothstep(0.72, 1.0, luma) * nightAmount * 0.14;
+            vec3 graded = mix(source.rgb, luar, nightAmount)
+                        + vec3(highlight, highlight * 0.86, highlight * 0.72);
+            out_FragColor = vec4(max(graded, vec3(0.0)), source.a);
           }
         `,
         uniforms: { nightAmount: () => nightAmountRef.current },
@@ -3755,12 +4906,48 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       seen.add(b.id);
       let node = nodesRef.current.get(b.id);
       if (!node) {
-        node = { groundHeight: FALLBACK_GROUND_HEIGHT };
+        /**
+         * Começa na cota SALVA quando existe.
+         *
+         * O fallback de 3 m é um chute de nível do mar, e ele só era aceitável
+         * porque a medição contra a fotogrametria vinha logo em seguida. Sem a
+         * cidade 3D essa medição nunca vem — e o prédio ficava a 3 m de
+         * altitude, centenas de metros abaixo do terreno.
+         */
+        node = {
+          groundHeight: b.alturaSolo ?? FALLBACK_GROUND_HEIGHT,
+          // Calibrada no editor: ja nasce confiavel, nada a medir.
+          cotaConfiavel: b.alturaSolo != null,
+        };
+        /**
+         * Sem fotogrametria, deduz a cota AGORA — nao daqui a 2,5 s.
+         *
+         * `sampleGroundFor` roda com atraso porque a sonda contra os tiles
+         * precisa deles carregados. A deducao pela camera salva nao precisa de
+         * nada: e trigonometria sobre dados que ja estao na memoria.
+         *
+         * Rodar tarde criava uma corrida com o voo de abertura, que acontece
+         * logo apos este `reconcile()`. Ele partia com a cota no fallback,
+         * concluia que ela nao era confiavel e enquadrava pela GEOMETRIA —
+         * ignorando a camera salva. Quem tinha acabado de redefinir a camera no
+         * editor via a cena abrir em outro lugar e concluia, com razao, que a
+         * camera nova nao estava valendo.
+         */
+        if (!node.cotaConfiavel && !tilesetRef.current) {
+          const porCamera = cotaPelaCameraSalva(b);
+          if (porCamera != null) {
+            node.groundHeight = porCamera;
+            node.cotaConfiavel = true;
+          }
+        }
         nodesRef.current.set(b.id, node);
       }
 
       upsertMarker(b, node);
-      if (b.modelUrl) {
+      // Arquivo que já derrubou o render não volta sozinho; enquanto isso o
+      // empreendimento aparece como volume, e não como ausência.
+      const bloqueado = !!b.modelUrl && modelosBloqueadosRef.current.has(b.modelUrl);
+      if (b.modelUrl && !bloqueado) {
         if (node.box) {
           v.entities.remove(node.box);
           node.box = undefined;
@@ -3865,27 +5052,68 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
 
   // --- Câmeras ------------------------------------------------------------------
 
+  /**
+   * Voa para uma câmera salva EXATAMENTE como foi gravada: posição, azimute e
+   * inclinação. Só o `roll` é zerado, para um giro acidental na captura não
+   * inclinar o horizonte.
+   *
+   * Antes a orientação era reconstruída para mirar o centro medido do modelo.
+   * Isso amarrava a vista ao 3D: com um GLB cujo volume calculado não bate com
+   * o prédio (caso real: modelo com peças replicadas por instancing, cuja
+   * esfera o Cesium mede errado), toda vista salva abria olhando para o céu.
+   * Quem grava a vista decide para onde ela olha.
+   */
   function flyToCamera(cam: CameraView, duration = 1.5) {
     const v = viewerRef.current;
     if (!v || v.isDestroyed()) return;
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(cam.lng, cam.lat, cam.height),
       orientation: {
         heading: CesiumMath.toRadians(cam.heading),
         pitch: CesiumMath.toRadians(cam.pitch),
-        roll: CesiumMath.toRadians(cam.roll),
+        roll: 0,
       },
       duration,
     });
   }
 
-  function flyToPoi(lat: number, lng: number) {
+  /**
+   * Voa até um ponto de interesse.
+   *
+   * `cam` é o enquadramento gravado no editor para AQUELE ponto — e ele é
+   * absoluto (lng/lat/altura/azimute), não relativo ao alvo. Isso o torna
+   * frágil: um ponto movido de lugar depois, um enquadramento salvo com a
+   * câmera em outro canto, um projeto duplicado — em qualquer desses casos a
+   * coordenada gravada não descreve mais o ponto, e clicar leva o visitante
+   * para longe do que ele pediu.
+   *
+   * A regra é a mesma que o prédio já usava em `cameraAindaServe`: enquadramento
+   * salvo tem prioridade ENQUANTO for plausível. Longe demais do alvo, ele é
+   * descartado em favor do enquadramento genérico, que é calculado a partir do
+   * próprio ponto e por isso nunca erra o destino.
+   */
+  function flyToPoi(lat: number, lng: number, cam?: CameraView) {
     const v = viewerRef.current;
     if (!v) return;
+
+    if (cam) {
+      const distancia = Cartesian3.distance(
+        Cartesian3.fromDegrees(cam.lng, cam.lat),
+        Cartesian3.fromDegrees(lng, lat),
+      );
+      // 800 m: um enquadramento de POI é de aproximação; acima disso ele não
+      // está mostrando o ponto, está mostrando outra coisa.
+      if (Number.isFinite(distancia) && distancia < 800) {
+        flyToCamera(cam, 1.6);
+        return;
+      }
+    }
     const id = selectedRef.current;
     const gh = (id ? nodesRef.current.get(id)?.groundHeight : undefined) ?? FALLBACK_GROUND_HEIGHT;
     // `flyToBoundingSphere` centraliza o ponto de forma confiável, o que
     // `flyTo` com destino puro não faz quando o pitch é oblíquo.
+    soltarOrbita();
     v.camera.flyToBoundingSphere(new BoundingSphere(Cartesian3.fromDegrees(lng, lat, gh + 5), 50), {
       offset: new HeadingPitchRange(0, CesiumMath.toRadians(-45), 260),
       duration: 1.4,
@@ -3893,9 +5121,19 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   }
 
   /** Esfera que envolve o prédio — a medida real quando o GLB já carregou. */
-  function esferaDoPredio(b: Building3D): BoundingSphere | undefined {
+  function esferaRealDoPredio(b: Building3D): BoundingSphere | undefined {
     const node = nodesRef.current.get(b.id);
     const gh = node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
+    // Com o modelo pronto, o volume calculado sobre os vertices e a referencia
+    // visual mais fiel. A caixa do JSON inclui cantos vazios em formas assimetricas.
+    if (node?.model?.ready) {
+      const esfera = node.model.boundingSphere;
+      const ancora = poseNoModelo(b, gh, 0, 0, 0, 0).position;
+      if (Number.isFinite(esfera.radius) && esfera.radius >= 1 && esfera.radius < 2000
+        && Cartesian3.distance(esfera.center, ancora) < 3000) {
+        return esfera;
+      }
+    }
     const caixa = b.modelUrl ? caixaGlbRef.current.get(b.modelUrl) : null;
     if (caixa) {
       const cx = (caixa.min[0] + caixa.max[0]) / 2;
@@ -3909,18 +5147,15 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
         return new BoundingSphere(poseNoModelo(b, gh, cx, cy, cz, 0).position, raio);
       }
     }
-    // Alguns GLBs declaram bounding spheres em referencial/escala incorretos.
-    // Só a aceita quando é plausível e continua perto da âncora do projeto.
-    // `ready` antes de tocar em `boundingSphere`: o getter lança enquanto o GLB
-    // não carregou, e o `?.` não protege contra getter que lança.
-    if (node?.model?.ready) {
-      const esfera = node.model.boundingSphere;
-      const ancora = poseNoModelo(b, gh, 0, 0, 0, 0).position;
-      if (Number.isFinite(esfera.radius) && esfera.radius >= 1 && esfera.radius < 2000
-        && Cartesian3.distance(esfera.center, ancora) < 3000) {
-        return esfera;
-      }
-    }
+    return undefined;
+  }
+
+  /** Usa o volume real quando disponivel e o placeholder apenas durante a carga. */
+  function esferaDoPredio(b: Building3D): BoundingSphere | undefined {
+    const real = esferaRealDoPredio(b);
+    if (real) return real;
+    const node = nodesRef.current.get(b.id);
+    const gh = node?.groundHeight ?? FALLBACK_GROUND_HEIGHT;
     const ph = b.placeholder;
     if (!ph) return undefined;
     const centro = Cartesian3.fromDegrees(b.lng, b.lat, gh + b.heightOffset + (ph.height * b.scale) / 2);
@@ -3962,8 +5197,250 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     return Number.isFinite(d) && d < 5000;
   }
 
-  function flyToBuilding(b: Building3D) {
-    if (b.camera && cameraAindaServe(b, b.camera)) return flyToCamera(b.camera, 1.6);
+  /**
+   * Prende a câmera ao empreendimento: arrastar ORBITA, roda aproxima.
+   *
+   * `lookAt` amarra a câmera a um referencial centrado no alvo; enquanto ele
+   * vale, os controles padrão do Cesium passam a girar em torno desse ponto em
+   * vez de girar a Terra. É a diferença entre navegar um planeta e examinar uma
+   * maquete — e a vitrine é uma maquete.
+   *
+   * Preserva o ângulo e a distância atuais, para ligar a órbita não dar um
+   * salto de câmera.
+   */
+  /**
+   * Ponto em torno do qual o arraste gira.
+   *
+   * Três alvos, do mais específico para o mais geral. A regra é sempre a
+   * mesma: girar em torno do que a vista está examinando. Um pivô mais longe
+   * do que se olha faz o alvo descrever um arco e sair da tela — que foi o que
+   * derrubou a órbita nas vistas de dentro.
+   */
+  function alvoDaOrbita(b: Building3D, esfera: BoundingSphere): Cartesian3 {
+    const alvo = orbitaAlvoRef.current;
+    const node = nodesRef.current.get(b.id);
+
+    /**
+     * 0. Câmera dentro do prédio: o pivô vai um pouco À FRENTE dela.
+     *
+     * Na vista do andar a câmera pousa na lat/lng do empreendimento, ou seja,
+     * dentro da torre. Qualquer pivô "do prédio" cai praticamente em cima
+     * dela, e orbitar em torno de um ponto colado na câmera faz um arraste
+     * curto virar o mundo inteiro. À frente, o mesmo arraste vira olhar em
+     * volta — que é o gesto que aquela vista pede.
+     */
+    if (alvo?.naCamera) {
+      const v = viewerRef.current;
+      if (v && !v.isDestroyed()) {
+        return Cartesian3.add(
+          v.camera.positionWC,
+          Cartesian3.multiplyByScalar(v.camera.directionWC, PIVO_OLHAR_M, new Cartesian3()),
+          new Cartesian3(),
+        );
+      }
+    }
+
+    /**
+     * 1. Pavimento aberto: o centro da TORRE, na cota daquele andar.
+     *
+     * Vem antes da unidade de propósito. Abrir um andar quase sempre acontece
+     * com uma unidade já escolhida, e girar em torno do apartamento — um ponto
+     * na quina do volume — fazia a torre inteira descrever um arco: a vista do
+     * pavimento saía torta ao primeiro arraste. O andar é um plano, e o eixo
+     * de um plano é o meio dele.
+     *
+     * A cota importa tanto quanto o centro: no meio do volume o pivô ficaria
+     * dezenas de metros acima ou abaixo do piso que se está visitando.
+     */
+    const z = alvo?.pavimentoZ;
+    if (z != null && node) {
+      const t = alvo?.torreXY;
+      // Com a torre conhecida o ponto é exato; sem ela, o centro do volume
+      // inteiro na cota do andar — o melhor palpite para prédio de bloco único.
+      if (t) return poseNoModelo(b, node.groundHeight, t.x, t.y, z, 0).position;
+      const noAndar = poseNoModelo(b, node.groundHeight, 0, 0, z, 0).position;
+      const cAndar = Cartographic.fromCartesian(noAndar);
+      const cCentro = Cartographic.fromCartesian(esfera.center);
+      if (cAndar && cCentro) {
+        return Cartesian3.fromRadians(cCentro.longitude, cCentro.latitude, cAndar.height);
+      }
+    }
+
+    // 2. Unidade escolhida SEM pavimento aberto: aí o apartamento é o assunto,
+    //    e girar em torno dele é examinar de perto o que se está vendendo.
+    if (alvo?.unidadeId) {
+      const p = centroDaUnidade(alvo.unidadeId);
+      if (p) return p;
+    }
+
+    // 3. Cena externa: o empreendimento inteiro, como sempre foi.
+    return esfera.center;
+  }
+
+  function aplicarOrbita() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed() || !orbitarRef.current) return;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (!b) return;
+    // Sem esfera o GLB ainda nao foi medido: desistir aqui e correto, mas
+    // ALGUEM precisa tentar de novo. Nao e o `moveEnd` (abandonado, ver
+    // `agendarReatarOrbita`) — e o `concluir()` do `loadModel`, que chama esta
+    // funcao assim que o modelo fica desenhavel.
+    const esfera = esferaDoPredio(b);
+    if (!esfera) return;
+    /**
+     * `lookAtTransform` SEM deslocamento, nunca `lookAt`.
+     *
+     * `lookAt(alvo, offset)` MOVE a câmera para `alvo + offset` — e era isso
+     * que teleportava a cena: escolhida uma unidade ou um pavimento, o voo
+     * pousava lá, o `moveEnd` disparava, e a órbita reposicionava a câmera no
+     * centro do prédio um segundo depois. O usuário via a câmera fugir sozinha
+     * do que ele acabou de abrir.
+     *
+     * `lookAtTransform(matriz)` só troca o REFERENCIAL: a câmera fica
+     * exatamente onde está, e o arraste passa a girar em torno da origem desse
+     * referencial. É o que se quer — orbitar sem mexer no enquadramento.
+     */
+    v.camera.lookAtTransform(
+      Transforms.eastNorthUpToFixedFrame(alvoDaOrbita(b, esfera)),
+    );
+    /**
+     * Trava o eixo vertical do giro — sem isto o horizonte entorta.
+     *
+     * Com um `lookAtTransform` posto e `constrainedAxis` indefinido, o
+     * controlador do Cesium gira em modo trackball: livre nos tres eixos. Um
+     * arraste em diagonal vira ROLL, e a cena aparece inclinada — o defeito
+     * muda conforme a direcao do gesto, que e por que ele parecia aleatorio.
+     *
+     * `UNIT_Z` no referencial ENU do pivo e a vertical local. Com ela travada
+     * o arraste vira azimute + elevacao, que e o par que descreve "girar em
+     * torno" e "olhar de mais alto ou mais baixo" — e o horizonte fica de pe.
+     *
+     * A vista do andar e onde isto mais se nota: ali o pivo fica 30 m a frente
+     * da camera, e pivo perto multiplica o efeito de qualquer giro.
+     */
+    v.camera.constrainedAxis = Cartesian3.UNIT_Z;
+
+
+    requestRender();
+  }
+
+  /**
+   * Solta o referencial da órbita.
+   *
+   * Obrigatório antes de qualquer voo: com o `lookAt` ativo, `flyTo` e
+   * `setView` passam a interpretar as coordenadas NO REFERENCIAL DO ALVO, e o
+   * destino sai completamente errado.
+   */
+  /**
+   * Depois que o CAMINHO termina, a câmera volta ao estado de órbita.
+   *
+   * Mudar de câmera e orbitar são coisas diferentes — e é essa distinção que
+   * faltava. Todo voo precisa SOLTAR o referencial antes de partir: com ele
+   * posto, `flyTo` leria as coordenadas no referencial do alvo e pousaria em
+   * outro lugar. Mas soltar era só metade do trabalho; ninguém reatava ao
+   * chegar, e a órbita ia embora no primeiro botão.
+   *
+   * Por que vigiar a câmera em vez de usar o `complete` do voo: são nove
+   * chamadas de voo espalhadas, algumas já com `complete` próprio. E por que
+   * não o `moveEnd` do Cesium: a cena roda com `requestRenderMode` e para de
+   * desenhar assim que o voo acaba — `moveEnd` é disparado DURANTE um quadro,
+   * então sem quadro depois da parada o evento pode nunca vir. Foi isso que
+   * fez a primeira tentativa falhar.
+   *
+   * A vigília pede um quadro por vez (o voo já precisa deles), detecta a
+   * câmera parada por cinco quadros seguidos e reata. Teto de 8s para nunca
+   * virar laço eterno.
+   */
+  function agendarReatarOrbita() {
+    if (!orbitarRef.current) return;
+    if (reatarRef.current != null) cancelAnimationFrame(reatarRef.current);
+    const inicio = performance.now();
+    const ultima = new Cartesian3();
+    let parado = 0;
+    const passo = () => {
+      const v = viewerRef.current;
+      if (!v || v.isDestroyed() || !orbitarRef.current) return;
+      v.scene.requestRender();
+      const mexeu = Cartesian3.distance(v.camera.positionWC, ultima) > 0.05;
+      Cartesian3.clone(v.camera.positionWC, ultima);
+      parado = mexeu ? 0 : parado + 1;
+      if (parado >= 5) { aplicarOrbita(); reatarRef.current = null; return; }
+      if (performance.now() - inicio > 8000) { reatarRef.current = null; return; }
+      reatarRef.current = requestAnimationFrame(passo);
+    };
+    reatarRef.current = requestAnimationFrame(passo);
+  }
+
+  function soltarOrbita() {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return;
+    v.camera.lookAtTransform(Matrix4.IDENTITY);
+    /**
+     * Devolve a rotacao livre junto com o referencial.
+     *
+     * O eixo travado pertence ao referencial da orbita; deixa-lo posto depois
+     * de soltar restringiria a navegacao livre do editor, onde arrastar
+     * PRECISA poder inclinar para posicionar modelo e tracar via.
+     */
+    v.camera.constrainedAxis = undefined;
+    // Soltar é sempre para um voo: já deixa marcada a volta.
+    agendarReatarOrbita();
+  }
+
+  /**
+   * O prédio está visível e a uma distância de leitura?
+   *
+   * Duas condições, e as duas importam: dentro do tronco de visão (senão está
+   * fora da tela) E a menos de seis raios da esfera dele (senão está na tela,
+   * mas do tamanho de um grão). Só quando as duas valem é que o enquadramento
+   * atual serve e o voo pode ser dispensado.
+   */
+  function predioEnquadrado(): boolean {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed()) return false;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (!b) return false;
+    const esfera = esferaDoPredio(b);
+    if (!esfera) return false;
+    const cam = v.camera;
+    const visivel = cam.frustum
+      .computeCullingVolume(cam.positionWC, cam.directionWC, cam.upWC)
+      .computeVisibility(esfera) !== Intersect.OUTSIDE;
+    const perto = Cartesian3.distance(cam.positionWC, esfera.center) < esfera.radius * 6;
+    return visivel && perto;
+  }
+
+  /**
+   * Voa ate o empreendimento.
+   *
+   * `forcarGeometria` ignora a camera salva e enquadra a ESFERA MEDIDA do GLB.
+   * Existe para o modo sem fotogrametria: ali a camera salva foi definida
+   * olhando a cidade do Google, com o predio assentado na cota que a sondagem
+   * do terreno media. Tirada a fotogrametria, some a sondagem e some a
+   * referencia — a camera continua apontando para onde o predio ESTAVA, e o
+   * que se ve e cena vazia.
+   *
+   * A esfera nao tem esse problema: ela e calculada a partir da pose real do
+   * modelo, com o mesmo `groundHeight` que o desenha. Seja qual for a cota, a
+   * camera cai centrada no empreendimento.
+   */
+  function flyToBuilding(b: Building3D, forcarGeometria = false) {
+    /**
+     * Sem fotogrametria a regra vale para TODO voo, nao so para a abertura.
+     *
+     * Sao varias as chamadas espalhadas (abertura, troca de selecao, retorno a
+     * vista principal, fim de tour). Deixar a decisao com cada uma delas
+     * significaria que a proxima a ser escrita nasceria errada — e o sintoma,
+     * uma tela vazia, nao aponta para a causa.
+     */
+    const forcar = forcarGeometria
+      || (!tilesetRef.current && !nodesRef.current.get(b.id)?.cotaConfiavel);
+    if (!forcar && b.camera && cameraAindaServe(b, b.camera)) {
+      return flyToCamera(b.camera, 1.6);
+    }
     const v = viewerRef.current;
     const esfera = esferaDoPredio(b);
     if (v && esfera) {
@@ -3972,6 +5449,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // 1,9× o raio enquadra a esfera inteira com uma folga discreta. Estava em
       // 2,8×, que sobrava tanto espaço em volta que o prédio virava um detalhe
       // no meio do bairro.
+      soltarOrbita();
       v.camera.flyToBoundingSphere(esfera, {
         duration: 1.6,
         offset: new HeadingPitchRange(
@@ -3995,6 +5473,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const lng = bs.reduce((s, b) => s + b.lng, 0) / n;
     // Altura moderada, não a cidade toda: um overview muito alto carrega
     // poucos tiles e a fotogrametria aparece preta.
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(lng, lat - 0.012, 2800),
       orientation: {
@@ -4154,8 +5633,31 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const axisD = Ellipsoid.WGS84.geodeticSurfaceNormal(axisO, new Cartesian3());
     const ray = v.camera.getPickRay(pos);
     if (!ray) return false;
-    const modo: "altura" | "plano" = modRef.current.shift ? "plano" : "altura";
+    /**
+     * O modo vem do PAINEL, e o Shift apenas inverte o que estiver escolhido.
+     *
+     * Antes só existia o Shift: mover no plano era um atalho que não aparecia
+     * em lugar nenhum da tela, e quem não o conhecesse concluía que o pivô só
+     * subia e descia. Com o modo explícito, arrastar para o lado é um botão; o
+     * Shift continua valendo para quem já o usa e para alternar sem largar o
+     * mouse.
+     */
+    const base = modoPivoAreaRef.current;
+    const modo: "altura" | "plano" = modRef.current.shift
+      ? (base === "altura" ? "plano" : "altura")
+      : base;
     const noPlano = modo === "plano" ? rayGroundPoint(ray, axisO, axisD) : undefined;
+    /**
+     * Cair para "altura" quando o plano não resolve era SILENCIOSO: o pivô
+     * subia no lugar de andar, e parecia que o modo não existia. Só acontece em
+     * câmera quase rasante, quando o raio corre paralelo ao plano do chão — e aí
+     * o certo é dizer para inclinar a câmera, não trocar o gesto por baixo.
+     */
+    if (modo === "plano" && !noPlano) {
+      onGizmoInfoRef.current?.(
+        "Câmera rasante demais para mover no plano — incline para baixo e tente de novo.",
+      );
+    }
     areaDragRef.current = {
       areaId: area.id,
       index,
@@ -4196,7 +5698,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       onAreaPontosRef.current?.(drag.areaId, pontos);
       onGizmoInfoRef.current?.(
         `Área · vértice ${drag.index + 1}: movendo no plano `
-        + `(${Cartesian3.magnitude(delta).toFixed(2)} m)`,
+        + `(${Cartesian3.magnitude(delta).toFixed(2)} m) · Shift volta para altura`,
       );
       return;
     }
@@ -4388,9 +5890,13 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!v || !editRef.current) return false;
     const g = gframeRef.current;
     const alvo = gizmoLocalRef.current;
+    // Mesma prioridade de `updateGframe`: local, depois mini mapa, depois o
+    // empreendimento. Agarrar uma alça e escrever no alvo errado seria o pior
+    // defeito possível aqui.
+    const mapa = alvo ? null : alvoMapaAtivo();
     // O alvo local manda no id: quem recebe o patch é a torre/unidade, não o
     // empreendimento selecionado.
-    const id = alvo ? alvo.id : selectedRef.current;
+    const id = alvo ? alvo.id : mapa ? MAPA_GIZMO_ID : selectedRef.current;
     if (!id || !g) return false;
     const pid = idDaEntidade(v.scene.pick(pos));
     if (typeof pid !== "string" || !pid.startsWith("gizmo:")) return false;
@@ -4404,7 +5910,8 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       (x) => x.id === (alvo ? alvo.buildingId : selectedRef.current),
     );
     const ray = v.camera.getPickRay(pos);
-    if (!b || !ray) return false;
+    // O mini mapa não depende de haver prédio: ele tem transformação própria.
+    if ((!b && !mapa) || !ray) return false;
 
     let startScalar = 0;
     let startValue = 0;
@@ -4414,8 +5921,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (kind === "tE" || kind === "tN" || kind === "tU") {
       axisD = kind === "tE" ? g.east : kind === "tN" ? g.north : g.up;
       startScalar = scalarOnAxis(ray, g.origin, axisD);
+      const fonte = mapa ?? b;
       if (alvo) startValue = kind === "tE" ? alvo.x : kind === "tN" ? alvo.y : alvo.z;
-      else startValue = kind === "tE" ? b.offsetEast : kind === "tN" ? b.offsetNorth : b.heightOffset;
+      else if (fonte) {
+        startValue = kind === "tE" ? fonte.offsetEast
+          : kind === "tN" ? fonte.offsetNorth : fonte.heightOffset;
+      }
     } else if (kind === "sX" || kind === "sY" || kind === "sZ") {
       // Mede como a translação — o arraste anda no eixo —, mas o valor
       // representa a MEDIDA da caixa. O eixo é o da PEÇA, o mesmo em que a
@@ -4441,23 +5952,39 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const u = Cartesian3.subtract(p, g.origin, new Cartesian3());
       startScalar = Cartesian3.magnitude(u);
       // No alvo local a escala redimensiona a caixa; o fator parte de 1.
-      startValue = alvo ? 1 : b.scale;
+      startValue = alvo ? 1 : (mapa ?? b)?.scale ?? 1;
     }
 
-    // Deslocamento do pivô em relação ao centro real. Vazio quando o pivô não
-    // foi reposicionado — o caso em que girar não move o alvo de lugar.
-    const pivot = pivotRef.current
+    /**
+     * Deslocamento do pivô em relação ao ponto onde a rotação acontece.
+     *
+     * A condição era "o usuário moveu o pivô com Alt+meio". Isso deixava de
+     * fora o caso em que as duas coisas já nascem separadas — o mini mapa, cujo
+     * pivô fica no centro da geometria enquanto a matriz gira em torno da
+     * origem do arquivo. Sem compensação, girar arremessava o terreno.
+     *
+     * Comparar os dois pontos cobre os dois casos com uma regra só. Vazio
+     * quando coincidem, que é o caso em que girar não move o alvo de lugar.
+     */
+    const deslocado = !Cartesian3.equalsEpsilon(g.origin, g.origemNatural, 0, 1e-6);
+    const pivot = deslocado
       ? Cartesian3.subtract(g.origin, g.origemNatural, new Cartesian3())
       : undefined;
+    const fonteGlobal = mapa ?? b;
     const startPos = alvo
       ? { a: alvo.x, b: alvo.y, c: alvo.z }
-      : { a: b.offsetEast, b: b.offsetNorth, c: b.heightOffset };
+      : fonteGlobal
+        ? { a: fonteGlobal.offsetEast, b: fonteGlobal.offsetNorth, c: fonteGlobal.heightOffset }
+        : undefined;
 
     dragRef.current = {
       id,
       kind,
       local: !!alvo,
-      escala: b.scale || 1,
+      mapa: !!mapa,
+      shiftAtivo: modRef.current.shift,
+      pivotMovido: !!pivotRef.current,
+      escala: (alvo ? b?.scale : fonteGlobal?.scale) || 1,
       axisO: g.origin.clone(),
       axisD,
       up: g.up.clone(),
@@ -4493,7 +6020,11 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   function gizmoMove(pos: Cartesian2) {
     const v = viewerRef.current;
     const drag = dragRef.current;
-    const emit = drag?.local ? onGizmoLocalTransformRef.current : onEditTransformRef.current;
+    const emit = drag?.local
+      ? onGizmoLocalTransformRef.current
+      : drag?.mapa
+        ? onMapaTransformRef.current
+        : onEditTransformRef.current;
     if (!v || !drag || !emit) return;
     const ray = v.camera.getPickRay(pos);
     if (!ray) return;
@@ -4513,8 +6044,54 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const p = ctrl ? encaixe : livre;
       return Math.round(valor / p) * p;
     };
+
+    /**
+     * Quanto o Shift reduz a velocidade do arraste de MOVER.
+     *
+     * Era 0,25, o mesmo de girar e escalar, e não bastava. O gizmo acompanha o
+     * cursor no mundo, então quantos metros vale um pixel depende da distância
+     * da câmera — e para ver um empreendimento de 300 m inteiro ela precisa
+     * recuar tanto que cada pixel passa a valer quase meio metro. A 0,25 ainda
+     * eram ~10 cm por pixel: não dá para encostar uma torre na divisa.
+     *
+     * Girar e escalar ficam em 0,25: um grau e um centésimo de fator não
+     * sofrem a mesma amplificação com a distância da câmera.
+     */
+    const FINO_MOVER = 0.08;
+    const FINO = 0.25;
+
+    /**
+     * Entrar e sair do modo fino no MEIO do arraste, sem salto.
+     *
+     * O fator multiplicava o deslocamento desde o início do arraste, então
+     * apertar o Shift depois de já ter arrastado 40 m recalculava tudo a 25% e
+     * o prédio voltava 30 m de uma vez. Na prática obrigava a soltar, apertar
+     * o Shift e recomeçar — justo no gesto de ajuste fino, que é onde ninguém
+     * quer recomeçar.
+     *
+     * Rebasear é fixar o valor atual como novo ponto de partida: o alvo fica
+     * exatamente onde está e passa a andar mais devagar a partir dali.
+     */
+    const rebasear = (escalarAgora: number, valorAgora: number) => {
+      if (drag.shiftAtivo === shift) return;
+      drag.shiftAtivo = shift;
+      drag.startScalar = escalarAgora;
+      drag.startValue = valorAgora;
+    };
     const local = onGizmoLocalTransformRef.current;
-    const global = onEditTransformRef.current;
+    /**
+     * Destino dos patches em ENU.
+     *
+     * O mini mapa fala o MESMO vocabulário do empreendimento (ver `MapaPatch`),
+     * então todos os ramos abaixo permanecem como estavam — o que muda é para
+     * onde o patch vai. O `id` é descartado no caminho do mini mapa: ele é um
+     * só por projeto, e inventar um identificador para ele daria a impressão de
+     * que pode haver vários.
+     */
+    const emitirMapa = onMapaTransformRef.current;
+    const global: typeof onEditTransformRef.current = drag.mapa
+      ? (_id, patch) => emitirMapa?.(patch)
+      : onEditTransformRef.current;
 
     /**
      * Recentragem em torno de um pivô deslocado.
@@ -4542,10 +6119,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // O arraste é medido em metros do MUNDO; os campos do alvo local estão em
       // metros do MODELO. Sem dividir pela escala, um modelo a 0,5× andaria o
       // dobro do que o inspetor mostra.
-      const bruto =
-        drag.startValue +
-        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? 0.25 : 1);
-      const val = passo(bruto, 1);
+      const div = drag.local ? drag.escala : 1;
+      const mover = (f: number) => drag.startValue + ((s - drag.startScalar) / div) * f;
+      // Com o fator ANTERIOR: é o valor onde o alvo está NESTE instante, e é
+      // dele que a nova velocidade tem de partir.
+      rebasear(s, mover(drag.shiftAtivo ? FINO_MOVER : 1));
+      const val = passo(mover(shift ? FINO_MOVER : 1), 1);
       if (drag.local) {
         local?.(drag.id, { [drag.kind === "tE" ? "x" : drag.kind === "tN" ? "y" : "z"]: val });
       } else if (drag.kind === "tE") global?.(drag.id, { offsetEast: val });
@@ -4566,7 +6145,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const s = scalarOnAxis(ray, drag.axisO, drag.axisD);
       const bruto =
         drag.startValue +
-        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? 0.25 : 1);
+        ((s - drag.startScalar) / (drag.local ? drag.escala : 1)) * (shift ? FINO : 1);
       const val = Math.max(0.1, passo(bruto, 0.5));
       const campo = drag.kind === "sX" ? "dx" : drag.kind === "sY" ? "dy" : "dz";
       local?.(drag.id, { [campo]: val });
@@ -4578,7 +6157,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       const u = Cartesian3.subtract(p, drag.axisO, new Cartesian3());
       const kind = drag.kind as AnelKind;
       const ang = Math.atan2(Cartesian3.dot(u, drag.anel.u2), Cartesian3.dot(u, drag.anel.u1));
-      const delta = CesiumMath.toDegrees(ang - drag.startScalar) * (shift ? 0.25 : 1);
+      const delta = CesiumMath.toDegrees(ang - drag.startScalar) * (shift ? FINO : 1);
       // 0,01° livre: um grau tem ~1 cm de arco a 60 m do pivô, então o degrau
       // some. O encaixe do Ctrl continua em 15°.
       let deg = passo(drag.startValue + delta, 15, 0.01);
@@ -4591,7 +6170,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
       // como bússola.
       if (kind !== "rot" && deg > 180) deg -= 360;
 
-      const eixoGiro = kind === "rot" ? drag.up : kind === "rotX" ? drag.east : drag.north;
+      /**
+       * O eixo da recentragem é a NORMAL DO ANEL, que é o eixo real do giro.
+       *
+       * Era `up`/`east`/`north` do ENU cru — certo só para o heading. Com o
+       * prédio girado, inclinar em torno de um pivô deslocado compensava o
+       * deslocamento na direção errada e a peça escorregava enquanto girava.
+       */
+      const eixoGiro = drag.anel.n;
       const pos2 = recentrar((pt) => {
         const q = Quaternion.fromAxisAngle(eixoGiro, giroRad);
         const m = Matrix3.fromQuaternion(q, new Matrix3());
@@ -4606,7 +6192,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
           : { [campo]: deg });
       }
       onGizmoInfoRef.current?.(
-        `${ANEL_ROTULO[kind]}  ${deg.toFixed(2)}°${drag.pivot ? "  · em torno do pivô" : ""}${
+        `${ANEL_ROTULO[kind]}  ${deg.toFixed(2)}°${drag.pivotMovido ? "  · em torno do pivô" : ""}${
           ctrl ? "  · encaixe 15°" : ""
         }`,
       );
@@ -4726,6 +6312,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const node = id ? nodesRef.current.get(id) : undefined;
     if (!v || !b || !node) return;
     const gh = node.groundHeight;
+    soltarOrbita();
     v.camera.flyTo({
       destination: Cartesian3.fromDegrees(b.lng, b.lat, gh + b.heightOffset + camH * b.scale),
       orientation: {
@@ -4747,6 +6334,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const v = viewerRef.current;
     const esfera = esferaDoPredio(b);
     if (!v || !esfera) return flyToBuilding(b);
+    soltarOrbita();
     v.camera.flyToBoundingSphere(esfera, {
       duration,
       offset: new HeadingPitchRange(
@@ -4771,6 +6359,7 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     pitchGraus = -90,
     giroGraus = 0,
     duration = 1.4,
+    areaEnquadramento?: CorteDef["area"],
   ) {
     const v = viewerRef.current;
     const id = selectedRef.current;
@@ -4778,7 +6367,10 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const node = id ? nodesRef.current.get(id) : undefined;
     if (!v || !b || !node) return;
 
-    const a = corte.area;
+    // O recorte pode atravessar o modelo inteiro e, ainda assim, a planta ter
+    // uma área calibrada. Essa área é o melhor alvo visual do pavimento e não
+    // deve alterar a geometria que o corte remove.
+    const a = corte.area ?? areaEnquadramento;
     /**
      * Centro do que se está olhando — e `(0, 0)` NÃO é esse centro.
      *
@@ -4814,11 +6406,17 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     const heading = CesiumMath.toRadians(rotArea + (maiorEmY ? 90 : 0) + giroGraus);
     const alcance = Math.max(20, distancia * (b.scale || 1));
 
+    soltarOrbita();
+
+    // -90° exatos não têm direção horizontal: heading e roll ficam
+    // indeterminados e o Cesium pode escolher outro "topo" entre voos. Um grau
+    // de perspectiva é visualmente planta, mas mantém a base da câmera estável.
+    const pitchEstavel = Math.max(-89, Math.min(-1, pitchGraus));
     v.camera.flyToBoundingSphere(new BoundingSphere(alvo, 1), {
       duration,
       offset: new HeadingPitchRange(
         heading,
-        CesiumMath.toRadians(Math.max(-90, Math.min(-1, pitchGraus))),
+        CesiumMath.toRadians(pitchEstavel),
         alcance,
       ),
     });
@@ -4903,10 +6501,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   useEffect(() => {
     if (!readyRef.current) return;
     const b = buildingsRef.current.find((x) => x.id === selectedId);
-    if (b) showPoiMarkers(b);
+    // Sem cidade, sem POIs: eles marcam o que existe EM VOLTA, e sem o chão a
+    // que se referem viram pinos boiando no vazio.
+    if (b && cidade) showPoiMarkers(b);
     else clearPoiMarkers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [poiChave, selectedId, buildings.length, pronto]);
+  }, [poiChave, selectedId, buildings.length, pronto, cidade]);
 
   // Sol: hora e elevação vêm da barra solar.
   useEffect(() => {
@@ -4914,6 +6514,152 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     applySun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [solarUtc, solarAltitude, pronto]);
+
+  /**
+   * Órbita: liga com o modo, e SÓ enquanto ele valer.
+   *
+   * A primeira versão reatava a órbita ao fim de qualquer voo, em qualquer
+   * situação. O efeito era o oposto do pretendido: a câmera pousava na vista
+   * do andar, o `moveEnd` disparava, e o arraste passava a girar em torno do
+   * centro do prédio em vez de olhar em volta do pavimento. As vistas de andar
+   * e a principal ficaram inutilizáveis.
+   *
+   * O diagnóstico da época estava incompleto: o problema não era a órbita
+   * valer nessas vistas, era o PIVÔ dela ser sempre o centro do prédio. De
+   * perto, girar em torno de um ponto distante manda o alvo para fora da tela
+   * no primeiro arraste. Desligar tratava o sintoma — e cobrava a navegação de
+   * globo justamente onde examinar de perto é a tarefa.
+   *
+   * Com `orbitaAlvo` o pivô acompanha o foco (ver `alvoDaOrbita`), e a órbita
+   * volta a valer na unidade e no pavimento. A página ainda decide: `pavMode`
+   * e o editor continuam fora, porque lá o palco não é a cena.
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!pronto || !v || v.isDestroyed()) return;
+    if (!orbitar) {
+      soltarOrbita();
+      return;
+    }
+    aplicarOrbita();
+
+    // Quem devolve a câmera à órbita depois de cada voo é `agendarReatarOrbita`,
+    // chamada por `soltarOrbita`. Aqui só se liga e desliga o modo.
+    return () => {
+      if (reatarRef.current != null) cancelAnimationFrame(reatarRef.current);
+      reatarRef.current = null;
+    };
+    // Trocar de unidade ou de andar reancora o pivô. Na maioria dos casos o
+    // voo já faz isso (soltar → reatar), mas focar algo sem voar não faria.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orbitar, orbitaAlvo?.unidadeId, orbitaAlvo?.pavimentoZ, orbitaAlvo?.torreXY, pronto]);
+
+  /**
+   * Fotogrametria ligada/desligada.
+   *
+   * `show = false` para o tileset inteiro: o Cesium para de pedir, decodificar
+   * e desenhar tiles, que é o grosso do custo da cena. O empreendimento (GLB),
+   * o espelho de vendas e as sombras seguem intactos — o prédio fica flutuando
+   * sobre o fundo, que é exatamente a leitura de maquete.
+   *
+   * Não é o mesmo que desmontar a cena: aqui a câmera, o modelo e todos os
+   * controles continuam vivos.
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    const ts = tilesetRef.current;
+    if (!v || v.isDestroyed()) return;
+    if (ts) {
+      ts.show = cidade;
+      /**
+       * Esconder não é liberar.
+       *
+       * `show = false` garante que o tileset não é DESENHADO, mas os tiles já
+       * baixados continuam ocupando memória de GPU — o alívio seria só de
+       * pixels, e o aparelho fraco continuaria carregando o peso. `trimLoadedTiles`
+       * é o caminho documentado para descarregar de fato: ele solta tudo que
+       * não foi selecionado no último quadro.
+       *
+       * Ao religar, os tiles voltam a ser pedidos — custa alguns segundos de
+       * recarga, e é um preço justo por um botão que realmente alivia.
+       */
+      if (!cidade) ts.trimLoadedTiles();
+    }
+
+    /**
+     * Sem cidade, a cena vira ESTÚDIO.
+     *
+     * Só esconder a fotogrametria deixava o prédio sobre o espaço sideral — o
+     * fundo padrão do Cesium é o céu estrelado, que existe para quem olha a
+     * Terra de fora. Um prédio recortado contra estrelas não lê como maquete,
+     * lê como erro.
+     *
+     * Céu, atmosfera e estrelas saem; entra um cinza claro chapado, que é o
+     * fundo de render de apresentação: neutro, sem direção, sem horizonte
+     * competindo com a silhueta. O prédio passa a ser a única coisa na tela
+     * com forma — que é o ponto de esconder o entorno.
+     */
+    // `SkyBox` não expõe `show` nos tipos do Cesium; guardamos a instância e
+    // trocamos por `undefined`, que é o caminho suportado para tirar o céu.
+    if (v.scene.skyBox) skyBoxRef.current = v.scene.skyBox;
+    v.scene.skyBox = cidade ? (skyBoxRef.current ?? v.scene.skyBox) : undefined;
+    if (v.scene.skyAtmosphere) v.scene.skyAtmosphere.show = cidade;
+    if (v.scene.sun) v.scene.sun.show = cidade;
+    if (v.scene.moon) v.scene.moon.show = cidade;
+    // No estúdio o dia é cinza claro e a noite é preta: é o fundo que faz a
+    // hora, já que não há céu nem cidade para escurecer.
+    v.scene.backgroundColor = cidade || noturno
+      ? Color.BLACK
+      : Color.fromCssColorString(FUNDO_ESTUDIO);
+
+
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cidade, noturno, pronto]);
+
+  /**
+   * Sombras ligadas AGORA, pela regra do projeto e pelo modo da cena.
+   *
+   * Um interruptor só: `shadowMap.enabled`. Os primitivos continuam marcados
+   * com `ShadowMode.ENABLED` — desligar o mapa de sombras já os tira do passe,
+   * e mexer em cada primitivo obrigaria a percorrer modelo, mini mapa e cada
+   * entidade do entorno para depois ter de restaurar tudo ao religar.
+   */
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v || v.isDestroyed() || !pronto) return;
+    const ligadas = sombras === "sempre" || (sombras === "com-cidade" && cidade);
+    v.shadowMap.enabled = ligadas;
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sombras, cidade, pronto]);
+
+  /**
+   * Mini mapa: entra e sai com o modo da cena, e acompanha os sliders.
+   *
+   * A dependência é a chave achatada, não o objeto: `mapaBase` é remontado a
+   * cada render do editor, e um objeto novo com os mesmos valores dispararia o
+   * efeito a cada tecla digitada.
+   */
+  const mapaChave = mapaBase
+    ? [mapaBase.url, mapaBase.heading, mapaBase.pitch, mapaBase.roll, mapaBase.scale,
+       mapaBase.heightOffset, mapaBase.offsetEast, mapaBase.offsetNorth,
+       mapaBase.lat, mapaBase.lng].join("|")
+    : "";
+  useEffect(() => {
+    if (!pronto) return;
+    void syncMapaBase();
+    /**
+     * O pivô acompanha o mini mapa.
+     *
+     * Sem isto as alças ficavam onde o objeto estava quando foram criadas:
+     * arrastar um slider do inspetor afastava o mini mapa das próprias alças, e
+     * o pivô passava a mover a partir de um ponto que não corresponde a nada.
+     */
+    updateGframe();
+    requestRender();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapaChave, cidade, pronto]);
 
   /**
    * Modo noturno. Reaproveita `applySun`, que já decide luz e realce a partir
@@ -4924,7 +6670,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     if (!readyRef.current) return;
     applySun();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [noturno, realceNoturno, pronto]);
+    // `cidade` entra aqui porque o grade noturno depende dela: escondida a
+    // fotogrametria, não há o que corrigir e o passe é desligado.
+  }, [noturno, realceNoturno, cidade, pronto]);
 
   // Espelho de vendas em 3D.
   useEffect(() => {
@@ -4974,6 +6722,9 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   const recorteChave = JSON.stringify([
     recorteTerreno ?? null,
     previewRecorte,
+    // Sem isto, ligar a prévia das áreas não reaplicava o recorte: a chave não
+    // mudava e o efeito nem rodava.
+    previewAreas ?? false,
     editMode ?? false,
     selectedId,
     /**
@@ -5004,6 +6755,14 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
   ]);
   useEffect(() => {
     if (!readyRef.current) return;
+    const b = buildingsRef.current.find((x) => x.id === selectedRef.current)
+      ?? buildingsRef.current[0];
+    if (recorteAtualRef.current && b?.modelUrl) {
+      const caixa = caixaGlbRef.current.get(b.modelUrl);
+      // Cobre uma medição sem pegada preservada pelo Fast Refresh ou um
+      // arquivo reprocessado no mesmo URL. O Set limita a uma tentativa.
+      if (!caixa?.contornos?.length) garantirMedicaoGlb(b.modelUrl, true);
+    }
     aplicarRecorteTerreno();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recorteChave, pronto]);
@@ -5030,7 +6789,12 @@ const Scene3D = forwardRef<Scene3DHandle, Scene3DProps>(function Scene3D(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMode, selectedId, buildings, pronto]);
 
-  return <div ref={containerRef} className="absolute inset-0 h-full w-full" />;
+  return (
+    <div
+      ref={containerRef}
+      className={`absolute inset-0 h-full w-full ${placementActive ? "cursor-crosshair" : ""}`}
+    />
+  );
 });
 
 export default Scene3D;
