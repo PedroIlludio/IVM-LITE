@@ -1,7 +1,5 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { registerVision3DRoutes } from "./vision3dRoutes";
-import { registerUnidadesRoutes } from "./unidadesRoutes";
 import { registerProjectsRoutes } from "./projectsRoutes";
 
 export async function registerRoutes(
@@ -110,8 +108,6 @@ export async function registerRoutes(
     }
   });
 
-  registerVision3DRoutes(app);
-  registerUnidadesRoutes(app);
   registerProjectsRoutes(app);
 
   return httpServer;

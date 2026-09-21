@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import {
-  Loader2, Plus, Pencil, Eye, Trash2, LogOut, Globe, Lock, Download,
+  Loader2, Plus, Pencil, Eye, Trash2, LogOut, Globe, Lock,
   Building, AlertTriangle, Copy,
 } from "lucide-react";
 import type { Empreendimento, Incorporadora } from "@shared/schema";
@@ -11,7 +11,6 @@ import {
   updateProject,
   deleteProject,
   duplicateProject,
-  quintaSeedProject,
   listIncorporadoras,
   createIncorporadora,
   temIncorporadoras,
@@ -254,35 +253,6 @@ function Dashboard() {
     }
   }
 
-  /**
-   * Importa o piloto ou, se já existir, repõe os dados originais dele. O
-   * "repor" existe porque o seed evolui (ex.: ganhou o espelho de vendas) e o
-   * projeto já importado ficaria para trás.
-   */
-  async function importQuinta() {
-    setBusy(true);
-    try {
-      const seed = await quintaSeedProject();
-      const existente = projects?.find((p) => p.slug === seed.slug);
-      if (existente) {
-        if (!confirm("Repor o piloto com os dados originais? As edições feitas nele serão perdidas.")) return;
-        await updateProject(existente.id, { name: seed.name, data: seed.data, published: true });
-        setMsg("Piloto reposto ✓");
-      } else {
-        // já publicado, sob a incorporadora escolhida (se houver)
-        await createProject(seed.name, seed.slug, seed.data, true, incSel || null);
-        setMsg("Quinta das Mangueiras importado e publicado ✓");
-      }
-      await reload();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "erro ao importar");
-    } finally {
-      setBusy(false);
-      setTimeout(() => setMsg(null), 5000);
-    }
-  }
-
-  const hasQuinta = projects?.some((p) => p.slug === "quinta-das-mangueiras");
 
   return (
     <div className="tool min-h-screen bg-[var(--ed-canvas)] text-white">
@@ -411,18 +381,6 @@ function Dashboard() {
           </p>
         )}
 
-        {projects && (
-          <button
-            onClick={importQuinta}
-            disabled={busy}
-            className="tool-pill mb-5 flex items-center gap-2 px-3.5 py-1.5 text-[14px] text-[var(--ed-body)]"
-          >
-            <Download className="h-3.5 w-3.5" />
-            {hasQuinta
-              ? "Repor o piloto “Quinta das Mangueiras” com os dados originais"
-              : "Importar o piloto “Quinta das Mangueiras” (Maragogi)"}
-          </button>
-        )}
         {msg && <p className="mb-3 text-[14px] text-white">{msg}</p>}
 
         {projects === null ? (

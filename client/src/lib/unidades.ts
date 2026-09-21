@@ -97,17 +97,6 @@ export function torresDe(unidades: Unidade[], torres?: TorreDef[]): TorreDef[] {
   return out;
 }
 
-export async function loadUnidades(): Promise<Unidade[]> {
-  try {
-    const r = await fetch("/api/unidades");
-    if (!r.ok) return [];
-    const d = (await r.json()) as UnidadesData;
-    return d.unidades ?? [];
-  } catch {
-    return [];
-  }
-}
-
 /** Conta unidades por status (opcionalmente filtrando por torre). */
 export function contarStatus(unidades: Unidade[], torre?: Torre): Record<UnidadeStatus, number> {
   const acc: Record<UnidadeStatus, number> = { disponivel: 0, reservada: 0, vendida: 0 };

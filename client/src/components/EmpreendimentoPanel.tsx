@@ -5,7 +5,7 @@ import { normalizarLista } from "@/lib/ivm-store";
 import MediaGallery, { type MediaTab } from "@/components/MediaGallery";
 import TourVirtual from "@/components/TourVirtual";
 import {
-  loadUnidades, contarStatus, porPavimento, torreLabel, STATUS_META, STATUS_CLARO,
+  contarStatus, porPavimento, torreLabel, STATUS_META, STATUS_CLARO,
   type Unidade, type TorreDef,
 } from "@/lib/unidades";
 import { plantasDeTipologia } from "@/lib/tipologias";
@@ -70,16 +70,15 @@ interface EmpreendimentoPanelProps {
   onVerUnidades?: () => void;
   /** Abre a experiência de unidades já focada na unidade escolhida. */
   onSelectUnit?: (id: string) => void;
-  /** Unidades do projeto; se omitido, busca o espelho do piloto (/api/unidades). */
+  /** Unidades do projeto; vêm sempre do projeto (Supabase). */
   unidades?: Unidade[];
   /** Torres do projeto; se omitido, são deduzidas das unidades. */
   torres?: TorreDef[];
-  /** Logo do projeto; se omitido, usa o do piloto. */
+  /** Logo do projeto; se omitido, mostra o nome. */
   logoUrl?: string;
   /**
    * Plantas já unificadas (tipologias + níveis). Omitido, o painel deriva do
-   * próprio empreendimento — o que mantém o `/explorar` do piloto funcionando,
-   * já que lá não há config de níveis para consultar.
+   * próprio empreendimento.
    */
   plantas?: { area: string; url: string }[];
   /** Controle do entorno; sem ele o painel não oferece o modo mapa. */
@@ -274,8 +273,7 @@ function EmpreendimentoDetail({
    * Aqui a fonte é sempre o empreendimento, com regra própria.
    */
   const plantasImgs = plantasDeTipologia(emp).map((p) => ({ url: p.url, legenda: p.area }));
-  // O normalizador já entrega ItemLista[], mas o /explorar do piloto monta o
-  // empreendimento direto do código, sem passar por ele.
+  // Garante ItemLista[] mesmo em dados antigos gravados antes do normalizador.
   const destaques = normalizarLista(emp.highlights);
   const lazer = normalizarLista(emp.amenities);
 
@@ -302,13 +300,9 @@ function EmpreendimentoDetail({
   const [mediaOpen, setMediaOpen] = useState(false);
   const [mediaTab, setMediaTab] = useState<MediaTab>("imagens");
   const [tourOpen, setTourOpen] = useState(false);
-  const [fetchedUnidades, setFetchedUnidades] = useState<Unidade[]>([]);
-  const unidades = unidadesProp ?? fetchedUnidades;
+  const unidades = unidadesProp ?? [];
   const openMedia = (t: MediaTab) => { setMediaTab(t); setMediaOpen(true); };
 
-  useEffect(() => {
-    if (!unidadesProp) loadUnidades().then(setFetchedUnidades);
-  }, [unidadesProp]);
   const contUnid = contarStatus(unidades);
   const totalUnid = unidades.length;
   const gruposTorres = (torres?.length ? torres : Array.from(new Set(unidades.map((u) => u.torre)))

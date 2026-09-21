@@ -6,7 +6,7 @@ import {
   type Pavimento, type PavimentosCfg, type NivelDef,
 } from "@/lib/pavimentos";
 import {
-  loadUnidades, contarStatus, torreLabel, STATUS_META, STATUS_CLARO, type Unidade, type TorreDef,
+  contarStatus, torreLabel, STATUS_META, STATUS_CLARO, type Unidade, type TorreDef,
 } from "@/lib/unidades";
 import { corteDoNivel } from "@/lib/unidades3d";
 
@@ -14,7 +14,7 @@ interface PavimentosViewProps {
   sceneRef: React.RefObject<Scene3DHandle | null>;
   plantas: { area: string; url: string }[];
   onClose: () => void;
-  /** Unidades do projeto; se omitido, busca o espelho do piloto (/api/unidades). */
+  /** Unidades do projeto; vêm sempre do projeto (Supabase). */
   unidades?: Unidade[];
   /** Calibração dos pavimentos do modelo; default = a do piloto. */
   pavCfg?: Partial<PavimentosCfg>;
@@ -44,15 +44,10 @@ export default function PavimentosView({
 }: PavimentosViewProps) {
   const lista = useMemo(() => niveisDe(pavCfg ?? {}, niveis), [pavCfg, niveis]);
   const [sel, setSel] = useState<Pavimento | null>(null);
-  const [fetched, setFetched] = useState<Unidade[]>([]);
-  const unidades = unidadesProp ?? fetched;
+  const unidades = unidadesProp ?? [];
   const [tour, setTour] = useState(false);
   const [lightbox, setLightbox] = useState<string | null>(null);
   const tourRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (!unidadesProp) loadUnidades().then(setFetched);
-  }, [unidadesProp]);
 
   const cfg = useMemo(() => ({ ...DEFAULT_PAV_CFG, ...pavCfg }), [pavCfg]);
 
